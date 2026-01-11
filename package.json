@@ -1,0 +1,15 @@
+{
+  "name": "com.yourname.vnovelizer",
+  "version": "0.1.1",
+  "displayName": "VNovelizer",
+  "description": "An Excel-driven Visual Novel framework.You can use this Plugins to help you create your own Unty Visual Novel",
+  "unity": "6000.0",
+  "author": {
+    "name": "Fakecorps",
+    "email": "liaozh66@outlook.com"
+  },
+  "dependencies": {
+    "com.unity.textmeshpro": "3.0.6",
+    "com.unity.inputsystem": "1.17.0"
+  }
+}
