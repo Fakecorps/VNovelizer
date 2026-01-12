@@ -1278,6 +1278,14 @@ public class VNGameplayPanel : BasePanel
     public Transform GetEffectLayer() => effectLayer;
     
     /// <summary>
+    /// 检查打字机效果是否正在进行
+    /// </summary>
+    public bool IsTextTyping()
+    {
+        return isTextTyping;
+    }
+    
+    /// <summary>
     /// 保存指定位置的默认 Transform（在第一次修改时调用）
     /// </summary>
     public void SaveDefaultCharTransform(string posCode)

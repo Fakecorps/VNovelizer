@@ -1138,7 +1138,7 @@ public class VNManager : BaseManager<VNManager>
     {
         if (CurrentLineIndex < 0 || CurrentLineIndex >= StoryLines.Count)
         {
-            // 【新增】如果超出范围，检查是否是回放模式
+
             if (isReplayMode)
             {
                 EndReplay();
@@ -1152,8 +1152,7 @@ public class VNManager : BaseManager<VNManager>
             _autoPlayCoroutine = null;
         }
 
-        // 【新增】恢复所有被修改的角色 Transform 到默认值（setchartrans 命令不继承）
-        // 【新增】恢复对话文本的默认颜色和大小（t_color 和 t_size 命令不继承）
+
         var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
         if (gameplayPanel != null)
         {
@@ -1202,7 +1201,6 @@ public class VNManager : BaseManager<VNManager>
 
     private void CheckAndTriggerAutoPlay()
     {
-        // 【修复】检查游戏状态，如果是 Choice 状态，不应该触发自动播放
         GameStateManager stateManager = GameStateManager.GetInstance();
         if (stateManager != null && stateManager.CurrentState == GameState.Choice)
         {
@@ -1210,17 +1208,75 @@ public class VNManager : BaseManager<VNManager>
             return;
         }
         
-        bool isBusy = isTextDisplaying || CommandManager.GetInstance().IsRunning || _flowCoroutine != null;
-        if (isAutoPlaying && !isBusy && _autoPlayCoroutine == null)
+        // 检查打字机效果是否完成
+        bool isTextTyping = false;
+        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        if (gameplayPanel != null)
+        {
+            isTextTyping = gameplayPanel.IsTextTyping();
+        }
+
+        // 检查语音是否正在播放
+        bool isVoicePlaying = false;
+        if (VoiceManager.GetInstance() != null)
+        {
+            isVoicePlaying = VoiceManager.GetInstance().IsVoicePlaying();
+        }
+        
+        // 只有当打字机效果完成、语音播放完毕、命令执行完毕、流程协程完毕时，才能触发自动播放
+        bool isBusy = isTextDisplaying || isTextTyping || isVoicePlaying || 
+                      CommandManager.GetInstance().IsRunning || _flowCoroutine != null;
+
+        if (isAutoPlaying && !isBusy)
         {
             float delay = GlobalDataManager.GetInstance().GetGlobalData().AutoSpeed;
+            Debug.Log($"[VNManager] 自动播放触发 - 延迟时间: {delay}秒");
             _autoPlayCoroutine = MonoManager.GetInstance().StartCoroutine(AutoPlayCountdown(delay));
         }
     }
 
+    public void CheckAutoPlay()
+    { 
+        CheckAndTriggerAutoPlay();
+    }
     private IEnumerator AutoPlayCountdown(float delay)
     {
+        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        bool isTextTyping = false;
+        bool isVoicePlaying = false;
+        
+        // 第一步：等待打字机效果和语音播放都完成（以慢的为准）
+        Debug.Log("[VNManager] 自动播放等待中：等待打字机效果和语音播放完成...");
+        while (true)
+        {
+            // 检查打字机效果
+            if (gameplayPanel != null)
+            {
+                isTextTyping = gameplayPanel.IsTextTyping();
+            }
+            
+            // 检查语音播放
+            if (VoiceManager.GetInstance() != null)
+            {
+                isVoicePlaying = VoiceManager.GetInstance().IsVoicePlaying();
+                Debug.Log("Voice: " + isVoicePlaying);
+            }
+            
+            // 如果两者都完成，跳出循环
+            if (!isTextTyping && !isVoicePlaying)
+            {
+                Debug.Log("[VNManager] 打字机效果和语音播放已完成，等待额外延迟后进入下一行");
+                break;
+            }
+            
+            // 等待一帧后继续检查
+            yield return null;
+        }
+        
+        // 第二步：等待AutoSpeed时间后进入下一行
         yield return new WaitForSeconds(delay);
+        
+        Debug.Log($"[VNManager] 自动播放进入下一行 (行索引: {CurrentLineIndex + 1})");
         _autoPlayCoroutine = null;
         CurrentLineIndex++;
         PlayCurrentLine();
@@ -1419,7 +1475,6 @@ public class VNManager : BaseManager<VNManager>
             else { MusicManager.GetInstance().PlayBGM(currentLine.BGM); currentBGM = currentLine.BGM; }
         }
 
-        // 【Bug修复】优化语音加载，添加空值和路径检查
         if (!string.IsNullOrEmpty(currentLine.Voice))
         {
             // 检查VoiceManager是否已初始化
@@ -1471,6 +1526,14 @@ public class VNManager : BaseManager<VNManager>
     public void ToggleAutoPlay()
     {
         isAutoPlaying = !isAutoPlaying;
+        if (isAutoPlaying)
+        {
+            Debug.Log("[VNManager] 自动播放已开启");
+        }
+        else
+        {
+            Debug.Log("[VNManager] 自动播放已关闭");
+        }
         EventCenter.GetInstance().EventTrigger("ToggleAutoPlay", isAutoPlaying);
         CheckAndTriggerAutoPlay();
     }
