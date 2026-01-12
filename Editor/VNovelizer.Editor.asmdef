@@ -9,7 +9,7 @@
     ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
-    "overrideReferences": true,
+    "overrideReferences": false,
     "precompiledReferences": [
         "ExcelDataReader.dll",
         "System.Text.Encoding.CodePages.dll"
