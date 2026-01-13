@@ -2,7 +2,8 @@
     "name": "VNovelizer.Editor",
     "rootNamespace": "",
     "references": [
-        "VNovelizer.Runtime"
+        "VNovelizer.Runtime",
+        "ExcelDataReader"
     ],
     "includePlatforms": [
         "Editor"
@@ -10,12 +11,10 @@
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
-    "precompiledReferences": [
-        "ExcelDataReader.dll",
-        "System.Text.Encoding.CodePages.dll"
-    ],
+    "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
     "versionDefines": [],
     "noEngineReferences": false
 }
+
