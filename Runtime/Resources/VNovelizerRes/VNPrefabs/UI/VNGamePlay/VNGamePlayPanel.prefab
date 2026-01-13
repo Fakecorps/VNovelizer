@@ -1362,6 +1362,34 @@ PrefabInstance:
       propertyPath: m_Name
       value: DialougeBox
       objectReference: {fileID: 0}
+    - target: {fileID: 4544564299134578533, guid: a5e98d0a952a1f24ab05145915e08bca, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 48
+      objectReference: {fileID: 0}
+    - target: {fileID: 4544564299134578533, guid: a5e98d0a952a1f24ab05145915e08bca, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 52
+      objectReference: {fileID: 0}
+    - target: {fileID: 4544564299134578533, guid: a5e98d0a952a1f24ab05145915e08bca, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 4544564299134578533, guid: a5e98d0a952a1f24ab05145915e08bca, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 4544564299134578533, guid: a5e98d0a952a1f24ab05145915e08bca, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 31
+      objectReference: {fileID: 0}
+    - target: {fileID: 4544564299134578533, guid: a5e98d0a952a1f24ab05145915e08bca, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: -90
+      objectReference: {fileID: 0}
+    - target: {fileID: 6470444102159139706, guid: a5e98d0a952a1f24ab05145915e08bca, type: 3}
+      propertyPath: m_Sprite
+      value: 
+      objectReference: {fileID: 6208176927266180224, guid: ac302565f14239b459349921d501b8d2, type: 3}
     - target: {fileID: 6470444102159139706, guid: a5e98d0a952a1f24ab05145915e08bca, type: 3}
       propertyPath: m_Color.b
       value: 1
@@ -1542,6 +1570,14 @@ PrefabInstance:
       propertyPath: m_AnchoredPosition.y
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 4709321362630942637, guid: ae0c9315aa88b2b4a8e57cada0a496c8, type: 3}
+      propertyPath: m_Type
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4709321362630942637, guid: ae0c9315aa88b2b4a8e57cada0a496c8, type: 3}
+      propertyPath: m_Sprite
+      value: 
+      objectReference: {fileID: -2512128183154619787, guid: 703de7787e7d9934d854e419670eb3cf, type: 3}
     - target: {fileID: 8354619013304581166, guid: ae0c9315aa88b2b4a8e57cada0a496c8, type: 3}
       propertyPath: m_Name
       value: ButtonContainer
@@ -1569,6 +1605,10 @@ PrefabInstance:
     - target: {fileID: 8615649617070255310, guid: ae0c9315aa88b2b4a8e57cada0a496c8, type: 3}
       propertyPath: m_AnchorMin.y
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8615649617070255310, guid: ae0c9315aa88b2b4a8e57cada0a496c8, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 60
       objectReference: {fileID: 0}
     - target: {fileID: 8615649617070255310, guid: ae0c9315aa88b2b4a8e57cada0a496c8, type: 3}
       propertyPath: m_AnchoredPosition.x

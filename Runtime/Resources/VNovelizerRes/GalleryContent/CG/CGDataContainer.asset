@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b059f3da38c0a2d40bb756332b8700fe, type: 3}
+  m_Name: CGDataContainer
+  m_EditorClassIdentifier: VNovelizer.Runtime::CGDataContainer
+  cgList:
+  - cgName: CG01
+    lockedSprite: {fileID: 7507210892967650082, guid: e04975cd4cb8c5e409e7dfa9a48c241a, type: 3}
+    isUnlocked: 1
+    sprites:
+    - {fileID: 8370323655338176369, guid: b2d41d790a8819f40a60c478f342bca1, type: 3}
+    - {fileID: 8245485814491768297, guid: 04630d8f50e20e14b93e606ccd1bf8d2, type: 3}
+    - {fileID: 7640816776830257652, guid: 275aeaca0f5e2c947b634e41dc0084bb, type: 3}
+    - {fileID: 8658740870234760689, guid: 0d315808acde7dd428c4d93805ae68d5, type: 3}
+  - cgName: CG02
+    lockedSprite: {fileID: 0}
+    isUnlocked: 1
+    sprites:
+    - {fileID: 2495080169413455571, guid: 462093b0659d17c4590482ddb0c45fe4, type: 3}
+    - {fileID: -5866640964449314392, guid: 1581dcebfd56ccd4a806999abbe3de35, type: 3}
+    - {fileID: -8195203997288220247, guid: 95e987cc5b4642e4dbe9e61f2d5ee074, type: 3}
+    - {fileID: 4705442545442767092, guid: 23256d50655e70f4f881867b44e0e425, type: 3}
+  - cgName: CG03
+    lockedSprite: {fileID: 0}
+    isUnlocked: 1
+    sprites:
+    - {fileID: -1436592921307378034, guid: 5f8d4895c9f52d943bc378c171ee40dc, type: 3}
+    - {fileID: -1680030725998091308, guid: 719a0b6881194a44a86d4e136f99801b, type: 3}
+    - {fileID: -3055253926422724076, guid: 6d2778adba8033a42a2c66256643f91b, type: 3}
+    - {fileID: 7579046425591686819, guid: ff6d928cceeeb3d4dbc79407f66726bc, type: 3}
+    - {fileID: -5206500869699796996, guid: bf1a7dbd51ef9d6499694ad722071ac5, type: 3}

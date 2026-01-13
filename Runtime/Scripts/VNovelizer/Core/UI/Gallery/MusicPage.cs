@@ -19,6 +19,8 @@ public class MusicPage : MonoBehaviour
                      private Image musicPictureImage; // 音乐封面图片
     [SerializeField] private Button prevButton; // 上一首
     [SerializeField] private Button playPauseButton; // 播放/暂停
+    [SerializeField] private Sprite PlayImage;
+    [SerializeField] private Sprite PauseImage;
     [SerializeField] private Button nextButton; // 下一首
     [SerializeField] private Slider progressSlider; // 播放进度条
     [SerializeField] private Slider volumeSlider; // 音量进度条
@@ -426,8 +428,9 @@ public class MusicPage : MonoBehaviour
         
         if (isPlaying && audioSource.isPlaying)
         {
-            // 暂停
+
             audioSource.Pause();
+           
             isPlaying = false;
         }
         else
@@ -509,7 +512,15 @@ public class MusicPage : MonoBehaviour
     private void UpdatePlayPauseButton()
     {
         if (playPauseButton == null) return;
-        
+
+        if (isPlaying)
+        {
+            playPauseButton.image.sprite = PauseImage;
+        }
+        else
+        {
+            playPauseButton.image.sprite = PlayImage;
+        }
         // 可以在这里更新按钮的图标或文本
         // 例如：TextMeshProUGUI buttonText = playPauseButton.GetComponentInChildren<TextMeshProUGUI>();
         // if (buttonText != null) buttonText.text = isPlaying ? "暂停" : "播放";

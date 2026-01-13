@@ -251,17 +251,27 @@ public class VNGameplayPanel : BasePanel
 
     private void Update()
     {
-        // 快进模式下，检查是否到达对话末尾
-        // 【修复】在 Choice 状态下，不应该继续快进
+
         if (isSkipping && !isTextTyping)
         {
             if (!isAutoPlaying && !isUIHidden)
             {
-                // 检查游戏状态，如果是 Choice 状态，停止快进
+                // 检查游戏状态，只有在 Gameplay 或 AutoPlay 状态下才能快进
                 GameStateManager stateManager = GameStateManager.GetInstance();
-                if (stateManager != null && stateManager.CurrentState == GameState.Choice)
+                if (stateManager != null && !stateManager.CanInteractGameplay())
+                {
+                    // 在非 Gameplay/AutoPlay 状态下（如 Choice、SaveLoad、History、Pause 等），停止快进
+                    isSkipping = false;
+                    UpdateSkipButtonState();
+                    return;
+                }
+                
+                // 额外检查 Choice 状态（虽然 CanInteractGameplay 已经排除了，但为了安全再检查一次）
+                if (stateManager.CurrentState == GameState.Choice)
                 {
                     // 在 Choice 状态下，停止快进，等待玩家选择
+                    isSkipping = false;
+                    UpdateSkipButtonState();
                     return;
                 }
                 
@@ -421,6 +431,19 @@ public class VNGameplayPanel : BasePanel
     // Skip事件 - 激活快进模式
     public void OnSkip(InputAction.CallbackContext context)
     {
+        // 只有在 Gameplay 或 AutoPlay 状态下才能激活快进
+        if (!GameStateManager.GetInstance().CanInteractGameplay())
+        {
+            return;
+        }
+        
+        // 额外检查 Choice 状态
+        if (GameStateManager.GetInstance().CurrentState == GameState.Choice)
+        {
+            return;
+        }
+        
+        Debug.Log("快进模式开启");
         isSkipping = true;
         UpdateSkipButtonState();
         // 设置TimeScale实现快进效果
@@ -986,8 +1009,29 @@ public class VNGameplayPanel : BasePanel
 
     private void OnSkipButtonClick()
     {
+        // 只有在 Gameplay 或 AutoPlay 状态下才能切换快进
+        if (!GameStateManager.GetInstance().CanInteractGameplay())
+        {
+            Debug.LogWarning($"[VNGameplayPanel] 当前状态不允许快进: {GameStateManager.GetInstance().CurrentState}");
+            return;
+        }
+        
+        // 额外检查 Choice 状态
+        if (GameStateManager.GetInstance().CurrentState == GameState.Choice)
+        {
+            Debug.LogWarning("[VNGameplayPanel] Choice 状态下不允许快进");
+            return;
+        }
+        
+        // 切换快进状态
         isSkipping = !isSkipping;
         UpdateSkipButtonState();
+        
+        // 如果激活快进且当前没有打字效果，立即触发一次快进（和按住Ctrl一样的效果）
+        if (isSkipping && !isTextTyping && !isAutoPlaying && !isUIHidden)
+        {
+            VNManager.GetInstance().NextLine();
+        }
     }
 
     private void OnSaveButtonClick()

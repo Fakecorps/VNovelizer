@@ -52,6 +52,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: VNovelizer.Runtime::MusicPage
   prevButton: {fileID: 7121894538176484715}
   playPauseButton: {fileID: 8265378166034721370}
+  PlayImage: {fileID: 0}
+  PauseImage: {fileID: 0}
   nextButton: {fileID: 6822938995992634143}
   progressSlider: {fileID: 7701348410901023710}
   volumeSlider: {fileID: 4792546171409559533}
@@ -194,7 +196,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 6563537264233257106, guid: 0c2c2365ccc50b44d8e2954f048d7dce, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -0.000041246414
+      value: -0.0000038146973
       objectReference: {fileID: 0}
     - target: {fileID: 8202121858091309794, guid: 0c2c2365ccc50b44d8e2954f048d7dce, type: 3}
       propertyPath: m_Size
@@ -234,6 +236,38 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 8503673878685212446}
     m_Modifications:
+    - target: {fileID: 1352613078740370864, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1352613078740370864, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1352613078740370864, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1352613078740370864, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1703977142842560217, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1703977142842560217, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1703977142842560217, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1703977142842560217, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 2328013667228796941, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
       propertyPath: m_Name
       value: RightPanel
@@ -248,6 +282,22 @@ PrefabInstance:
       objectReference: {fileID: -5726200937258273782, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
     - target: {fileID: 2926191023315082471, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
       propertyPath: m_hasFontAssetChanged
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3067220347407732963, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3067220347407732963, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3067220347407732963, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3067220347407732963, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}
+      propertyPath: m_AnchoredPosition.y
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3202370781642925734, guid: cd0b9edf015abb246bd0e99a96886762, type: 3}

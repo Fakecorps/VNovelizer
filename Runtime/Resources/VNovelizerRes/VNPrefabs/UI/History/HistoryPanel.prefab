@@ -138,11 +138,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1121679560320964044, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 160
+      value: 50
       objectReference: {fileID: 0}
     - target: {fileID: 1121679560320964044, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 30
+      value: 50
       objectReference: {fileID: 0}
     - target: {fileID: 1121679560320964044, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
       propertyPath: m_LocalPosition.x
@@ -174,11 +174,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1121679560320964044, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: -80
+      value: -45
       objectReference: {fileID: 0}
     - target: {fileID: 1121679560320964044, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -15
+      value: -29
       objectReference: {fileID: 0}
     - target: {fileID: 1121679560320964044, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -195,6 +195,18 @@ PrefabInstance:
     - target: {fileID: 2103165136986962786, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
       propertyPath: m_Name
       value: H_Close
+      objectReference: {fileID: 0}
+    - target: {fileID: 6095949884034258037, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
+      propertyPath: m_Type
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6095949884034258037, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
+      propertyPath: m_Sprite
+      value: 
+      objectReference: {fileID: 8482712648628362555, guid: 0df7fdb8b85a24d48bf21dbad0611cb2, type: 3}
+    - target: {fileID: 7109159364317572997, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
+      propertyPath: m_text
+      value: 
       objectReference: {fileID: 0}
     - target: {fileID: 7109159364317572997, guid: 89af2accbeab48744a3ae82c60037703, type: 3}
       propertyPath: m_fontAsset

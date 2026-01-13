@@ -771,6 +771,18 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 4211971438425843541}
     m_Modifications:
+    - target: {fileID: 1779217506582742462, guid: 863124a9855b906429de4b4cb5050699, type: 3}
+      propertyPath: m_Type
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1779217506582742462, guid: 863124a9855b906429de4b4cb5050699, type: 3}
+      propertyPath: m_Sprite
+      value: 
+      objectReference: {fileID: 8482712648628362555, guid: 0df7fdb8b85a24d48bf21dbad0611cb2, type: 3}
+    - target: {fileID: 7474681826152665743, guid: 863124a9855b906429de4b4cb5050699, type: 3}
+      propertyPath: m_text
+      value: 
+      objectReference: {fileID: 0}
     - target: {fileID: 7474681826152665743, guid: 863124a9855b906429de4b4cb5050699, type: 3}
       propertyPath: m_fontAsset
       value: 
@@ -813,7 +825,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8412540359683210361, guid: 863124a9855b906429de4b4cb5050699, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 250
+      value: 100
       objectReference: {fileID: 0}
     - target: {fileID: 8412540359683210361, guid: 863124a9855b906429de4b4cb5050699, type: 3}
       propertyPath: m_SizeDelta.y
@@ -849,11 +861,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8412540359683210361, guid: 863124a9855b906429de4b4cb5050699, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: -125
+      value: -50
       objectReference: {fileID: 0}
     - target: {fileID: 8412540359683210361, guid: 863124a9855b906429de4b4cb5050699, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -49.97
+      value: -50
       objectReference: {fileID: 0}
     - target: {fileID: 8412540359683210361, guid: 863124a9855b906429de4b4cb5050699, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
