@@ -87,6 +87,8 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new PlayParticleCommand());
             RegisterCommand(new StopParticleCommand());
             RegisterCommand(new ShowPromptCommand());
+            RegisterCommand(new PlayAnimCommand());
+            RegisterCommand(new StopAnimCommand());
         }
 
         public void RegisterCommand(VNCommand command)

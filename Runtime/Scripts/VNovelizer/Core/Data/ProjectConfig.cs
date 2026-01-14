@@ -82,6 +82,9 @@ public class VNProjectConfig : ScriptableObject
     [Tooltip("粒子特效在Resources下的相对路径")]
     public string ParticalEffectPath = "VNovelizerRes/VFX/Partical";
 
+    [Tooltip("动画在Resources下的相对路径")]
+    public string AnimationPath = "VNovelizerRes/VFX/Animation";
+
     [Header("=== UI预制件加载路径 (UI Prefabs) ===")]
     [Tooltip("VNGamePanel在Resources下的相对路径 (例如: VNovelizerRes/VNPrefabs/UI/VNGamePlay)")]
     public string UI_VNGamePlayPath = "VNovelizerRes/VNPrefabs/UI/VNGamePlay";
@@ -128,6 +131,11 @@ public class VNProjectConfig : ScriptableObject
     [Header("=== UI 默认资源 (UI Default Resources) ===")]
     [Tooltip("默认姓名框 Sprite（当角色没有配置 SpeakerBox 时使用）")]
     public Sprite DefaultSpeakerBoxSprite;
+    
+    [Tooltip("默认头像边框 Sprite（当角色没有配置 HeadFrame 时使用）")]
+    public Sprite DefaultHeadFrameSprite;
+
+
 
     [Header("=== 音效/视频Obj加载路径 ===")]
     [Tooltip("SoundObj在Resources下的相对路径 (例如: VNovelizerRes/VNPrefabs/Gameplay/SoundObj")]

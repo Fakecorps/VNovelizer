@@ -351,9 +351,19 @@ public class UIManager : BaseManager<UIManager>
             }
         }
         
+        string uiTaskID = $"ui_{panelName}";
+        LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
+        
         // 检查面板是否已存在
         if (panelDic.ContainsKey(panelName))
         {
+            // 【修复】如果面板已存在，也需要完成任务，避免进度条卡住
+            if (progressManager.GetTaskProgress(uiTaskID) >= 0)
+            {
+                // 任务已注册，直接完成它
+                progressManager.CompleteTask(uiTaskID);
+            }
+            
             panelDic[panelName].ShowMe();
             if (callBack != null)
             {
@@ -363,8 +373,6 @@ public class UIManager : BaseManager<UIManager>
         }
         
         // 注册UI加载任务（如果任务已存在，不重复注册，只更新名称）
-        string uiTaskID = $"ui_{panelName}";
-        LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
         bool taskExists = progressManager.GetTaskProgress(uiTaskID) >= 0;
         
         if (!taskExists)
@@ -377,14 +385,10 @@ public class UIManager : BaseManager<UIManager>
             // 任务已存在，只更新名称（可能权重已在其他地方设置）
             progressManager.UpdateTaskName(uiTaskID, $"加载UI: {panelName}");
         }
-        
-        // 使用带进度跟踪的LoadAsync，传递taskID让ResourcesManager自动更新进度
-        // ResourcesManager会检查任务是否存在，如果存在就不重复注册，只更新进度
         ResourcesManager.GetInstance().LoadAsync<GameObject>(
             loadPath +"/"+ panelName, 
             (obj) =>
             {
-                // UI加载完成，ResourcesManager已经自动完成任务（通过传递taskID）
                 
                 // 异步加载完成后，再次检查面板是否已存在
                 if (panelDic.ContainsKey(panelName))

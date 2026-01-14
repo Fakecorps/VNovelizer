@@ -35,6 +35,10 @@ public class VNGameplayPanel : BasePanel
     [Tooltip("默认姓名框 Sprite（可选，如果为空则使用 VNProjectConfig 中的全局默认值）")]
     [SerializeField] private Sprite defaultSpeakerBoxSprite;
     
+    [Header("HeadFrame 配置")]
+    [Tooltip("默认头像边框 Sprite（可选，如果为空则使用 VNProjectConfig 中的全局默认值）")]
+    [SerializeField] private Sprite defaultHeadFrameSprite;
+    
     // 【新增】存储每个位置的默认 Transform（用于 setchartrans 命令的恢复）
     private Dictionary<string, Vector2> defaultCharPositions = new Dictionary<string, Vector2>();
     private Dictionary<string, float> defaultCharScales = new Dictionary<string, float>();
@@ -71,7 +75,7 @@ public class VNGameplayPanel : BasePanel
     [Header("Prompt System")]
     [SerializeField] private Transform promptContainer; // 挂一个放在左上角的空物体
     private GameObject promptPrefab;
-    //private Coroutine currentTypingCoroutine;
+
     private Coroutine autoPlayCoroutine;
 
     private Tween _typewriterTween;
@@ -79,7 +83,7 @@ public class VNGameplayPanel : BasePanel
     // UI根节点
     [SerializeField] private Transform uiRoot;
 
-    // --- 新版输入系统 (纯C#类方式) ---
+
     private VNInputActions inputActions;
 
     #endregion
@@ -925,8 +929,8 @@ public class VNGameplayPanel : BasePanel
         string characterID = parts[0].Trim();
         string emotion = parts[1].Trim();
         
-        // 从 CharacterResManager 获取头像
-        CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
+        // 从 CharacterResManager 获取头像和边框
+        CharacterProfile profile = CharacterResManager.GetInstance().TryGetCharacterProfile(characterID);
         if (profile != null)
         {
             Sprite headSprite = profile.GetHeadSprite(emotion);
@@ -939,11 +943,43 @@ public class VNGameplayPanel : BasePanel
             {
                 Debug.LogWarning($"[VNGameplayPanel] 角色 {characterID} 没有找到情绪 {emotion} 的头像");
                 if (headProfileTransform != null) headProfileTransform.gameObject.SetActive(false);
+                return;
+            }
+            
+            // 设置头像边框（优先使用角色配置，其次使用面板默认，最后使用全局默认）
+            if (headFrame != null)
+            {
+                if (profile.HeadFrame != null)
+                {
+                    // 情况1：找到角色配置且 HeadFrame 有引用
+                    headFrame.sprite = profile.HeadFrame;
+                }
+                else
+                {
+                    // 情况2：CharacterProfile.HeadFrame 无引用，使用默认边框
+                    Sprite defaultFrame = defaultHeadFrameSprite; // 优先使用面板级配置
+                    if (defaultFrame == null && VNProjectConfig.Instance != null)
+                    {
+                        defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite; // 使用全局配置
+                    }
+                    headFrame.sprite = defaultFrame;
+                }
             }
         }
         else
         {
-            Debug.LogWarning($"[VNGameplayPanel] 找不到角色配置: {characterID}");
+            // 情况3：找不到角色配置，使用默认边框
+            if (headFrame != null)
+            {
+                Sprite defaultFrame = defaultHeadFrameSprite; // 优先使用面板级配置
+                if (defaultFrame == null && VNProjectConfig.Instance != null)
+                {
+                    defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite; // 使用全局配置
+                }
+                headFrame.sprite = defaultFrame;
+            }
+            
+            Debug.LogWarning($"[VNGameplayPanel] 找不到角色配置: {characterID}，使用默认头像边框");
             if (headProfileTransform != null) headProfileTransform.gameObject.SetActive(false);
         }
     }

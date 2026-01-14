@@ -19,6 +19,7 @@ public class CharacterProfile : ScriptableObject
     public List<ElementSprite> HeadSprites = new List<ElementSprite>();
 
     public Sprite SpeakerBox; // 姓名框资源
+    public Sprite HeadFrame; // 头像边框资源
     /// <summary>
     /// 根据情绪名称获取对应的立绘
     /// </summary>
