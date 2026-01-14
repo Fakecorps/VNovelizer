@@ -71,15 +71,31 @@ https://github.com/Fakecorps/VNovelizer.git
 
 ## 📖 快速上手 (Quick Start)
 
-### 1. 编写剧本
+### 1. 编写剧本 (Scripting)
+
 1.  打开 **VNovelizer -> 📜 剧本管理器**。
 2.  点击 **"➕ 新建"**，输入文件名（如 `Chapter1`）。Excel 会自动打开。
-3.  参照示例填写内容：
-    *   `ID`: 行ID
-    *   `Speaker`: 说话人名字
-    *   `Text`: 对话内容
-    *   `Command`: 演出指令 (如 `charjump(M)`)
-4.  保存 Excel，回到 Unity，点击 **"🔄 转换"**。
+3.  **剧本表格规则详解**：
+
+| 列名 (Column) | 说明 (Description) | 填写示例 | 注意事项 |
+| :--- | :--- | :--- | :--- |
+| **ID** | **行号 (必填)** | `1001` | 必须是唯一的数字或字符串。用于跳转 (`jump`) 和存档定位。 |
+| **Speaker** | 说话人名字 | `艾米` / `??` | 如果留空，游戏会显示上一行的名字 (继承)。 |
+| **HeadProfile** | 头像配置 | `Amy_Smile` | 对应角色ID_表情名。填 `hide` 可隐藏头像。 |
+| **CharLeft/Mid/Right** | 立绘显示 | `Amy_Happy` | 对应角色ID_表情名。填 `hide` 隐藏该位置角色。 |
+| **Text** | 对话内容 | `今天天气真好啊。` | 支持 RichText (如 `<color=red>危险</color>`)。 |
+| **Background** | 背景图片名 | `School_Day` | 对应 Resources 里的图片名。留空则继承上一张背景。 |
+| **BGM** | 背景音乐 | `Daily_Life` | 填 `stop` 停止音乐，填 `pause` 暂停。 |
+| **Voice** | 语音文件名 | `1001_voice` | 留空会自动尝试加载与 ID 同名的文件。填 `false` 强制不播。 |
+| **Command** | 演出指令 | `shake(screen)` | 多个指令用 `&` 连接。 |
+| **Note** | 备注 | `这里是第一章` | 仅供策划备注，游戏内不读取。 |
+
+> **💡 继承原则 (Inheritance Rule)**:
+> VNovelizer 采用“状态继承”机制。为了减少填表工作量，**除了 ID 外，大部分列如果留空，系统会自动继承上一行的状态**。
+> *   例如：如果第 1 行设置了背景为 `School`，第 2 行背景留空，那么第 2 行依然显示学校背景。
+> *   如果想清除状态（如隐藏立绘），请显式填入 `hide` 或 `stop`。
+
+4.  保存 Excel，回到 Unity，在剧本管理器中点击 **"🔄 转换"**。
 
 ### 2. 运行游戏
 1.  打开 `Assets/Scenes/VNDebugScene` 场景。
