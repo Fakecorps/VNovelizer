@@ -1,12 +1,13 @@
 # 🚀 VNovelizer - Unity Visual Novel Framework
 
-![Unity Version](https://img.shields.io/badge/Unity-6.0%2B-blue) ![License](https://img.shields.io/badge/License-GPL--3.0-green)
+![Unity Version](https://img.shields.io/badge/Unity-6.0%2B-blue) ![License](https://img.shields.io/badge/License-MIT_LICENSE)
 
 **VNovelizer** 是一款基于 Unity 的轻量级、高度可扩展的视觉小说（Visual Novel & AVG）制作框架。
 即使你不懂编程，只需使用 **Excel** 编写剧本，即可快速制作出功能完整的视觉小说游戏！
 
 > 📺 **作者 B 站首页**: [Fakecorps](https://space.bilibili.com/353379364)  
 > 🔗 **GitHub 仓库**: [VNovelizer](https://github.com/Fakecorps/VNovelizer)
+> 🔗 **VNoverlizer使用说明文档**:[VNovelizer飞书文档](https://my.feishu.cn/wiki/space/7589983850810346443?ccm_open_type=lark_wiki_spaceLink&open_tab_from=wiki_home)
 
 ---
 
@@ -108,7 +109,7 @@ https://github.com/Fakecorps/VNovelizer.git
 | **shake** | `shake(screen, 0.5, 20)` | 屏幕震动 (时间, 强度) |
 | **playparticle** | `playparticle(Snow)` | 播放粒子特效 (如 Snow, Rain) |
 | **playvideo** | `playvideo(OP.mp4)` | 播放全屏视频 (需在 StreamingAssets) |
-| **choice** | `choice:是|jump(10) & choice:否|jump(20)` | 显示分支选项 |
+| **choice** | `choice(yes｜jump(10))&choice(no｜jump(20))` | 显示分支选项,yse -> 跳转至ID10处,no -> 跳转到ID20处 |
 
 ---
 
