@@ -1,6 +1,6 @@
 {
   "name": "com.yourname.vnovelizer",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "displayName": "VNovelizer",
   "description": "An Excel-driven Visual Novel framework.You can use this Plugins to help you create your own Unty Visual Novel",
   "unity": "6000.0",
