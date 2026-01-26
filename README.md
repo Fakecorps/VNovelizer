@@ -149,7 +149,6 @@ VNManager.GetInstance().StartGame("Chapter1", "1005");
 *   `loadscript(filename)`: 加载并切换到新的剧本文件。
 *   `choice(Text | Command)`: 创建分支选项。
     *   *示例*: `choice(去吃饭|jump(200)) & choice(去睡觉|jump(300))`
-*   `wait(seconds)`: 等待指定秒数后再继续。
 
 </details>
 
@@ -195,7 +194,8 @@ VNManager.GetInstance().StartGame("Chapter1", "1005");
 *   `unlockmusic(name)`: 解锁画廊中的音乐。
 *   `unlockscene(name)`: 解锁回想场景。
 *   `playsfx(name, times)`: 播放音效。
-*   `config(key:value)`: 动态修改配置 (如 `textspeed:0.1`).
+*   `t_color(R,G,B)`: 修改当前行字体颜色，效果不继承。
+*   `t_size(font size)`: 修改当前行字体大小，效果不继承。
 
 </details>
 
