@@ -63,6 +63,8 @@ namespace VNovelizer.Core.Commands
         {
             RegisterCommand(new LoadScriptCommand());
             RegisterCommand(new UnlockCGCommand());
+            RegisterCommand(new UnlockMusicCommand());
+            RegisterCommand(new UnlockSceneCommand());
             RegisterCommand(new ConfigCommand());
             RegisterCommand(new ShakeCommand());
             RegisterCommand(new WaitCommand());
@@ -89,6 +91,7 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new ShowPromptCommand());
             RegisterCommand(new PlayAnimCommand());
             RegisterCommand(new StopAnimCommand());
+
         }
 
         public void RegisterCommand(VNCommand command)
