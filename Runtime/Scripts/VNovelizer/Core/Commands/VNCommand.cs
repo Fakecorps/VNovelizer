@@ -1,6 +1,9 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Linq;
+using System.Reflection;
+using System;
 
 namespace VNovelizer.Core.Commands
 {
@@ -57,6 +60,7 @@ namespace VNovelizer.Core.Commands
         public void Init()
         {
             RegisterDefaultCommands();
+            RegisterCustomCommandsViaReflection();
         }
 
         private void RegisterDefaultCommands()
@@ -92,6 +96,45 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new PlayAnimCommand());
             RegisterCommand(new StopAnimCommand());
 
+        }
+
+        private void RegisterCustomCommandsViaReflection()
+        {
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+
+            foreach (var assembly in assemblies)
+            {
+
+                string name = assembly.GetName().Name;
+                if (name.StartsWith("Unity") || name.StartsWith("System") || name.StartsWith("mscorlib"))
+                    continue;
+
+                var commandTypes = assembly.GetTypes()
+                    .Where(type => type.IsSubclassOf(typeof(VNCommand)) && !type.IsAbstract);
+
+                foreach (var type in commandTypes)
+                {
+                    try
+                    {
+                        VNCommand cmdInstance = (VNCommand)Activator.CreateInstance(type);
+
+                        if (cmdInstance != null && !string.IsNullOrEmpty(cmdInstance.CommandName))
+                        {
+                            string cmdNameKey = cmdInstance.CommandName.ToLower();
+
+                            if (!_commandMap.ContainsKey(cmdNameKey))
+                            {
+                                RegisterCommand(cmdInstance);
+                                Debug.Log($"[CommandManager] 自动注册命令成功 {type.Name} => {cmdNameKey}");
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogError($"[CommandManager] 自动注册命令失败 {type.Name}: {e.Message}");
+                    }
+                }
+            }
         }
 
         public void RegisterCommand(VNCommand command)
