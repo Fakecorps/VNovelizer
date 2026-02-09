@@ -20,6 +20,13 @@ public class CharacterProfile : ScriptableObject
 
     public Sprite SpeakerBox; // 姓名框资源
     public Sprite HeadFrame; // 头像边框资源
+    
+    [Header("立绘显示设置")]
+    [Tooltip("立绘缩放比例，1.0为原始大小")]
+    public float scale = 1.0f;
+    
+    [Tooltip("立绘位置偏移量（相对于原始位置）")]
+    public Vector2 offset = Vector2.zero;
     /// <summary>
     /// 根据情绪名称获取对应的立绘
     /// </summary>

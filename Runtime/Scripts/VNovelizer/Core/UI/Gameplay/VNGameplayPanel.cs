@@ -856,9 +856,32 @@ public class VNGameplayPanel : BasePanel
             Sprite sprite = profile.GetEmotionSprite(emotion);
             if (sprite != null)
             {
+                RectTransform charRect = charImage.rectTransform;
+                
+                // 保存原始锚点设置（SetNativeSize会重置锚点）
+                Vector2 savedAnchorMin = charRect.anchorMin;
+                Vector2 savedAnchorMax = charRect.anchorMax;
+                
+                // 设置sprite并恢复原始尺寸（避免拉伸）
                 charImage.sprite = sprite;
                 charImage.color = Color.white;
                 charImage.gameObject.SetActive(true);
+                
+                // 使用SetNativeSize()恢复原始尺寸，保证不会产生拉伸
+                charImage.SetNativeSize();
+                
+                // 恢复锚点设置（SetNativeSize会将anchorMax设为anchorMin，需要恢复）
+                charRect.anchorMin = savedAnchorMin;
+                charRect.anchorMax = savedAnchorMax;
+                
+                // 此时anchoredPosition应该是基准位置（SetNativeSize并恢复锚点后的位置）
+                // 基于这个基准位置应用offset，而不是累加
+                Vector2 basePosition = charRect.anchoredPosition;
+                charRect.anchoredPosition = basePosition + profile.offset;
+                
+                // 应用profile中的scale（使用localScale，不影响布局系统）
+                float profileScale = profile.scale > 0 ? profile.scale : 1.0f; // 防止非正值
+                Vector3 scale = Vector3.one * profileScale;
                 
                 // 应用保存的翻转状态（如果存在）
                 // 位置代码转换：VNManager 内部使用 "Left"/"Mid"/"Right"，但 API 使用 "L"/"M"/"R"
@@ -870,12 +893,11 @@ public class VNGameplayPanel : BasePanel
                 float savedScaleX = VNManager.GetInstance().GetCharacterScaleX(posCode);
                 if (savedScaleX != 1f) // 如果不是默认值，应用翻转
                 {
-                    RectTransform charRect = charImage.rectTransform;
-                    Vector3 scale = charRect.localScale;
-                    scale.x = savedScaleX;
-                    charRect.localScale = scale;
-                    Debug.Log($"[VNGameplayPanel] 应用位置 {position}({posCode}) 的翻转状态: {savedScaleX}");
+                    scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
                 }
+                charRect.localScale = scale;
+                
+                Debug.Log($"[VNGameplayPanel] 应用位置 {position}({posCode}) - Scale: {profileScale}, Offset: {profile.offset}, Flip: {savedScaleX}, BasePos: {basePosition}");
             }
         }
     }

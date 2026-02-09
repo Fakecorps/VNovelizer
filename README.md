@@ -110,7 +110,7 @@ VNovelizer 使用 `ScriptableObject` 管理角色资源，实现了逻辑 ID 与
 | **Text** | | 对话文本。支持 TMP 富文本标签。 | `你好，<color=red>陌生人</color>。` |
 | **Background** | | 背景图名 (需在 Resources 背景目录)。留空继承。 | `School_Day` |
 | **BGM** | | 背景音乐名。填 `stop` 停止，`pause` 暂停。 | `Theme_Song` |
-| **Voice** | | 语音文件名。留空自动尝试加载 `行ID.mp3`。`false` 为静音。 | `1001_v` |
+| **Voice** | | 语音文件名。留空自动尝试加载 `行ID.mp3`。`false` 为静音，即该剧本不使用配音。 | `1001_v` |
 | **Command** | | 演出指令集。多条指令用 `&` 分隔。 | `shake(screen)&wait(0.5)` |
 | **Note** | | 策划备注（游戏内不加载）。 | `第一章结束` |
 

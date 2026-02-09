@@ -10,9 +10,15 @@ public class CharacterEditorWindow : EditorWindow
 {
     private const string CHARACTER_PATH = "Assets/Resources/VNovelizerRes/Characters";
 
+    // UI 元素
     private ListView leftListView;
     private VisualElement rightPane;
     private Image previewImage;
+    private TextField searchField;
+
+    // 选项卡按钮 (成员变量)
+    private Button expTab;
+    private Button headTab;
 
     // 列表相关
     private ListView elementListView; // 立绘列表
@@ -20,7 +26,9 @@ public class CharacterEditorWindow : EditorWindow
     private VisualElement expressionContainer;
     private VisualElement headContainer;
 
+    // 数据
     private List<CharacterProfile> allProfiles = new List<CharacterProfile>();
+    private List<CharacterProfile> filteredProfiles = new List<CharacterProfile>(); // 用于搜索过滤
     private CharacterProfile selectedProfile;
 
     // 当前选中的 Tab (0=Expression, 1=Head)
@@ -31,95 +39,103 @@ public class CharacterEditorWindow : EditorWindow
     {
         var wnd = GetWindow<CharacterEditorWindow>();
         wnd.titleContent = new GUIContent("角色编辑器");
-        wnd.minSize = new Vector2(1000, 700); // 稍微加大默认窗口尺寸
+        wnd.minSize = new Vector2(900, 600);
     }
 
     public void CreateGUI()
     {
-        if (!Directory.Exists(CHARACTER_PATH))
-        {
-            Directory.CreateDirectory(CHARACTER_PATH);
-            AssetDatabase.Refresh();
-        }
+        EnsureDirectory();
 
         var root = rootVisualElement;
-        root.style.backgroundColor = new Color(0.2f, 0.2f, 0.2f); // 全局深色背景
 
-        // 主分栏 (左窄右宽)
-        var splitView = new TwoPaneSplitView(0, 280, TwoPaneSplitViewOrientation.Horizontal);
+        // 1. 主分栏 (左侧列表，右侧详情)
+        var splitView = new TwoPaneSplitView(0, 250, TwoPaneSplitViewOrientation.Horizontal);
         root.Add(splitView);
 
         // ==========================
         //        左侧：列表栏
         // ==========================
         var leftPane = new VisualElement();
-        leftPane.style.backgroundColor = new Color(0.18f, 0.18f, 0.18f); // 侧边栏稍深
-        leftPane.style.borderRightWidth = 1;
-        leftPane.style.borderRightColor = new Color(0.1f, 0.1f, 0.1f);
+        leftPane.style.backgroundColor = new Color(0.18f, 0.18f, 0.18f); // 侧边栏深色背景
+        splitView.Add(leftPane);
 
-        // 顶部工具栏 (更现代的样式)
+        // 1.1 工具栏 (搜索 + 新建 + 刷新)
         var toolbar = new VisualElement();
         toolbar.style.flexDirection = FlexDirection.Row;
-        toolbar.style.paddingTop = 8;
-        toolbar.style.paddingBottom = 8;
-        toolbar.style.paddingLeft = 10;
-        toolbar.style.paddingRight = 10;
-        toolbar.style.backgroundColor = new Color(0.25f, 0.25f, 0.25f);
+        toolbar.style.paddingTop = 5;
+        toolbar.style.paddingBottom = 5;
+        toolbar.style.paddingLeft = 5;
+        toolbar.style.paddingRight = 5;
+        toolbar.style.backgroundColor = new Color(0.22f, 0.22f, 0.22f);
         toolbar.style.borderBottomWidth = 1;
         toolbar.style.borderBottomColor = new Color(0.1f, 0.1f, 0.1f);
 
-        var createBtn = new Button(CreateNewCharacter) { text = "➕ 新建角色" };
-        createBtn.style.flexGrow = 1;
-        createBtn.style.height = 28;
-        createBtn.style.backgroundColor = new Color(0.2f, 0.5f, 0.2f); // 绿色按钮
-        createBtn.style.color = Color.white;
-        createBtn.style.unityFontStyleAndWeight = FontStyle.Bold;
+        // 搜索框
+        searchField = new TextField();
+        searchField.style.flexGrow = 1;
+        searchField.RegisterValueChangedCallback(evt => FilterList(evt.newValue));
+        // searchField.placeholderText = "搜索角色..."; // 移除旧API
+        toolbar.Add(searchField);
 
         var refreshBtn = new Button(LoadAllProfiles) { text = "↻" };
-        refreshBtn.style.width = 32;
-        refreshBtn.style.height = 28;
-
-        toolbar.Add(createBtn);
+        refreshBtn.style.width = 25;
         toolbar.Add(refreshBtn);
+
+        var createBtn = new Button(CreateNewCharacter) { text = "+" };
+        createBtn.style.width = 25;
+        createBtn.style.backgroundColor = new Color(0.25f, 0.5f, 0.25f);
+        toolbar.Add(createBtn);
+
         leftPane.Add(toolbar);
 
-        // 角色列表 (增加行间距和字体大小)
+        // 1.2 角色列表
         leftListView = new ListView();
-        leftListView.fixedItemHeight = 35; // 增加行高
+        leftListView.fixedItemHeight = 30;
         leftListView.makeItem = () =>
         {
             var label = new Label();
-            label.style.paddingLeft = 15;
+            label.style.paddingLeft = 10;
             label.style.unityTextAlign = TextAnchor.MiddleLeft;
-            label.style.fontSize = 13;
+            label.style.fontSize = 12;
             return label;
         };
-        leftListView.bindItem = (element, index) => { (element as Label).text = allProfiles[index].CharacterID; };
-        leftListView.itemsSource = allProfiles;
+        leftListView.bindItem = (element, index) =>
+        {
+            (element as Label).text = filteredProfiles[index].CharacterID;
+        };
+        leftListView.itemsSource = filteredProfiles;
         leftListView.selectionType = SelectionType.Single;
         leftListView.style.flexGrow = 1;
         leftListView.selectionChanged += OnCharacterSelected;
 
         leftPane.Add(leftListView);
-        splitView.Add(leftPane);
 
         // ==========================
         //        右侧：详情栏
         // ==========================
         rightPane = new VisualElement();
-        rightPane.style.paddingTop = 20;
-        rightPane.style.paddingLeft = 30;
-        rightPane.style.paddingRight = 30;
-        rightPane.style.paddingBottom = 20;
-
-        // 默认提示 (居中大字)
-        var tipContainer = new VisualElement() { style = { flexGrow = 1, justifyContent = Justify.Center, alignItems = Align.Center } };
-        tipContainer.Add(new Label("请在左侧选择一个角色") { style = { color = Color.gray, fontSize = 16 } });
-        rightPane.Add(tipContainer); // 初始只显示提示，选中后 Clear 掉
+        rightPane.style.paddingTop = 10;
+        rightPane.style.paddingLeft = 15;
+        rightPane.style.paddingRight = 15;
+        rightPane.style.paddingBottom = 10;
+        rightPane.style.backgroundColor = new Color(0.22f, 0.22f, 0.22f); // 主视图背景
 
         splitView.Add(rightPane);
 
+        // 初始加载
         LoadAllProfiles();
+
+        // 初始显示提示
+        ShowPlaceholder();
+    }
+
+    private void EnsureDirectory()
+    {
+        if (!Directory.Exists(CHARACTER_PATH))
+        {
+            Directory.CreateDirectory(CHARACTER_PATH);
+            AssetDatabase.Refresh();
+        }
     }
 
     private void LoadAllProfiles()
@@ -131,289 +147,283 @@ public class CharacterEditorWindow : EditorWindow
             var p = AssetDatabase.LoadAssetAtPath<CharacterProfile>(AssetDatabase.GUIDToAssetPath(guid));
             if (p != null) allProfiles.Add(p);
         }
+        FilterList(searchField?.value ?? "");
+    }
+
+    private void FilterList(string searchText)
+    {
+        if (string.IsNullOrEmpty(searchText))
+        {
+            filteredProfiles = new List<CharacterProfile>(allProfiles);
+        }
+        else
+        {
+            filteredProfiles = allProfiles
+                .Where(p => p.CharacterID.ToLower().Contains(searchText.ToLower()))
+                .ToList();
+        }
+        leftListView.itemsSource = filteredProfiles;
         leftListView.Rebuild();
     }
 
     private void OnCharacterSelected(IEnumerable<object> selectedItems)
     {
         rightPane.Clear();
-        foreach (var item in selectedItems)
+        var item = selectedItems.FirstOrDefault();
+        if (item is CharacterProfile profile)
         {
-            selectedProfile = item as CharacterProfile;
-            if (selectedProfile != null) DrawDetailView(selectedProfile);
-            break;
+            selectedProfile = profile;
+            DrawDetailView(profile);
         }
+        else
+        {
+            ShowPlaceholder();
+        }
+    }
+
+    private void ShowPlaceholder()
+    {
+        rightPane.Clear();
+        var label = new Label("请在左侧选择一个角色或新建角色")
+        {
+            style = {
+                color = Color.gray,
+                fontSize = 14,
+                unityTextAlign = TextAnchor.MiddleCenter,
+                flexGrow = 1
+            }
+        };
+        rightPane.Add(label);
     }
 
     private void DrawDetailView(CharacterProfile profile)
     {
-        // 1. 标题区 (ID + 删除按钮)
-        var headerRow = new VisualElement();
-        headerRow.style.flexDirection = FlexDirection.Row;
-        headerRow.style.alignItems = Align.Center;
-        headerRow.style.marginBottom = 15;
-        headerRow.style.borderBottomWidth = 1;
-        headerRow.style.borderBottomColor = new Color(0.3f, 0.3f, 0.3f);
-        headerRow.style.paddingBottom = 15;
+        // 1. 顶部：ID 编辑与 文件操作
+        var headerBox = new VisualElement();
+        headerBox.style.flexDirection = FlexDirection.Row;
+        headerBox.style.marginBottom = 10;
+        headerBox.style.alignItems = Align.Center;
 
-        // ID 输入框
-        var idField = new TextField("角色 ID") { value = profile.CharacterID };
+        var idField = new TextField("Character ID") { value = profile.CharacterID };
         idField.style.flexGrow = 1;
         idField.style.fontSize = 14;
-        idField.labelElement.style.minWidth = 60; // 对齐标签
-        idField.RegisterValueChangedCallback(evt => {
-            profile.CharacterID = evt.newValue;
-            EditorUtility.SetDirty(profile);
-            leftListView.RefreshItem(allProfiles.IndexOf(profile));
+        idField.style.unityFontStyleAndWeight = FontStyle.Bold;
+        idField.RegisterCallback<FocusOutEvent>(evt => {
+            if (profile.CharacterID != idField.value)
+            {
+                string oldName = profile.CharacterID;
+                profile.CharacterID = idField.value;
+                EditorUtility.SetDirty(profile);
+                RenameAsset(profile, idField.value); // 尝试重命名文件
+                leftListView.RefreshItem(filteredProfiles.IndexOf(profile));
+            }
         });
 
-        // 删除按钮 (右对齐)
-        var deleteBtn = new Button(() => DeleteCharacter(profile)) { text = "🗑 删除角色" };
-        deleteBtn.style.backgroundColor = new Color(0.6f, 0.2f, 0.2f); // 红色
-        deleteBtn.style.color = Color.white;
-        deleteBtn.style.height = 24;
-        deleteBtn.style.marginLeft = 20;
+        var deleteBtn = new Button(() => DeleteCharacter(profile)) { text = "删除" };
+        deleteBtn.style.backgroundColor = new Color(0.6f, 0.2f, 0.2f);
+        deleteBtn.style.width = 60;
 
-        headerRow.Add(idField);
-        headerRow.Add(deleteBtn);
-        rightPane.Add(headerRow);
+        headerBox.Add(idField);
+        headerBox.Add(deleteBtn);
+        rightPane.Add(headerBox);
 
-        // 2. 基础配置区 (SpeakerBox, HeadFrame)
-        var basicConfigBox = CreateSectionBox("基础配置");
+        // 2. 中部：左右分栏 (左侧基础配置，右侧预览图)
+        var middleContainer = new VisualElement();
+        middleContainer.style.flexDirection = FlexDirection.Row;
+        middleContainer.style.height = 200; // 固定高度区
+        middleContainer.style.marginBottom = 10;
 
-        CreateObjectField(basicConfigBox, "姓名框 (SpeakerBox)", profile.SpeakerBox, (val) => {
+        // 2.1 左侧：基础配置
+        var configPane = new VisualElement();
+        configPane.style.flexGrow = 1;
+        configPane.style.marginRight = 10;
+        configPane.Add(CreateSectionLabel("基础配置"));
+
+        // SpeakerBox
+        CreateObjectField(configPane, "姓名框 (SpeakerBox)", profile.SpeakerBox, (val) => {
             profile.SpeakerBox = val;
             EditorUtility.SetDirty(profile);
         });
 
-        CreateObjectField(basicConfigBox, "头像边框 (HeadFrame)", profile.HeadFrame, (val) => {
+        // HeadFrame
+        CreateObjectField(configPane, "头像框 (HeadFrame)", profile.HeadFrame, (val) => {
             profile.HeadFrame = val;
             EditorUtility.SetDirty(profile);
         });
 
-        rightPane.Add(basicConfigBox);
+        // --- 新增：Scale 和 Offset 设置 ---
+        // Scale (Float)
+        var scaleField = new FloatField("缩放 (Scale)") { value = profile.scale };
+        scaleField.style.marginBottom = 5;
+        scaleField.RegisterValueChangedCallback(evt => {
+            profile.scale = evt.newValue;
+            EditorUtility.SetDirty(profile);
+        });
+        configPane.Add(scaleField);
 
-        // 3. 预览区域 (稍微缩小高度，留给列表)
-        var previewSection = CreateSectionBox("实时预览");
-        previewSection.style.height = 220;
-        previewSection.style.alignItems = Align.Center;
-        previewSection.style.justifyContent = Justify.Center;
-        previewSection.style.backgroundColor = new Color(0.15f, 0.15f, 0.15f); // 深黑底色
+        // Offset (Vector2)
+        var offsetField = new Vector2Field("偏移 (Offset)") { value = profile.offset };
+        offsetField.style.marginBottom = 5;
+        offsetField.RegisterValueChangedCallback(evt => {
+            profile.offset = evt.newValue;
+            EditorUtility.SetDirty(profile);
+        });
+        configPane.Add(offsetField);
+        // ------------------------------------
+
+        middleContainer.Add(configPane);
+
+        // 2.2 右侧：预览图
+        var previewPane = new VisualElement();
+        previewPane.style.width = 200; // 固定宽度预览区
+
+        // 边框样式
+        Color borderColor = new Color(0.1f, 0.1f, 0.1f);
+        previewPane.style.borderTopWidth = 1; previewPane.style.borderTopColor = borderColor;
+        previewPane.style.borderBottomWidth = 1; previewPane.style.borderBottomColor = borderColor;
+        previewPane.style.borderLeftWidth = 1; previewPane.style.borderLeftColor = borderColor;
+        previewPane.style.borderRightWidth = 1; previewPane.style.borderRightColor = borderColor;
+
+        previewPane.style.backgroundColor = new Color(0.15f, 0.15f, 0.15f); // 深色底
 
         previewImage = new Image();
         previewImage.scaleMode = ScaleMode.ScaleToFit;
-        previewImage.style.width = Length.Percent(95);
-        previewImage.style.height = Length.Percent(95);
-        previewSection.Add(previewImage);
-        rightPane.Add(previewSection);
+        previewImage.style.flexGrow = 1;
 
-        // 4. 选项卡栏 (Tab Bar)
+        previewPane.Add(previewImage);
+        middleContainer.Add(previewPane);
+
+        rightPane.Add(middleContainer);
+
+        // 3. 底部：Tab页 (表情列表 / 头像列表)
         var tabContainer = new VisualElement();
         tabContainer.style.flexDirection = FlexDirection.Row;
-        tabContainer.style.marginTop = 10;
-        tabContainer.style.marginBottom = 0; // 紧贴下方内容
 
-        var expTab = CreateTabButton("🎭 立绘 (Expressions)", 0);
-        var headTab = CreateTabButton("🖼️ 头像 (Heads)", 1);
+        // 创建按钮并赋值给成员变量
+        expTab = CreateTabButton("立绘 (Expressions)", 0);
+        headTab = CreateTabButton("头像 (Heads)", 1);
 
         tabContainer.Add(expTab);
         tabContainer.Add(headTab);
         rightPane.Add(tabContainer);
 
-        // 5. 列表内容容器 (带背景色)
-        var contentBox = new VisualElement();
-        contentBox.style.flexGrow = 1;
-        contentBox.style.backgroundColor = new Color(0.25f, 0.25f, 0.25f);
-        contentBox.style.borderBottomLeftRadius = 5;
-        contentBox.style.borderBottomRightRadius = 5;
-        contentBox.style.paddingTop = 10;
-        contentBox.style.paddingBottom = 10;
-        contentBox.style.paddingLeft = 10;
-        contentBox.style.paddingRight = 10;
-        rightPane.Add(contentBox);
+        // 列表内容容器
+        var listContainer = new VisualElement();
+        listContainer.style.flexGrow = 1;
+        listContainer.style.backgroundColor = new Color(0.18f, 0.18f, 0.18f); // 列表背景
+
+        // 列表边框
+        listContainer.style.borderTopWidth = 1; listContainer.style.borderTopColor = borderColor;
+        listContainer.style.borderBottomWidth = 1; listContainer.style.borderBottomColor = borderColor;
+        listContainer.style.borderLeftWidth = 1; listContainer.style.borderLeftColor = borderColor;
+        listContainer.style.borderRightWidth = 1; listContainer.style.borderRightColor = borderColor;
+
+        rightPane.Add(listContainer);
 
         expressionContainer = new VisualElement() { style = { flexGrow = 1 } };
         headContainer = new VisualElement() { style = { flexGrow = 1, display = DisplayStyle.None } };
 
-        contentBox.Add(expressionContainer);
-        contentBox.Add(headContainer);
+        listContainer.Add(expressionContainer);
+        listContainer.Add(headContainer);
 
         DrawExpressionList(profile);
         DrawHeadList(profile);
 
+        // 初始切换到当前 Tab
         SwitchTab(currentTab);
+    }
 
-        // --- Helper: Tab Button ---
-        Button CreateTabButton(string text, int tabIndex)
-        {
-            var btn = new Button(() => SwitchTab(tabIndex)) { text = text };
-            btn.style.flexGrow = 1;
-            btn.style.height = 30;
-            btn.style.fontSize = 13;
-            btn.style.borderTopLeftRadius = 5;
-            btn.style.borderTopRightRadius = 5;
-            btn.style.borderBottomLeftRadius = 0;
-            btn.style.borderBottomRightRadius = 0;
-            btn.style.borderBottomWidth = 0;
-            btn.style.marginTop = 0;
-            btn.style.marginBottom = 0;
-            btn.name = "Tab" + tabIndex;
-            return btn;
-        }
+    // --- Tab 切换逻辑 ---
+    private void SwitchTab(int index)
+    {
+        currentTab = index;
 
-        // --- Helper: Switch Tab ---
-        void SwitchTab(int index)
-        {
-            currentTab = index;
+        if (expressionContainer != null)
             expressionContainer.style.display = (index == 0) ? DisplayStyle.Flex : DisplayStyle.None;
+
+        if (headContainer != null)
             headContainer.style.display = (index == 1) ? DisplayStyle.Flex : DisplayStyle.None;
 
-            var tab0 = tabContainer.Q<Button>("Tab0");
-            var tab1 = tabContainer.Q<Button>("Tab1");
+        // 简单的 Tab 样式切换 (检查 null 以防调用过早)
+        if (expTab != null)
+            expTab.style.backgroundColor = (index == 0) ? new Color(0.28f, 0.28f, 0.28f) : new Color(0.2f, 0.2f, 0.2f);
 
-            // 选中态颜色 vs 未选中态颜色
-            Color selectedColor = new Color(0.25f, 0.25f, 0.25f); // 与 ContentBox 同色
-            Color normalColor = new Color(0.2f, 0.2f, 0.2f); // 更深一点
+        if (headTab != null)
+            headTab.style.backgroundColor = (index == 1) ? new Color(0.28f, 0.28f, 0.28f) : new Color(0.2f, 0.2f, 0.2f);
 
-            if (tab0 != null)
-            {
-                tab0.style.backgroundColor = (index == 0) ? selectedColor : normalColor;
-                tab0.style.unityFontStyleAndWeight = (index == 0) ? FontStyle.Bold : FontStyle.Normal;
-            }
-            if (tab1 != null)
-            {
-                tab1.style.backgroundColor = (index == 1) ? selectedColor : normalColor;
-                tab1.style.unityFontStyleAndWeight = (index == 1) ? FontStyle.Bold : FontStyle.Normal;
-            }
+        // 切换时清空预览或重置
+        UpdatePreview(null);
+    }
 
-            UpdatePreview(null);
-        }
+    private Button CreateTabButton(string text, int index)
+    {
+        var btn = new Button(() => SwitchTab(index)) { text = text };
+        btn.style.flexGrow = 1;
+        btn.style.height = 25;
+        btn.style.marginRight = 0;
+        btn.style.marginLeft = 0;
+        btn.style.borderBottomWidth = 0;
+        return btn;
     }
 
     // --- 绘制列表逻辑 ---
     private void DrawExpressionList(CharacterProfile profile)
     {
-        // 列表头
-        var header = CreateListHeader("立绘配置", () => {
+        var header = CreateListHeader("表情立绘列表", () => {
             profile.ElementSprites.Add(new ElementSprite());
             EditorUtility.SetDirty(profile);
             elementListView.Rebuild();
         });
         expressionContainer.Add(header);
 
-        // 列表
-        elementListView = new ListView();
-        elementListView.style.flexGrow = 1;
-        elementListView.fixedItemHeight = 28; // 行高适中
-        elementListView.itemsSource = profile.ElementSprites;
-        elementListView.makeItem = () => CreateListItem("Name", "Sprite", "Delete");
-        elementListView.bindItem = (e, i) => BindListItem(e, i, profile.ElementSprites, profile, elementListView);
-
-        elementListView.selectionChanged += (items) => {
-            foreach (var item in items) { if (item is ElementSprite data) UpdatePreview(data.Sprite); break; }
-        };
+        elementListView = CreateStyledListView(profile.ElementSprites, profile, elementListView);
         expressionContainer.Add(elementListView);
     }
 
     private void DrawHeadList(CharacterProfile profile)
     {
-        // 列表头
-        var header = CreateListHeader("头像配置", () => {
+        var header = CreateListHeader("表情头像列表", () => {
             profile.HeadSprites.Add(new ElementSprite());
             EditorUtility.SetDirty(profile);
             headSpriteListView.Rebuild();
         });
         headContainer.Add(header);
 
-        // 列表
-        headSpriteListView = new ListView();
-        headSpriteListView.style.flexGrow = 1;
-        headSpriteListView.fixedItemHeight = 28;
-        headSpriteListView.itemsSource = profile.HeadSprites;
-        headSpriteListView.makeItem = () => CreateListItem("Name", "Sprite", "Delete");
-        headSpriteListView.bindItem = (e, i) => BindListItem(e, i, profile.HeadSprites, profile, headSpriteListView);
-
-        headSpriteListView.selectionChanged += (items) => {
-            foreach (var item in items) { if (item is ElementSprite data) UpdatePreview(data.Sprite); break; }
-        };
+        headSpriteListView = CreateStyledListView(profile.HeadSprites, profile, headSpriteListView);
         headContainer.Add(headSpriteListView);
     }
 
-    // --- 辅助 UI 创建方法 ---
-
-    private VisualElement CreateSectionBox(string title)
+    private ListView CreateStyledListView(List<ElementSprite> sourceList, CharacterProfile profile, ListView existingView)
     {
-        var box = new Box();
-        box.style.marginBottom = 15;
-        box.style.paddingTop = 10; box.style.paddingBottom = 10;
-        box.style.paddingLeft = 10; box.style.paddingRight = 10;
-        box.style.backgroundColor = new Color(0.23f, 0.23f, 0.23f);
-        box.style.borderTopWidth = 1; box.style.borderBottomWidth = 1;
-        box.style.borderLeftWidth = 1; box.style.borderRightWidth = 1;
-        box.style.borderTopColor = new Color(0.15f, 0.15f, 0.15f);
-        box.style.borderBottomColor = new Color(0.15f, 0.15f, 0.15f);
-        box.style.borderLeftColor = new Color(0.15f, 0.15f, 0.15f);
-        box.style.borderRightColor = new Color(0.15f, 0.15f, 0.15f);
-        box.style.borderTopLeftRadius = 5; box.style.borderTopRightRadius = 5;
-        box.style.borderBottomLeftRadius = 5; box.style.borderBottomRightRadius = 5;
+        var listView = new ListView();
+        listView.style.flexGrow = 1;
+        listView.fixedItemHeight = 32; // 行高
+        listView.itemsSource = sourceList;
+        listView.makeItem = () => CreateListItem();
+        listView.bindItem = (e, i) => BindListItem(e, i, sourceList, profile, listView);
 
-        var label = new Label(title);
-        label.style.unityFontStyleAndWeight = FontStyle.Bold;
-        label.style.marginBottom = 8;
-        label.style.color = new Color(0.7f, 0.7f, 0.7f);
-        box.Add(label);
+        // 选中时更新预览
+        listView.selectionChanged += (items) => {
+            foreach (var item in items) { if (item is ElementSprite data) UpdatePreview(data.Sprite); break; }
+        };
 
-        return box;
+        return listView;
     }
 
-    private void CreateObjectField(VisualElement parent, string label, Object value, System.Action<Sprite> onChange)
-    {
-        var row = new VisualElement();
-        row.style.flexDirection = FlexDirection.Row;
-        row.style.marginBottom = 5;
-
-        var field = new ObjectField(label) { objectType = typeof(Sprite), value = value };
-        field.style.flexGrow = 1;
-        field.RegisterValueChangedCallback(evt => onChange(evt.newValue as Sprite));
-
-        row.Add(field);
-        parent.Add(row);
-    }
-
-    private VisualElement CreateListHeader(string title, System.Action onAdd)
-    {
-        var header = new VisualElement();
-        header.style.flexDirection = FlexDirection.Row;
-        header.style.justifyContent = Justify.SpaceBetween;
-        header.style.marginBottom = 5;
-
-        // 搜索框或标题
-        header.Add(new Label(title) { style = { alignSelf = Align.Center, color = Color.gray } });
-
-        var addBtn = new Button(onAdd) { text = "＋ 添加" };
-        addBtn.style.height = 20;
-        addBtn.style.backgroundColor = new Color(0.25f, 0.25f, 0.25f);
-        header.Add(addBtn);
-
-        return header;
-    }
-
-    private VisualElement CreateListItem(string nameId, string spriteId, string delId)
+    // --- Item 渲染 ---
+    private VisualElement CreateListItem()
     {
         var container = new VisualElement();
         container.style.flexDirection = FlexDirection.Row;
         container.style.alignItems = Align.Center;
+        container.style.paddingLeft = 5;
 
-        var nameField = new TextField() { name = nameId, style = { width = 120, marginRight = 10 } };
-        var spriteField = new ObjectField() { name = spriteId, objectType = typeof(Sprite), style = { flexGrow = 1 } };
-
-        var delBtn = new Button() { text = "×", name = delId };
+        var nameField = new TextField() { name = "Name", style = { width = 120, marginRight = 5 } };
+        var spriteField = new ObjectField() { name = "Sprite", objectType = typeof(Sprite), style = { flexGrow = 1 } };
+        var delBtn = new Button() { text = "×", name = "Delete" };
         delBtn.style.width = 24;
-        delBtn.style.height = 20;
         delBtn.style.backgroundColor = Color.clear;
-        delBtn.style.color = new Color(0.8f, 0.3f, 0.3f);
-        delBtn.style.borderTopWidth = 0; delBtn.style.borderBottomWidth = 0;
-        delBtn.style.borderLeftWidth = 0; delBtn.style.borderRightWidth = 0;
+        delBtn.style.color = new Color(0.8f, 0.4f, 0.4f);
 
         container.Add(nameField);
         container.Add(spriteField);
@@ -430,19 +440,10 @@ public class CharacterEditorWindow : EditorWindow
         var spriteField = element.Q<ObjectField>("Sprite");
         var delBtn = element.Q<Button>("Delete");
 
-        // 赋值
         nameField.SetValueWithoutNotify(data.Element);
         spriteField.SetValueWithoutNotify(data.Sprite);
 
-        // 交互：点输入框选中行
-        EventCallback<FocusEvent> onFocus = (evt) => {
-            listView.SetSelection(index);
-            UpdatePreview(data.Sprite);
-        };
-        nameField.RegisterCallback(onFocus);
-        spriteField.RegisterCallback(onFocus);
-
-        // 修改回调
+        // 交互逻辑
         nameField.RegisterValueChangedCallback(evt => {
             data.Element = evt.newValue;
             EditorUtility.SetDirty(profile);
@@ -454,16 +455,62 @@ public class CharacterEditorWindow : EditorWindow
             if (listView.selectedIndex == index) UpdatePreview(data.Sprite);
         });
 
-        // 删除回调
-        delBtn.clicked += () => {
-            if (index < list.Count)
+        // 聚焦时自动选中行
+        EventCallback<FocusInEvent> onFocus = (evt) => {
+            if (listView.selectedIndex != index)
             {
-                list.RemoveAt(index);
-                EditorUtility.SetDirty(profile);
-                listView.Rebuild();
-                UpdatePreview(null);
+                listView.SetSelection(index);
+                UpdatePreview(data.Sprite);
             }
         };
+        nameField.RegisterCallback(onFocus);
+        spriteField.RegisterCallback(onFocus);
+
+        delBtn.clicked += () => {
+            list.RemoveAt(index);
+            EditorUtility.SetDirty(profile);
+            listView.Rebuild();
+            UpdatePreview(null);
+        };
+    }
+
+    // --- 辅助方法 ---
+    private Label CreateSectionLabel(string text)
+    {
+        var label = new Label(text);
+        label.style.unityFontStyleAndWeight = FontStyle.Bold;
+        label.style.color = new Color(0.7f, 0.7f, 0.7f);
+        label.style.marginBottom = 5;
+        label.style.marginTop = 5;
+        return label;
+    }
+
+    private void CreateObjectField(VisualElement parent, string label, Object value, System.Action<Sprite> onChange)
+    {
+        var field = new ObjectField(label) { objectType = typeof(Sprite), value = value };
+        field.style.marginBottom = 5;
+        field.RegisterValueChangedCallback(evt => onChange(evt.newValue as Sprite));
+        parent.Add(field);
+    }
+
+    private VisualElement CreateListHeader(string title, System.Action onAdd)
+    {
+        var header = new VisualElement();
+        header.style.flexDirection = FlexDirection.Row;
+        header.style.justifyContent = Justify.SpaceBetween;
+        header.style.backgroundColor = new Color(0.22f, 0.22f, 0.22f);
+        header.style.paddingTop = 5;
+        header.style.paddingBottom = 5;
+        header.style.paddingLeft = 5;
+        header.style.paddingRight = 5;
+
+        header.Add(new Label(title) { style = { alignSelf = Align.Center, unityFontStyleAndWeight = FontStyle.Bold } });
+
+        var addBtn = new Button(onAdd) { text = "+ 添加" };
+        addBtn.style.backgroundColor = new Color(0.25f, 0.35f, 0.25f);
+        header.Add(addBtn);
+
+        return header;
     }
 
     private void UpdatePreview(Sprite sprite)
@@ -471,11 +518,32 @@ public class CharacterEditorWindow : EditorWindow
         if (sprite == null)
         {
             previewImage.sprite = null;
-            previewImage.image = null;
         }
         else
         {
             previewImage.sprite = sprite;
+        }
+    }
+
+    private void RenameAsset(CharacterProfile profile, string newName)
+    {
+        if (string.IsNullOrEmpty(newName)) return;
+        string path = AssetDatabase.GetAssetPath(profile);
+        string newPath = $"{CHARACTER_PATH}/{newName}.asset";
+
+        if (path != newPath)
+        {
+            string error = AssetDatabase.RenameAsset(path, newName);
+            if (string.IsNullOrEmpty(error))
+            {
+                AssetDatabase.SaveAssets();
+                // 重新排序列表
+                LoadAllProfiles();
+            }
+            else
+            {
+                Debug.LogWarning($"重命名失败: {error}");
+            }
         }
     }
 
@@ -491,17 +559,22 @@ public class CharacterEditorWindow : EditorWindow
         AssetDatabase.SaveAssets();
         LoadAllProfiles();
 
+        // 选中新建的
+        searchField.value = ""; // 清空搜索
         int index = allProfiles.IndexOf(newProfile);
         leftListView.SetSelection(index);
+        leftListView.ScrollToItem(index);
     }
 
     private void DeleteCharacter(CharacterProfile profile)
     {
-        if (EditorUtility.DisplayDialog("删除确认", $"确定要删除角色 {profile.CharacterID} 吗？", "删除", "取消"))
+        if (EditorUtility.DisplayDialog("删除角色", $"确定要删除 {profile.CharacterID} 吗？\n此操作不可撤销。", "确定删除", "取消"))
         {
             string path = AssetDatabase.GetAssetPath(profile);
             AssetDatabase.DeleteAsset(path);
+
             rightPane.Clear();
+            selectedProfile = null;
             LoadAllProfiles();
         }
     }
