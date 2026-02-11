@@ -43,6 +43,9 @@ public class VNGameplayPanel : BasePanel
     private Dictionary<string, Vector2> defaultCharPositions = new Dictionary<string, Vector2>();
     private Dictionary<string, float> defaultCharScales = new Dictionary<string, float>();
     private HashSet<string> modifiedCharTransforms = new HashSet<string>(); // 记录哪些位置的 Transform 被修改过
+    
+    // 【新增】存储每个位置的基准位置（用于 offset 应用，避免累加）
+    private Dictionary<string, Vector2> baseCharPositions = new Dictionary<string, Vector2>();
 
     // 【新增】存储对话文本的默认属性（用于 t_color 和 t_size 命令的恢复）
     private Color? defaultDialogueTextColor = null;
@@ -874,9 +877,23 @@ public class VNGameplayPanel : BasePanel
                 charRect.anchorMin = savedAnchorMin;
                 charRect.anchorMax = savedAnchorMax;
                 
-                // 此时anchoredPosition应该是基准位置（SetNativeSize并恢复锚点后的位置）
-                // 基于这个基准位置应用offset，而不是累加
-                Vector2 basePosition = charRect.anchoredPosition;
+                // 位置代码转换：VNManager 内部使用 "Left"/"Mid"/"Right"，但 API 使用 "L"/"M"/"R"
+                string posCode = position;
+                if (position == "Left") posCode = "L";
+                else if (position == "Mid") posCode = "M";
+                else if (position == "Right") posCode = "R";
+                
+                // 【关键修复】保存基准位置（第一次显示时）
+                // SetNativeSize()并恢复锚点后，此时的anchoredPosition是基准位置
+                // 如果该位置还没有保存基准位置，则保存它
+                if (!baseCharPositions.ContainsKey(posCode))
+                {
+                    baseCharPositions[posCode] = charRect.anchoredPosition;
+                    Debug.Log($"[VNGameplayPanel] 保存位置 {position}({posCode}) 的基准位置: {baseCharPositions[posCode]}");
+                }
+                
+                // 基于保存的基准位置应用offset，而不是基于当前位置（避免累加）
+                Vector2 basePosition = baseCharPositions[posCode];
                 charRect.anchoredPosition = basePosition + profile.offset;
                 
                 // 应用profile中的scale（使用localScale，不影响布局系统）
@@ -884,12 +901,6 @@ public class VNGameplayPanel : BasePanel
                 Vector3 scale = Vector3.one * profileScale;
                 
                 // 应用保存的翻转状态（如果存在）
-                // 位置代码转换：VNManager 内部使用 "Left"/"Mid"/"Right"，但 API 使用 "L"/"M"/"R"
-                string posCode = position;
-                if (position == "Left") posCode = "L";
-                else if (position == "Mid") posCode = "M";
-                else if (position == "Right") posCode = "R";
-                
                 float savedScaleX = VNManager.GetInstance().GetCharacterScaleX(posCode);
                 if (savedScaleX != 1f) // 如果不是默认值，应用翻转
                 {
@@ -897,7 +908,7 @@ public class VNGameplayPanel : BasePanel
                 }
                 charRect.localScale = scale;
                 
-                Debug.Log($"[VNGameplayPanel] 应用位置 {position}({posCode}) - Scale: {profileScale}, Offset: {profile.offset}, Flip: {savedScaleX}, BasePos: {basePosition}");
+                Debug.Log($"[VNGameplayPanel] 应用位置 {position}({posCode}) - Scale: {profileScale}, Offset: {profile.offset}, Flip: {savedScaleX}, BasePos: {basePosition}, FinalPos: {charRect.anchoredPosition}");
             }
         }
     }
