@@ -725,13 +725,19 @@ public class VNGameplayPanel : BasePanel
         {
             speakerText.text = speaker;
         }
-        // 设置默认 SpeakerBox Sprite（优先使用面板级配置，其次使用全局配置）
+        // 设置默认 SpeakerBox Sprite（优先使用全局配置，其次使用面板级配置）
         if (speakerBox != null)
         {
-            Sprite defaultSprite = defaultSpeakerBoxSprite; // 优先使用面板级配置
-            if (defaultSprite == null && VNProjectConfig.Instance != null)
+            Sprite defaultSprite = null;
+            // 优先使用 VNProjectConfig 中的全局配置
+            if (VNProjectConfig.Instance != null && VNProjectConfig.Instance.DefaultSpeakerBoxSprite != null)
             {
-                defaultSprite = VNProjectConfig.Instance.DefaultSpeakerBoxSprite; // 使用全局配置
+                defaultSprite = VNProjectConfig.Instance.DefaultSpeakerBoxSprite;
+            }
+            // 如果全局配置为空，则使用面板级配置
+            else if (defaultSpeakerBoxSprite != null)
+            {
+                defaultSprite = defaultSpeakerBoxSprite;
             }
             speakerBox.sprite = defaultSprite;
         }
@@ -990,10 +996,16 @@ public class VNGameplayPanel : BasePanel
                 else
                 {
                     // 情况2：CharacterProfile.HeadFrame 无引用，使用默认边框
-                    Sprite defaultFrame = defaultHeadFrameSprite; // 优先使用面板级配置
-                    if (defaultFrame == null && VNProjectConfig.Instance != null)
+                    Sprite defaultFrame = null;
+                    // 优先使用 VNProjectConfig 中的全局配置
+                    if (VNProjectConfig.Instance != null && VNProjectConfig.Instance.DefaultHeadFrameSprite != null)
                     {
-                        defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite; // 使用全局配置
+                        defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite;
+                    }
+                    // 如果全局配置为空，则使用面板级配置
+                    else if (defaultHeadFrameSprite != null)
+                    {
+                        defaultFrame = defaultHeadFrameSprite;
                     }
                     headFrame.sprite = defaultFrame;
                 }
@@ -1004,10 +1016,16 @@ public class VNGameplayPanel : BasePanel
             // 情况3：找不到角色配置，使用默认边框
             if (headFrame != null)
             {
-                Sprite defaultFrame = defaultHeadFrameSprite; // 优先使用面板级配置
-                if (defaultFrame == null && VNProjectConfig.Instance != null)
+                Sprite defaultFrame = null;
+                // 优先使用 VNProjectConfig 中的全局配置
+                if (VNProjectConfig.Instance != null && VNProjectConfig.Instance.DefaultHeadFrameSprite != null)
                 {
-                    defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite; // 使用全局配置
+                    defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite;
+                }
+                // 如果全局配置为空，则使用面板级配置
+                else if (defaultHeadFrameSprite != null)
+                {
+                    defaultFrame = defaultHeadFrameSprite;
                 }
                 headFrame.sprite = defaultFrame;
             }
