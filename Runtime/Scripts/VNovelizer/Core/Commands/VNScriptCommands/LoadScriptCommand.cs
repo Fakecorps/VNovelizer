@@ -45,6 +45,10 @@ namespace VNovelizer.Core.Commands
                         {
                             manager.CurrentLineIndex = index;
                         }
+                        else
+                        {
+                            manager.CurrentLineIndex = index;
+                        }
                     }
                     else
                     {
