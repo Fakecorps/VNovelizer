@@ -365,18 +365,41 @@ public class VNManager : BaseManager<VNManager>
                 };
                 EventCenter.GetInstance().EventTrigger("ShowCharacter", info);
                 
-                // 同步翻转状态：如果该位置有保存的翻转状态，立即应用到UI
+                // 【修复】同步翻转状态：如果该位置有保存的翻转状态，应用完整的scale（考虑profile.scale和翻转状态）
                 string posCode = NormalizePositionCode(kvp.Key);
                 if (currentCharactersScaleX.ContainsKey(posCode))
                 {
-                    float scaleX = currentCharactersScaleX[posCode];
-                    RectTransform charRect = VNAPI.GetCharRect(posCode);
-                    if (charRect != null)
+                    float savedScaleX = currentCharactersScaleX[posCode];
+                    
+                    // 获取角色的CharacterProfile，以获取profile.scale
+                    string characterID = parts[0];
+                    CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
+                    
+                    if (profile != null)
                     {
-                        Vector3 scale = charRect.localScale;
-                        scale.x = scaleX;
-                        charRect.localScale = scale;
-                        Debug.Log($"[VNManager] 同步位置 {kvp.Key}({posCode}) 的翻转状态: {scaleX}");
+                        // 计算正确的scale：profile.scale * savedScaleX
+                        float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
+                        Vector3 scale = Vector3.one * profileScale;
+                        scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
+                        
+                        RectTransform charRect = VNAPI.GetCharRect(posCode);
+                        if (charRect != null)
+                        {
+                            charRect.localScale = scale;
+                            Debug.Log($"[VNManager] 同步位置 {kvp.Key}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
+                        }
+                    }
+                    else
+                    {
+                        // 如果找不到profile，使用旧的逻辑（只应用翻转状态）
+                        RectTransform charRect = VNAPI.GetCharRect(posCode);
+                        if (charRect != null)
+                        {
+                            Vector3 scale = charRect.localScale;
+                            scale.x = savedScaleX;
+                            charRect.localScale = scale;
+                            Debug.LogWarning($"[VNManager] 找不到角色 {characterID} 的Profile，只应用翻转状态: {savedScaleX}");
+                        }
                     }
                 }
             }
@@ -480,18 +503,41 @@ public class VNManager : BaseManager<VNManager>
                         };
                         EventCenter.GetInstance().EventTrigger("ShowCharacter", info);
                         
-                        // 同步翻转状态：如果该位置有保存的翻转状态，立即应用到UI
+                        // 【修复】同步翻转状态：如果该位置有保存的翻转状态，应用完整的scale（考虑profile.scale和翻转状态）
                         string posCode = NormalizePositionCode(kvp.Key);
                         if (currentCharactersScaleX.ContainsKey(posCode))
                         {
-                            float scaleX = currentCharactersScaleX[posCode];
-                            RectTransform charRect = VNAPI.GetCharRect(posCode);
-                            if (charRect != null)
+                            float savedScaleX = currentCharactersScaleX[posCode];
+                            
+                            // 获取角色的CharacterProfile，以获取profile.scale
+                            string characterID = parts[0];
+                            CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
+                            
+                            if (profile != null)
                             {
-                                Vector3 scale = charRect.localScale;
-                                scale.x = scaleX;
-                                charRect.localScale = scale;
-                                Debug.Log($"[VNManager] 同步位置 {kvp.Key}({posCode}) 的翻转状态: {scaleX}");
+                                // 计算正确的scale：profile.scale * savedScaleX
+                                float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
+                                Vector3 scale = Vector3.one * profileScale;
+                                scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
+                                
+                                RectTransform charRect = VNAPI.GetCharRect(posCode);
+                                if (charRect != null)
+                                {
+                                    charRect.localScale = scale;
+                                    Debug.Log($"[VNManager] 同步位置 {kvp.Key}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
+                                }
+                            }
+                            else
+                            {
+                                // 如果找不到profile，使用旧的逻辑（只应用翻转状态）
+                                RectTransform charRect = VNAPI.GetCharRect(posCode);
+                                if (charRect != null)
+                                {
+                                    Vector3 scale = charRect.localScale;
+                                    scale.x = savedScaleX;
+                                    charRect.localScale = scale;
+                                    Debug.LogWarning($"[VNManager] 找不到角色 {characterID} 的Profile，只应用翻转状态: {savedScaleX}");
+                                }
                             }
                         }
                     }
@@ -1447,18 +1493,41 @@ public class VNManager : BaseManager<VNManager>
                 };
                 EventCenter.GetInstance().EventTrigger("ShowCharacter", info);
                 
-                // 如果该位置有保存的翻转状态，立即应用到UI
+                // 【修复】如果该位置有保存的翻转状态，应用完整的scale（考虑profile.scale和翻转状态）
                 string posCode = NormalizePositionCode(position);
                 if (currentCharactersScaleX.ContainsKey(posCode))
                 {
-                    float scaleX = currentCharactersScaleX[posCode];
-                    RectTransform charRect = VNAPI.GetCharRect(posCode);
-                    if (charRect != null)
+                    float savedScaleX = currentCharactersScaleX[posCode];
+                    
+                    // 获取角色的CharacterProfile，以获取profile.scale
+                    string characterID = parts[0];
+                    CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
+                    
+                    if (profile != null)
                     {
-                        Vector3 scale = charRect.localScale;
-                        scale.x = scaleX;
-                        charRect.localScale = scale;
-                        Debug.Log($"[VNManager] 应用位置 {position}({posCode}) 的翻转状态: {scaleX}");
+                        // 计算正确的scale：profile.scale * savedScaleX
+                        float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
+                        Vector3 scale = Vector3.one * profileScale;
+                        scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
+                        
+                        RectTransform charRect = VNAPI.GetCharRect(posCode);
+                        if (charRect != null)
+                        {
+                            charRect.localScale = scale;
+                            Debug.Log($"[VNManager] 应用位置 {position}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
+                        }
+                    }
+                    else
+                    {
+                        // 如果找不到profile，使用旧的逻辑（只应用翻转状态）
+                        RectTransform charRect = VNAPI.GetCharRect(posCode);
+                        if (charRect != null)
+                        {
+                            Vector3 scale = charRect.localScale;
+                            scale.x = savedScaleX;
+                            charRect.localScale = scale;
+                            Debug.LogWarning($"[VNManager] 找不到角色 {characterID} 的Profile，只应用翻转状态: {savedScaleX}");
+                        }
                     }
                 }
             }
