@@ -1,6 +1,6 @@
 {
   "name": "com.fakecorps.vnovelizer",
-  "version": "0.1.1",
+  "version": "0.1.1a",
   "displayName": "VNovelizer - Visual Novel Framework",
   "description": "A lightweight, high-performance, Excel-driven Visual Novel framework for Unity. Empowering creators to build complex story games without coding.",
   "unity": "2022.3",
