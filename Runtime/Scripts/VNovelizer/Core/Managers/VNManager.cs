@@ -632,8 +632,9 @@ public class VNManager : BaseManager<VNManager>
     /// 快进到目标行
     /// </summary>
     /// <param name="targetIndex">目标行索引</param>
+    /// <param name="ignoreChoice">是否忽略 choice 命令（用于 jump 命令强制跳转）</param>
     /// <returns>如果遇到 choice 命令返回 true，否则返回 false</returns>
-    public bool FastForwardToLine(int targetIndex)
+    public bool FastForwardToLine(int targetIndex, bool ignoreChoice = false)
     {
         ResetState();
         VNAPI.ClearAllEffects(); // 物理清空
@@ -648,8 +649,8 @@ public class VNManager : BaseManager<VNManager>
             if (i >= StoryLines.Count) break;
             StoryLine line = StoryLines[i];
 
-            // 【修复】检查是否包含 choice 命令，如果包含则停止快进
-            if (!string.IsNullOrEmpty(line.Command) && ContainsChoiceCommand(line.Command))
+            // 【修复】检查是否包含 choice 命令，如果包含则停止快进（除非 ignoreChoice 为 true）
+            if (!ignoreChoice && !string.IsNullOrEmpty(line.Command) && ContainsChoiceCommand(line.Command))
             {
                 // 遇到选项命令，停止快进，设置当前行索引为包含 choice 的行
                 CurrentLineIndex = i;
@@ -1541,7 +1542,19 @@ public class VNManager : BaseManager<VNManager>
             if (currentLine.BGM == "stop") { MusicManager.GetInstance().StopBGM(); currentBGM = ""; }
             else if (currentLine.BGM == "pause") MusicManager.GetInstance().PauseBGM();
             else if (currentLine.BGM == "resume") MusicManager.GetInstance().PlayBGM(currentBGM);
-            else { MusicManager.GetInstance().PlayBGM(currentLine.BGM); currentBGM = currentLine.BGM; }
+            else 
+            { 
+                // 【修复】如果新 BGM 和当前 BGM 相同，跳过播放，避免重复播放导致不连贯
+                if (currentLine.BGM != currentBGM)
+                {
+                    MusicManager.GetInstance().PlayBGM(currentLine.BGM); 
+                    currentBGM = currentLine.BGM;
+                }
+                else
+                {
+                    Debug.Log($"[VNManager] BGM {currentLine.BGM} 已在播放，跳过重复播放");
+                }
+            }
         }
 
         if (!string.IsNullOrEmpty(currentLine.Voice))

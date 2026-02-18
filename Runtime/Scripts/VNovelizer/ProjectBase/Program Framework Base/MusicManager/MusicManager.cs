@@ -8,6 +8,7 @@ public class MusicManager : BaseManager<MusicManager>
     // BGM 组件（BGM 全局唯一，不需要池子）
     private AudioSource BGM = null;
     private float BGMVolume = 1f;
+    private string currentPlayingBGM = null; // 【新增】记录当前正在播放的 BGM 名称
 
     // SFX 列表（用于在 Update 里检测播放是否结束）
     private List<AudioSource> SFXList = new List<AudioSource>();
@@ -34,6 +35,13 @@ public class MusicManager : BaseManager<MusicManager>
 
     public void PlayBGM(string name)
     {
+        // 【修复】如果新 BGM 和当前正在播放的 BGM 相同，则跳过播放，避免重复播放导致不连贯
+        if (!string.IsNullOrEmpty(name) && name == currentPlayingBGM)
+        {
+            Debug.Log($"[MusicManager] BGM {name} 已在播放，跳过重复播放");
+            return;
+        }
+
         if (BGM == null)
         {
             GameObject obj = new GameObject("BGM_Player");
@@ -46,17 +54,20 @@ public class MusicManager : BaseManager<MusicManager>
             BGM.volume = BGMVolume;
             BGM.loop = true;
             BGM.Play();
+            currentPlayingBGM = name; // 【新增】记录当前播放的 BGM
         });
     }
 
     public void PauseBGM()
     {
         if (BGM != null) BGM.Pause();
+        // 注意：暂停时不清空 currentPlayingBGM，因为 resume 时需要知道播放什么
     }
 
     public void StopBGM()
     {
         if (BGM != null) BGM.Stop();
+        currentPlayingBGM = null; // 【新增】停止时清空当前播放的 BGM
     }
     #endregion
 
