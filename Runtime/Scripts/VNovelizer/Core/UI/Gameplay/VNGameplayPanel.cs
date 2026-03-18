@@ -15,6 +15,9 @@ public class VNGameplayPanel : BasePanel
 {
 
     #region 所有定义
+    public bool IsInitialized { get; private set; }
+    public System.Action OnInitialized;
+
     // 模块组件
     [SerializeField] private Image bgImage_F;
     [SerializeField] private Image bgImage_B;
@@ -208,6 +211,15 @@ public class VNGameplayPanel : BasePanel
         GameStateManager.GetInstance().SetState(GameState.Gameplay);
     }
     #endregion
+
+    private IEnumerator Start()
+    {
+        IsInitialized = false;
+        yield return new WaitForEndOfFrame();
+        Canvas.ForceUpdateCanvases();
+        IsInitialized = true;
+        OnInitialized?.Invoke();
+    }
 
     protected override void OnButtonClick(string ButtonName)
     {
@@ -725,19 +737,13 @@ public class VNGameplayPanel : BasePanel
         {
             speakerText.text = speaker;
         }
-        // 设置默认 SpeakerBox Sprite（优先使用全局配置，其次使用面板级配置）
+        // 设置默认 SpeakerBox Sprite（优先使用面板级配置，其次使用全局配置）
         if (speakerBox != null)
         {
-            Sprite defaultSprite = null;
-            // 优先使用 VNProjectConfig 中的全局配置
-            if (VNProjectConfig.Instance != null && VNProjectConfig.Instance.DefaultSpeakerBoxSprite != null)
+            Sprite defaultSprite = defaultSpeakerBoxSprite; // 优先使用面板级配置
+            if (defaultSprite == null && VNProjectConfig.Instance != null)
             {
-                defaultSprite = VNProjectConfig.Instance.DefaultSpeakerBoxSprite;
-            }
-            // 如果全局配置为空，则使用面板级配置
-            else if (defaultSpeakerBoxSprite != null)
-            {
-                defaultSprite = defaultSpeakerBoxSprite;
+                defaultSprite = VNProjectConfig.Instance.DefaultSpeakerBoxSprite; // 使用全局配置
             }
             speakerBox.sprite = defaultSprite;
         }
@@ -996,16 +1002,10 @@ public class VNGameplayPanel : BasePanel
                 else
                 {
                     // 情况2：CharacterProfile.HeadFrame 无引用，使用默认边框
-                    Sprite defaultFrame = null;
-                    // 优先使用 VNProjectConfig 中的全局配置
-                    if (VNProjectConfig.Instance != null && VNProjectConfig.Instance.DefaultHeadFrameSprite != null)
+                    Sprite defaultFrame = defaultHeadFrameSprite; // 优先使用面板级配置
+                    if (defaultFrame == null && VNProjectConfig.Instance != null)
                     {
-                        defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite;
-                    }
-                    // 如果全局配置为空，则使用面板级配置
-                    else if (defaultHeadFrameSprite != null)
-                    {
-                        defaultFrame = defaultHeadFrameSprite;
+                        defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite; // 使用全局配置
                     }
                     headFrame.sprite = defaultFrame;
                 }
@@ -1016,16 +1016,10 @@ public class VNGameplayPanel : BasePanel
             // 情况3：找不到角色配置，使用默认边框
             if (headFrame != null)
             {
-                Sprite defaultFrame = null;
-                // 优先使用 VNProjectConfig 中的全局配置
-                if (VNProjectConfig.Instance != null && VNProjectConfig.Instance.DefaultHeadFrameSprite != null)
+                Sprite defaultFrame = defaultHeadFrameSprite; // 优先使用面板级配置
+                if (defaultFrame == null && VNProjectConfig.Instance != null)
                 {
-                    defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite;
-                }
-                // 如果全局配置为空，则使用面板级配置
-                else if (defaultHeadFrameSprite != null)
-                {
-                    defaultFrame = defaultHeadFrameSprite;
+                    defaultFrame = VNProjectConfig.Instance.DefaultHeadFrameSprite; // 使用全局配置
                 }
                 headFrame.sprite = defaultFrame;
             }
@@ -1231,6 +1225,8 @@ public class VNGameplayPanel : BasePanel
 
     private void OnDestroy()
     {
+        IsInitialized = false;
+        OnInitialized = null;
         // 移除事件监听
         EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>("UpdateDialogue", OnUpdateDialogue);
         EventCenter.GetInstance().RemoveEventListener<string>("ChangeBackground", OnChangeBackground);

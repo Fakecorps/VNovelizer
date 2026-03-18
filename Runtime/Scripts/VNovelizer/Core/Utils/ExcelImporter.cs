@@ -1,6 +1,6 @@
+#if UNITY_EDITOR
 using UnityEngine;
 using UnityEditor.AssetImporters;
-using System.IO;
 
 // 专门处理 .xls
 [ScriptedImporter(1, "xls")]
@@ -27,3 +27,4 @@ public class XlsxImporter : ScriptedImporter
         ctx.SetMainObject(subAsset);
     }
 }
+#endif

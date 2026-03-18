@@ -100,6 +100,12 @@ public class ResourcesManager : BaseManager<ResourcesManager>
         
         // 运行时或 Assets 中找不到时，使用 Resources.Load
         T res = Resources.Load<T>(name);
+        if (res == null)
+        {
+            Debug.LogError($"[ResourcesManager] Resources.Load 失败，类型={typeof(T).Name}，路径=\"{name}\"。请确认资源是否位于 Resources 目录下且路径/名称完全匹配。");
+            return null;
+        }
+
         //如果对象是GameObject，则先实例化再返回，外部可以直接使用
         if (res is GameObject)
         { 
@@ -167,6 +173,14 @@ public class ResourcesManager : BaseManager<ResourcesManager>
         // 运行时或 Assets 中找不到时，使用 Resources.LoadAsync
         ResourceRequest r = Resources.LoadAsync<T>(name);
         yield return r;
+
+        if (r.asset == null)
+        {
+            Debug.LogError($"[ResourcesManager] Resources.LoadAsync 失败，类型={typeof(T).Name}，路径=\"{name}\"。请确认资源是否位于 Resources 目录下且路径/名称完全匹配。");
+            callback(null);
+            yield break;
+        }
+
         if (r.asset is GameObject)
         {
             callback(GameObject.Instantiate(r.asset) as T);
@@ -235,6 +249,13 @@ public class ResourcesManager : BaseManager<ResourcesManager>
         if (!string.IsNullOrEmpty(taskID))
         {
             LoadingProgressManager.GetInstance().CompleteTask(taskID);
+        }
+        
+        if (r.asset == null)
+        {
+            Debug.LogError($"[ResourcesManager] Resources.LoadAsync 失败（带任务），类型={typeof(T).Name}，路径=\"{name}\"，任务ID=\"{taskID}\"。请确认资源是否位于 Resources 目录下且路径/名称完全匹配。");
+            callback(null);
+            yield break;
         }
         
         if (r.asset is GameObject)

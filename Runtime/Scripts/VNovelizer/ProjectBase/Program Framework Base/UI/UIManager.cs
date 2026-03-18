@@ -377,7 +377,8 @@ public class UIManager : BaseManager<UIManager>
         
         if (!taskExists)
         {
-            // 任务不存在，注册新任务（权重会在ResourcesManager中设置，但这里先注册确保存在）
+            // 任务不存在，注册新任务（权重通常会在外部（如 VNManager）中设置，
+            // 但这里先注册，避免任务不存在导致进度管理异常）
             progressManager.RegisterTask(uiTaskID, $"加载UI: {panelName}", 1f);
         }
         else
@@ -385,6 +386,9 @@ public class UIManager : BaseManager<UIManager>
             // 任务已存在，只更新名称（可能权重已在其他地方设置）
             progressManager.UpdateTaskName(uiTaskID, $"加载UI: {panelName}");
         }
+
+        // 【重要】UI 任务的完成时机由 UIManager 自己控制，
+        // 不再让 ResourcesManager 自动 CompleteTask，避免 UI 尚未注册到字典时就触发“全部任务完成”的事件。
         ResourcesManager.GetInstance().LoadAsync<GameObject>(
             loadPath +"/"+ panelName, 
             (obj) =>
@@ -409,6 +413,11 @@ public class UIManager : BaseManager<UIManager>
                 if (obj == null)
                 {
                     Debug.LogError($"[UIManager] 无法加载面板预制体: {loadPath}/{panelName}");
+                    // 即使失败也要完成任务，避免进度面板永远卡住
+                    if (progressManager.GetTaskProgress(uiTaskID) >= 0)
+                    {
+                        progressManager.CompleteTask(uiTaskID);
+                    }
                     return;
                 }
 
@@ -422,6 +431,11 @@ public class UIManager : BaseManager<UIManager>
                     {
                         Debug.LogError("[UIManager] Canvas初始化失败，销毁面板对象");
                         GameObject.Destroy(obj);
+                        // Canvas 初始化失败，同样视为该 UI 任务失败，直接完成任务
+                        if (progressManager.GetTaskProgress(uiTaskID) >= 0)
+                        {
+                            progressManager.CompleteTask(uiTaskID);
+                        }
                         return;
                     }
                 }
@@ -454,6 +468,11 @@ public class UIManager : BaseManager<UIManager>
                 {
                     Debug.LogError($"[UIManager] UI层级 {layer} 未找到，请检查Canvas预制体结构");
                     GameObject.Destroy(obj);
+                    // 层级异常，同样直接完成任务，避免进度卡死
+                    if (progressManager.GetTaskProgress(uiTaskID) >= 0)
+                    {
+                        progressManager.CompleteTask(uiTaskID);
+                    }
                     return;
                 }
 
@@ -474,6 +493,11 @@ public class UIManager : BaseManager<UIManager>
                 {
                     Debug.LogError($"[UIManager] 面板预制体 {panelName} 上未找到 {typeof(T).Name} 组件！");
                     GameObject.Destroy(obj);
+                    // 预制体不符合预期，标记任务完成
+                    if (progressManager.GetTaskProgress(uiTaskID) >= 0)
+                    {
+                        progressManager.CompleteTask(uiTaskID);
+                    }
                     return;
                 }
 
@@ -486,6 +510,11 @@ public class UIManager : BaseManager<UIManager>
                 {
                     Debug.LogWarning($"[UIManager] 面板 {panelName} 已存在于字典中，销毁重复实例");
                     GameObject.Destroy(obj);
+                    // 字典中已经有该面板，认为 UI 任务已就绪，直接完成任务
+                    if (progressManager.GetTaskProgress(uiTaskID) >= 0)
+                    {
+                        progressManager.CompleteTask(uiTaskID);
+                    }
                     return;
                 }
 
@@ -497,10 +526,17 @@ public class UIManager : BaseManager<UIManager>
                 {
                     callBack(panel);
                 }
-            },
-            uiTaskID,  // 传递taskID，让ResourcesManager跟踪进度
-            $"加载UI: {panelName}",  // 任务名称
-            1f  // 权重（如果任务已存在，这个权重会被忽略）
+
+                // 【关键】到这里说明：
+                // - 资源已加载
+                // - Canvas / 层级有效
+                // - 面板脚本已挂载且加入字典
+                // 可以安全地将 UI 任务标记为完成
+                if (progressManager.GetTaskProgress(uiTaskID) >= 0)
+                {
+                    progressManager.CompleteTask(uiTaskID);
+                }
+            }
         );
     }
 

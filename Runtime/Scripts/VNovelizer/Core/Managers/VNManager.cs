@@ -135,7 +135,7 @@ public class VNManager : BaseManager<VNManager>
 
         InitializeManager();
         
-        // 【新增】显示加载进度面板
+        //显示加载进度面板
         ShowLoadingPanelAndStartGame();
     }
     
@@ -300,7 +300,29 @@ public class VNManager : BaseManager<VNManager>
     /// </summary>
     private System.Collections.IEnumerator DelayedStartGameplay()
     {
-        yield return null; // 等待一帧
+        float startTime = Time.realtimeSinceStartup;
+        const float timeoutSeconds = 10f;
+        
+        VNGameplayPanel gameplayPanel = null;
+        while (true)
+        {
+            gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            if (gameplayPanel != null && gameplayPanel.IsInitialized)
+            {
+                break;
+            }
+            
+            if (Time.realtimeSinceStartup - startTime > timeoutSeconds)
+            {
+                Debug.LogWarning("[VNManager] 等待 VNGameplayPanel 初始化超时，将继续执行后续逻辑（可能导致UI未完全就绪）");
+                break;
+            }
+            
+            yield return null;
+        }
+        
+        yield return new WaitForEndOfFrame();
+        Canvas.ForceUpdateCanvases();
         
         // 计算目标行索引
         int targetIndex = 0;
@@ -318,7 +340,7 @@ public class VNManager : BaseManager<VNManager>
         }
         
         // 获取游戏面板
-        VNGameplayPanel gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
         if (gameplayPanel == null)
         {
             Debug.LogError("[VNManager] 无法获取VNGameplayPanel，游戏启动失败");
@@ -1274,6 +1296,7 @@ public class VNManager : BaseManager<VNManager>
         bool isBusy = isTextDisplaying || isTextTyping || isVoicePlaying || 
                       CommandManager.GetInstance().IsRunning || _flowCoroutine != null;
 
+        if (isAutoPlaying && !isBusy)
         if (isAutoPlaying && !isBusy)
         {
             float delay = GlobalDataManager.GetInstance().GetGlobalData().AutoSpeed;

@@ -35,6 +35,18 @@ public class MusicManager : BaseManager<MusicManager>
 
     public void PlayBGM(string name)
     {
+        // 先规范化名称，防止空白字符串导致加载目录本身
+        if (!string.IsNullOrEmpty(name))
+        {
+            name = name.Trim();
+        }
+
+        if (string.IsNullOrEmpty(name))
+        {
+            Debug.LogWarning("[MusicManager] PlayBGM 被调用，但传入的 BGM 名称为空或仅包含空白，已跳过播放。");
+            return;
+        }
+
         // 【修复】如果新 BGM 和当前正在播放的 BGM 相同，则跳过播放，避免重复播放导致不连贯
         if (!string.IsNullOrEmpty(name) && name == currentPlayingBGM)
         {
