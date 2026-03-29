@@ -8,6 +8,12 @@ using UnityEngine.UI;
 /// </summary>
 public class MainMenuPanel : BasePanel
 {
+    #region 私有变量
+    private bool _isStartingGame = false;
+    
+
+    #endregion
+    
     #region UI控件引用
 
     [SerializeField] private Button newGameBtn;
@@ -23,6 +29,8 @@ public class MainMenuPanel : BasePanel
     protected override void Awake()
     {
         base.Awake();
+        
+        UIManager.GetInstance().Init();
         
         // 初始化控件
         InitializeControls();
@@ -133,22 +141,62 @@ public class MainMenuPanel : BasePanel
     /// <summary>
     /// 新游戏按钮点击
     /// </summary>
+    // private void OnNewGameBtnClick() //你没协程啊？
+    // {
+    //     if (VNManager.GetInstance() == null)
+    //     {
+    //         Debug.LogError("[MainMenuPanel] VNManager 未初始化！");
+    //         return;
+    //     }
+    //     
+    //     // 从配置中读取默认剧本名称和行ID
+    //     string defaultScriptName = "Test101"; // 默认值
+    //     string defaultLineID = ""; // 默认从开头开始
+    //     
+    //     if (VNProjectConfig.Instance != null)
+    //     {
+    //         defaultScriptName = string.IsNullOrEmpty(VNProjectConfig.Instance.DefaultScriptName) 
+    //             ? "Test101" 
+    //             : VNProjectConfig.Instance.DefaultScriptName;
+    //         defaultLineID = VNProjectConfig.Instance.DefaultLineID ?? "";
+    //     }
+    //     else
+    //     {
+    //         Debug.LogWarning("[MainMenuPanel] VNProjectConfig 未找到，使用默认值");
+    //     }
+    //     
+    //     // 隐藏主菜单（VNManager.StartGame() 会自动显示游戏面板）
+    //     UIManager.GetInstance().HidePanel("MainMenuPanel");
+    //     
+    //     // 启动游戏（VNManager.StartGame() 内部会调用 ShowPanel<VNGameplayPanel>）
+    //     VNManager.GetInstance().StartGame(defaultScriptName, defaultLineID);
+    //     
+    //     Debug.Log($"[MainMenuPanel] 开始新游戏: 剧本={defaultScriptName}, 行ID={defaultLineID}");
+    // }
+    
+    
+    /// <summary>
+    /// 游戏按钮点击
+    /// </summary>
     private void OnNewGameBtnClick()
     {
+        if (_isStartingGame)
+            return;
+
         if (VNManager.GetInstance() == null)
         {
             Debug.LogError("[MainMenuPanel] VNManager 未初始化！");
             return;
         }
-        
+
         // 从配置中读取默认剧本名称和行ID
-        string defaultScriptName = "Test101"; // 默认值
-        string defaultLineID = ""; // 默认从开头开始
-        
+        string defaultScriptName = "Test101";
+        string defaultLineID = "";
+
         if (VNProjectConfig.Instance != null)
         {
-            defaultScriptName = string.IsNullOrEmpty(VNProjectConfig.Instance.DefaultScriptName) 
-                ? "Test101" 
+            defaultScriptName = string.IsNullOrEmpty(VNProjectConfig.Instance.DefaultScriptName)
+                ? "Test101"
                 : VNProjectConfig.Instance.DefaultScriptName;
             defaultLineID = VNProjectConfig.Instance.DefaultLineID ?? "";
         }
@@ -156,14 +204,55 @@ public class MainMenuPanel : BasePanel
         {
             Debug.LogWarning("[MainMenuPanel] VNProjectConfig 未找到，使用默认值");
         }
-        
-        // 隐藏主菜单（VNManager.StartGame() 会自动显示游戏面板）
-        UIManager.GetInstance().HidePanel("MainMenuPanel");
-        
-        // 启动游戏（VNManager.StartGame() 内部会调用 ShowPanel<VNGameplayPanel>）
-        VNManager.GetInstance().StartGame(defaultScriptName, defaultLineID);
-        
-        Debug.Log($"[MainMenuPanel] 开始新游戏: 剧本={defaultScriptName}, 行ID={defaultLineID}");
+
+        StartCoroutine(StartNewGameFlow(defaultScriptName, defaultLineID));
+    }
+    /// <summary>
+    /// 协程方法，按照顺序执行事件流，私有方法
+    /// </summary>
+    /// <param name="scriptName"></param>
+    /// <param name="lineID"></param>
+    /// <returns></returns>
+    private IEnumerator StartNewGameFlow(string scriptName, string lineID)
+    {
+        _isStartingGame = true;
+
+        // 先禁用主菜单交互，防止重复点击
+        SetMenuInteractable(false);
+
+        Debug.Log($"[MainMenuPanel] 开始新游戏流程: 剧本={scriptName}, 行ID={lineID}");
+
+        // 1. 先显示常驻加载界面
+        UIManager.GetInstance().ShowPanel<LoadingProgressPanel>(
+            "LoadingProgressPanel",
+            VNProjectConfig.Instance.UI_LoadingPath,
+            E_UI_Layer.System,
+            null
+        );
+
+        // 2. 强制刷新 UI，并至少等一帧，让 loading 真正显示到屏幕上
+        Canvas.ForceUpdateCanvases();
+        yield return null;
+        yield return new WaitForEndOfFrame();
+
+        // 3. 此时再隐藏主菜单自己，但不要用 HidePanel 销毁
+        HideMe();
+
+        // 4. 再开始游戏逻辑
+        VNManager.GetInstance().StartGame(scriptName, lineID);
+    }
+    /// <summary>
+    /// 关闭目录的点击功能，私有方法
+    /// </summary>
+    /// <param name="interactable"></param>
+    
+    private void SetMenuInteractable(bool interactable)
+    {
+        if (newGameBtn != null) newGameBtn.interactable = interactable;
+        if (loadGameBtn != null) loadGameBtn.interactable = interactable;
+        if (galleryBtn != null) galleryBtn.interactable = interactable;
+        if (settingsBtn != null) settingsBtn.interactable = interactable;
+        if (quitBtn != null) quitBtn.interactable = interactable;
     }
     
     /// <summary>
