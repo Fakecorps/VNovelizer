@@ -1,8 +1,9 @@
-﻿using System.Collections;
+using System.Collections;
 using UnityEngine;
 using VNovelizer.Core.Utils;
+using VNovelizer.Core.Commands;
 
-namespace VNovelizer.Core.Commands
+namespace VNovelizer.Core.UI.UnregisteredCommand
 {
     public class FadeBlackOutCommand : VNCommand
     {

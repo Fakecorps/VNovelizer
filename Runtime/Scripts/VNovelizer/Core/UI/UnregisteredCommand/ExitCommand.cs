@@ -1,9 +1,10 @@
-﻿using System.Collections;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using VNovelizer.Core.Commands;
 using VNovelizer.Core.API;
 
-namespace VNovelizer.Core.Commands
+namespace VNovelizer.Core.UI.UnregisteredCommand
 {
     public class ExitCommand : VNCommand
     {

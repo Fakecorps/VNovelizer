@@ -1,6 +1,7 @@
-﻿using UnityEngine;
+using UnityEngine;
+using VNovelizer.Core.Commands;
 
-namespace VNovelizer.Core.Commands
+namespace VNovelizer.Core.UI.UnregisteredCommand
 {
     public class FadeBlackInCommand : VNCommand
     {

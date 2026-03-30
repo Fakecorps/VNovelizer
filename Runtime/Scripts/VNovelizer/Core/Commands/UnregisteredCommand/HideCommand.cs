@@ -1,5 +1,6 @@
-﻿using System.Collections;
+using System.Collections;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace VNovelizer.Core.Commands
 {
@@ -33,7 +34,8 @@ namespace VNovelizer.Core.Commands
             //     Debug.LogError($"[JumpCommand] 未找到指定的行ID: {targetID}");
             //     return false;
             // }
-            UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel").OnHide();
+            var panel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            panel?.OnHide(default(InputAction.CallbackContext));
             return true;
         }
     }
