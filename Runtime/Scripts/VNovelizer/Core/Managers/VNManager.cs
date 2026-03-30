@@ -32,6 +32,9 @@ public class VNManager : BaseManager<VNManager>
 
     // 【新增】特效状态追踪
     private HashSet<string> activeEffects = new HashSet<string>();
+    
+    //【26-3-19新增】游戏界面加载回调
+    private bool isGameplayPanelLoadCallbackFired = false;
 
     // 游戏状态
     private bool isAutoPlaying = false;
@@ -60,6 +63,9 @@ public class VNManager : BaseManager<VNManager>
     private Coroutine _flowCoroutine;
     private Coroutine _autoPlayCoroutine;
 
+    //(3-29)文本行间转场
+    private bool _advanceAfterCommandsRequested = false;
+    
     public VNManager()
     {
         if (!isListeningSceneLoad)
@@ -135,7 +141,7 @@ public class VNManager : BaseManager<VNManager>
 
         InitializeManager();
         
-        //显示加载进度面板
+        // 【新增】显示加载进度面板
         ShowLoadingPanelAndStartGame();
     }
     
@@ -162,6 +168,9 @@ public class VNManager : BaseManager<VNManager>
     /// </summary>
     private void StartGameLoading()
     {
+        
+        isGameplayPanelLoadCallbackFired = false;
+        
         LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
         
         // 注册加载任务
@@ -195,87 +204,7 @@ public class VNManager : BaseManager<VNManager>
         MonoManager.GetInstance().StartCoroutine(LoadScriptWithProgress(scriptTaskID));
     }
     
-    /// <summary>
-    /// 带进度更新的剧本加载协程
-    /// </summary>
-    private System.Collections.IEnumerator LoadScriptWithProgress(string scriptTaskID)
-    {
-        LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
-        
-        // 【新增】跨剧本加载时清空历史记录（新游戏或切换剧本）
-        // 在设置新剧本名之前，检查是否是切换剧本
-        string previousScriptName = this.currentScriptName;
-        bool isNewScript = string.IsNullOrEmpty(previousScriptName) || previousScriptName != pendingScriptName;
-        
-        if (isNewScript)
-        {
-            // 新游戏或切换剧本，清空历史记录
-            ClearHistoryLog();
-            Debug.Log($"[VNManager] 检测到新剧本或首次启动，已清空历史记录。旧剧本: {previousScriptName}, 新剧本: {pendingScriptName}");
-        }
-        
-        this.currentScriptName = pendingScriptName;
-
-        // 1. 加载剧本数据 (纯数据操作，同步加载，但用协程分步更新进度)
-        progressManager.UpdateTaskProgress(scriptTaskID, 0.1f); // 开始加载
-        yield return null; // 等待一帧，让UI更新
-        
-        progressManager.UpdateTaskProgress(scriptTaskID, 0.3f); // 解析中
-        yield return null; // 等待一帧，让UI更新
-        
-        CommandManager.GetInstance().ExecuteCommand($"loadscript({pendingScriptName})");
-        progressManager.UpdateTaskProgress(scriptTaskID, 0.7f); // 加载中
-        yield return null; // 等待一帧，让UI更新
-        
-        ResetState();
-        progressManager.UpdateTaskProgress(scriptTaskID, 0.9f); // 即将完成
-        yield return null; // 等待一帧，让UI更新
-        
-        progressManager.CompleteTask(scriptTaskID); // 剧本加载完成
-
-        // 2. 计算目标行索引 (暂不预演，只算位置)
-        int targetIndex = 0;
-        if (!string.IsNullOrEmpty(pendingLineID))
-        {
-            string cleanID = pendingLineID.Trim();
-            if (LineIDIndexMap.ContainsKey(cleanID))
-            {
-                targetIndex = LineIDIndexMap[cleanID];
-            }
-            else
-            {
-                Debug.LogError($"[VNManager] 找不到指定的行号 ID: {cleanID}，将从头开始。");
-                targetIndex = 0;
-            }
-        }
-        
-        // 3. 显示 UI (异步过程，UIManager会自动注册并跟踪进度)
-        if (StoryLines.Count > 0)
-        {
-            // UIManager会自动注册任务 "ui_VNGameplayPanel"，我们只需要等待它完成
-            UIManager.GetInstance().ShowPanel<VNGameplayPanel>("VNGameplayPanel", VNProjectConfig.Instance.UI_VNGamePlayPath, E_UI_Layer.Middle, (panel) =>
-            {
-                // UI加载完成，UIManager会自动完成任务
-                // 注意：这里不立即执行游戏逻辑，等待OnGameLoadingCompleted回调
-            });
-        }
-        else
-        {
-            Debug.LogError("[VNManager] 剧本加载失败，无法启动游戏。");
-            
-            // 清理并隐藏加载面板
-            progressManager.OnAllTasksCompleted -= OnGameLoadingCompleted;
-            progressManager.ClearAllTasks();
-            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
-            
-            // 调用失败回调
-            if (onGameStartedCallback != null)
-            {
-                onGameStartedCallback.Invoke();
-                onGameStartedCallback = null;
-            }
-        }
-    }
+   
     
     /// <summary>
     /// 游戏加载完成回调
@@ -284,165 +213,18 @@ public class VNManager : BaseManager<VNManager>
     {
         LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
         progressManager.OnAllTasksCompleted -= OnGameLoadingCompleted;
-        
-        // 隐藏加载面板
-        UIManager.GetInstance().HidePanel("LoadingProgressPanel");
-        
-        // 清理加载任务
-        progressManager.ClearAllTasks();
-        
-        // 延迟一帧，确保UI完全初始化
-        MonoManager.GetInstance().StartCoroutine(DelayedStartGameplay());
+
+        // 取消 ClearAllTasks，等待任务队列完成再进 DelayedStartGameplay
+        MonoManager.GetInstance().StartCoroutine(WaitLoadingQueueThenStartGameplay());
     }
     
     /// <summary>
     /// 延迟启动游戏逻辑（确保UI完全初始化）
     /// </summary>
-    private System.Collections.IEnumerator DelayedStartGameplay()
-    {
-        float startTime = Time.realtimeSinceStartup;
-        const float timeoutSeconds = 10f;
-        
-        VNGameplayPanel gameplayPanel = null;
-        while (true)
-        {
-            gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
-            if (gameplayPanel != null && gameplayPanel.IsInitialized)
-            {
-                break;
-            }
-            
-            if (Time.realtimeSinceStartup - startTime > timeoutSeconds)
-            {
-                Debug.LogWarning("[VNManager] 等待 VNGameplayPanel 初始化超时，将继续执行后续逻辑（可能导致UI未完全就绪）");
-                break;
-            }
-            
-            yield return null;
-        }
-        
-        yield return new WaitForEndOfFrame();
-        Canvas.ForceUpdateCanvases();
-        
-        // 计算目标行索引
-        int targetIndex = 0;
-        if (!string.IsNullOrEmpty(pendingLineID))
-        {
-            string cleanID = pendingLineID.Trim();
-            if (LineIDIndexMap.ContainsKey(cleanID))
-            {
-                targetIndex = LineIDIndexMap[cleanID];
-            }
-            else
-            {
-                targetIndex = 0;
-            }
-        }
-        
-        // 获取游戏面板
-        gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
-        if (gameplayPanel == null)
-        {
-            Debug.LogError("[VNManager] 无法获取VNGameplayPanel，游戏启动失败");
-            if (onGameStartedCallback != null)
-            {
-                onGameStartedCallback.Invoke();
-                onGameStartedCallback = null;
-            }
-            yield break;
-        }
-        
-        // 【修复】确保游戏状态设置为 Gameplay（场景回放时需要）
-        GameStateManager.GetInstance().SetState(GameState.Gameplay);
-        
-        // A. 强力清理 UI 现场
-        VNAPI.ClearAllEffects(); // 确保 EffectLayer 是空的
-        EventCenter.GetInstance().EventTrigger("HideCharacter", "Left");
-        EventCenter.GetInstance().EventTrigger("HideCharacter", "Mid");
-        EventCenter.GetInstance().EventTrigger("HideCharacter", "Right");
+    /// <summary>
+/// 延迟启动游戏逻辑（确保UI完全初始化）
+/// </summary>
 
-        // 【修复】快进到目标行，如果遇到 choice 命令则停止
-        bool encounteredChoice = false;
-        if (targetIndex > 0)
-        {
-            Debug.Log($"[VNManager] UI就绪，开始预演至索引: {targetIndex}");
-            encounteredChoice = FastForwardToLine(targetIndex);
-        }
-
-        // C. 设置当前行（如果遇到 choice，FastForwardToLine 已经设置了 CurrentLineIndex，不需要覆盖）
-        if (!encounteredChoice)
-        {
-            CurrentLineIndex = targetIndex;
-        }
-
-        // D. 同步立绘显示 (FastForward 更新了 currentCharacters 数据，现在应用到 UI)
-        foreach (var kvp in currentCharacters)
-        {
-            string[] parts = kvp.Value.Split('_');
-            if (parts.Length >= 2)
-            {
-                Dictionary<string, string> info = new Dictionary<string, string>
-                {
-                    { "position", kvp.Key }, { "characterID", parts[0] }, { "emotion", parts[1] }
-                };
-                EventCenter.GetInstance().EventTrigger("ShowCharacter", info);
-                
-                // 【修复】同步翻转状态：如果该位置有保存的翻转状态，应用完整的scale（考虑profile.scale和翻转状态）
-                string posCode = NormalizePositionCode(kvp.Key);
-                if (currentCharactersScaleX.ContainsKey(posCode))
-                {
-                    float savedScaleX = currentCharactersScaleX[posCode];
-                    
-                    // 获取角色的CharacterProfile，以获取profile.scale
-                    string characterID = parts[0];
-                    CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
-                    
-                    if (profile != null)
-                    {
-                        // 计算正确的scale：profile.scale * savedScaleX
-                        float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
-                        Vector3 scale = Vector3.one * profileScale;
-                        scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
-                        
-                        RectTransform charRect = VNAPI.GetCharRect(posCode);
-                        if (charRect != null)
-                        {
-                            charRect.localScale = scale;
-                            Debug.Log($"[VNManager] 同步位置 {kvp.Key}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
-                        }
-                    }
-                    else
-                    {
-                        // 如果找不到profile，使用旧的逻辑（只应用翻转状态）
-                        RectTransform charRect = VNAPI.GetCharRect(posCode);
-                        if (charRect != null)
-                        {
-                            Vector3 scale = charRect.localScale;
-                            scale.x = savedScaleX;
-                            charRect.localScale = scale;
-                            Debug.LogWarning($"[VNManager] 找不到角色 {characterID} 的Profile，只应用翻转状态: {savedScaleX}");
-                        }
-                    }
-                }
-            }
-        }
-
-        // E. 同步背景显示
-        if (!string.IsNullOrEmpty(currentBG))
-        {
-            EventCenter.GetInstance().EventTrigger("ChangeBackground", currentBG);
-        }
-
-        // F. 正式播放
-        PlayCurrentLine();
-
-        // G. 【新增】调用游戏启动完成回调
-        if (onGameStartedCallback != null)
-        {
-            onGameStartedCallback.Invoke();
-            onGameStartedCallback = null; // 调用后清空，避免重复调用
-        }
-    }
     
     private void RunGameLogic_OLD()
     {
@@ -934,6 +716,8 @@ public class VNManager : BaseManager<VNManager>
     /// </summary>
     private void ContinueGameLoading(SaveData saveData)
     {
+        isGameplayPanelLoadCallbackFired = false;
+        
         LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
         
         // 注册加载任务
@@ -966,131 +750,7 @@ public class VNManager : BaseManager<VNManager>
         MonoManager.GetInstance().StartCoroutine(LoadScriptForContinueWithProgress(scriptTaskID, saveData));
     }
     
-    /// <summary>
-    /// 带进度更新的继续游戏剧本加载协程
-    /// </summary>
-    private System.Collections.IEnumerator LoadScriptForContinueWithProgress(string scriptTaskID, SaveData saveData)
-    {
-        LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
-        
-        // 【Bug修复】清理pending变量，避免与新游戏逻辑冲突
-        pendingScriptName = null;
-        pendingLineID = null;
-        
-        // 【Bug修复】确保游戏状态是Gameplay
-        if (GameStateManager.GetInstance().CurrentState != GameState.Gameplay && 
-            GameStateManager.GetInstance().CurrentState != GameState.AutoPlay)
-        {
-            GameStateManager.GetInstance().SetState(GameState.Gameplay);
-        }
-        
-        InitializeManager();
 
-        // 1. 加载剧本数据
-        progressManager.UpdateTaskProgress(scriptTaskID, 0.1f);
-        yield return null; // 等待一帧，让UI更新
-        
-        progressManager.UpdateTaskProgress(scriptTaskID, 0.3f);
-        yield return null; // 等待一帧，让UI更新
-        
-        var scriptData = ScriptParser.Parse(saveData.ScriptFileName);
-        if (scriptData != null)
-        {
-            SetScriptData(scriptData.Lines, scriptData.IDMap, saveData.ScriptFileName);
-            progressManager.UpdateTaskProgress(scriptTaskID, 0.7f);
-            yield return null; // 等待一帧，让UI更新
-        }
-        else
-        {
-            Debug.LogError($"无法加载存档: {saveData.ScriptFileName}");
-            progressManager.CompleteTask(scriptTaskID);
-            progressManager.OnAllTasksCompleted -= OnContinueGameLoadingCompleted;
-            progressManager.ClearAllTasks();
-            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
-            yield break;
-        }
-        
-        progressManager.UpdateTaskProgress(scriptTaskID, 0.9f);
-        yield return null; // 等待一帧，让UI更新
-        
-        progressManager.CompleteTask(scriptTaskID);
-
-        // 恢复游戏状态数据
-        currentBG = saveData.CurrentBG;
-        currentBGM = saveData.CurrentBGM;
-
-        // 恢复特效状态（先清空，再恢复）
-        VNAPI.ClearAllEffects();
-        activeEffects.Clear();
-        
-        // 恢复历史记录（在恢复特效前）
-        if (saveData.HistoryLog != null && saveData.HistoryLog.Count > 0)
-        {
-            GlobalDataManager.GetInstance().RestoreHistoryLog(saveData.HistoryLog);
-            Debug.Log($"[VNManager] 已恢复 {saveData.HistoryLog.Count} 条历史记录");
-        }
-        else
-        {
-            // 如果存档中没有历史记录，清空当前的历史记录（防止残留）
-            GlobalDataManager.GetInstance().ClearHistoryLog();
-        }
-
-        // 恢复标志
-        if (saveData.Flags != null)
-        {
-            GlobalDataManager.GetInstance().GetGlobalData().Flags = new Dictionary<string, bool>(saveData.Flags);
-        }
-        
-        if (saveData.IntFlags != null)
-        {
-            GlobalDataManager.GetInstance().GetGlobalData().IntFlags = new Dictionary<string, int>(saveData.IntFlags);
-        }
-        
-        if (saveData.StringFlags != null)
-        {
-            GlobalDataManager.GetInstance().GetGlobalData().StringFlags = new Dictionary<string, string>(saveData.StringFlags);
-        }
-
-        // 恢复立绘数据
-        currentCharactersScaleX.Clear();
-        if (saveData.CharacterScaleX != null) 
-        {
-            this.currentCharactersScaleX = new Dictionary<string, float>(saveData.CharacterScaleX);
-        }
-
-        // 计算目标行索引
-        int targetIndex = 0;
-        if (!string.IsNullOrEmpty(saveData.LineID) && LineIDIndexMap.ContainsKey(saveData.LineID))
-        {
-            targetIndex = LineIDIndexMap[saveData.LineID];
-        }
-        
-        // 保存到成员变量，供DelayedContinueGameplay使用
-        currentLoadingSaveData = saveData;
-        currentLoadingTargetIndex = targetIndex;
-
-        // 2. 显示 UI (异步过程，UIManager会自动注册并跟踪进度)
-        if (StoryLines.Count > 0)
-        {
-            UIManager.GetInstance().ShowPanel<VNGameplayPanel>("VNGameplayPanel", VNProjectConfig.Instance.UI_VNGamePlayPath, E_UI_Layer.Middle, (panel) =>
-            {
-                // UI加载完成，UIManager会自动完成任务
-                // 注意：这里不立即执行游戏逻辑，等待OnContinueGameLoadingCompleted回调
-            });
-        }
-        else
-        {
-            Debug.LogError("[VNManager] 剧本数据为空，无法继续游戏");
-            
-            // 清理并隐藏加载面板
-            progressManager.OnAllTasksCompleted -= OnContinueGameLoadingCompleted;
-            progressManager.ClearAllTasks();
-            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
-            
-            // 清理临时数据
-            currentLoadingSaveData = null;
-        }
-    }
     
     /// <summary>
     /// 继续游戏加载完成回调
@@ -1101,47 +761,16 @@ public class VNManager : BaseManager<VNManager>
         progressManager.OnAllTasksCompleted -= OnContinueGameLoadingCompleted;
         
         // 隐藏加载面板
-        UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+        // UIManager.GetInstance().HidePanel("LoadingProgressPanel");
         
         // 清理加载任务
-        progressManager.ClearAllTasks();
+        // progressManager.ClearAllTasks();
         
         // 延迟一帧，确保UI完全初始化
-        MonoManager.GetInstance().StartCoroutine(DelayedContinueGameplay());
+        MonoManager.GetInstance().StartCoroutine(WaitLoadingQueueThenContinueGameplay());
     }
     
-    /// <summary>
-    /// 延迟继续游戏逻辑（确保UI完全初始化）
-    /// </summary>
-    private System.Collections.IEnumerator DelayedContinueGameplay()
-    {
-        yield return null; // 等待一帧
-        
-        // 获取游戏面板
-        VNGameplayPanel gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
-        if (gameplayPanel == null)
-        {
-            Debug.LogError("[VNManager] 无法获取VNGameplayPanel，继续游戏失败");
-            currentLoadingSaveData = null;
-            yield break;
-        }
-        
-        // 检查是否有保存的存档数据
-        if (currentLoadingSaveData == null)
-        {
-            Debug.LogError("[VNManager] 存档数据丢失，继续游戏失败");
-            yield break;
-        }
-        
-        // 【修复】确保游戏状态设置为 Gameplay（加载存档时需要）
-        GameStateManager.GetInstance().SetState(GameState.Gameplay);
-        
-        // 恢复游戏状态
-        RestoreGameStateFromSave(currentLoadingSaveData, currentLoadingTargetIndex);
-        
-        // 清理临时数据
-        currentLoadingSaveData = null;
-    }
+ 
     
     /// <summary>
     /// 从存档恢复游戏状态（UI已准备好）
@@ -1239,8 +868,17 @@ public class VNManager : BaseManager<VNManager>
 
         GlobalDataManager.GetInstance().AddReadLineID(currentLine.ID);
 
+        // if (!string.IsNullOrEmpty(currentLine.Command))
+        // {
+        //     _flowCoroutine = MonoManager.GetInstance().StartCoroutine(ExecuteActionsAndContinue(currentLine.Command));
+        // }
+        // else
+        // {
+        //     CheckAndTriggerAutoPlay();
+        // }
         if (!string.IsNullOrEmpty(currentLine.Command))
         {
+            ClearAdvanceAfterCommandsRequest();
             _flowCoroutine = MonoManager.GetInstance().StartCoroutine(ExecuteActionsAndContinue(currentLine.Command));
         }
         else
@@ -1249,24 +887,7 @@ public class VNManager : BaseManager<VNManager>
         }
     }
 
-    private IEnumerator ExecuteActionsAndContinue(string actionString)
-    {
-        int preIndex = CurrentLineIndex;
-        yield return CommandManager.GetInstance().ExecuteCommandsAsync(actionString);
-        _flowCoroutine = null;
-
-        // 【修复】检查游戏状态，如果是 Choice 状态，不应该继续前进或触发自动播放
-        GameStateManager stateManager = GameStateManager.GetInstance();
-        if (stateManager != null && stateManager.CurrentState == GameState.Choice)
-        {
-            // 在 Choice 状态下，等待玩家选择，不继续前进
-            Debug.Log("[VNManager] 命令执行完成，当前处于 Choice 状态，停止继续前进");
-            yield return null;
-        }
-
-        if (CurrentLineIndex != preIndex) PlayCurrentLine();
-        else CheckAndTriggerAutoPlay();
-    }
+    
 
     private void CheckAndTriggerAutoPlay()
     {
@@ -1297,7 +918,6 @@ public class VNManager : BaseManager<VNManager>
                       CommandManager.GetInstance().IsRunning || _flowCoroutine != null;
 
         if (isAutoPlaying && !isBusy)
-        if (isAutoPlaying && !isBusy)
         {
             float delay = GlobalDataManager.GetInstance().GetGlobalData().AutoSpeed;
             Debug.Log($"[VNManager] 自动播放触发 - 延迟时间: {delay}秒");
@@ -1309,51 +929,21 @@ public class VNManager : BaseManager<VNManager>
     { 
         CheckAndTriggerAutoPlay();
     }
-    private IEnumerator AutoPlayCountdown(float delay)
-    {
-        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
-        bool isTextTyping = false;
-        bool isVoicePlaying = false;
-        
-        // 第一步：等待打字机效果和语音播放都完成（以慢的为准）
-        Debug.Log("[VNManager] 自动播放等待中：等待打字机效果和语音播放完成...");
-        while (true)
-        {
-            // 检查打字机效果
-            if (gameplayPanel != null)
-            {
-                isTextTyping = gameplayPanel.IsTextTyping();
-            }
-            
-            // 检查语音播放
-            if (VoiceManager.GetInstance() != null)
-            {
-                isVoicePlaying = VoiceManager.GetInstance().IsVoicePlaying();
-                Debug.Log("Voice: " + isVoicePlaying);
-            }
-            
-            // 如果两者都完成，跳出循环
-            if (!isTextTyping && !isVoicePlaying)
-            {
-                Debug.Log("[VNManager] 打字机效果和语音播放已完成，等待额外延迟后进入下一行");
-                break;
-            }
-            
-            // 等待一帧后继续检查
-            yield return null;
-        }
-        
-        // 第二步：等待AutoSpeed时间后进入下一行
-        yield return new WaitForSeconds(delay);
-        
-        Debug.Log($"[VNManager] 自动播放进入下一行 (行索引: {CurrentLineIndex + 1})");
-        _autoPlayCoroutine = null;
-        CurrentLineIndex++;
-        PlayCurrentLine();
-    }
+    
 
     public void NextLine()
     {
+        AdvanceToNextLine(false);
+    }
+
+    public void NextLineWithoutAnimation()
+    {
+        AdvanceToNextLine(true);
+    }
+
+    private void AdvanceToNextLine(bool skipAnimations)
+    {
+        Debug.Log($"[VNManager] Max line" + StoryLines.Count);
         // 【修复】检查游戏状态，如果是 Choice 状态，不应该继续前进
         GameStateManager stateManager = GameStateManager.GetInstance();
         if (stateManager != null && stateManager.CurrentState == GameState.Choice)
@@ -1374,14 +964,21 @@ public class VNManager : BaseManager<VNManager>
                 _flowCoroutine = null;
             }
             CommandManager.GetInstance().InterruptAll();
-            CheckAndTriggerAutoPlay();
-            return;
+            if (!skipAnimations)
+            {
+                CheckAndTriggerAutoPlay();
+                return;
+            }
         }
 
         if (isTextDisplaying)
         {
             EventCenter.GetInstance().EventTrigger("DisplayAllText");
-            return;
+
+            if (!skipAnimations)
+            {
+                return;
+            }
         }
 
         if (_autoPlayCoroutine != null)
@@ -1398,14 +995,74 @@ public class VNManager : BaseManager<VNManager>
         }
 
         CurrentLineIndex++;
-        PlayCurrentLine();
+
+        if (skipAnimations)
+        {
+            PlayCurrentLineImmediately();
+        }
+        else
+        {
+            PlayCurrentLine();
+        }
+    }
+
+    private void PlayCurrentLineImmediately()
+    {
+        if (CurrentLineIndex < 0 || CurrentLineIndex >= StoryLines.Count)
+        {
+            if (isReplayMode)
+            {
+                EndReplay();
+            }
+            return;
+        }
+
+        if (_autoPlayCoroutine != null)
+        {
+            MonoManager.GetInstance().StopCoroutine(_autoPlayCoroutine);
+            _autoPlayCoroutine = null;
+        }
+
+        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        if (gameplayPanel != null)
+        {
+            gameplayPanel.RestoreDefaultCharTransforms();
+            gameplayPanel.RestoreDefaultTextProperties();
+        }
+
+        StoryLine currentLine = StoryLines[CurrentLineIndex];
+        ApplyInheritance(currentLine);
+        lastLine = currentLine;
+
+        UpdateVisualState(currentLine);
+        UpdateAudioState(currentLine);
+        UpdateDialogue(currentLine);
+        EventCenter.GetInstance().EventTrigger("DisplayAllText");
+
+        GlobalDataManager.GetInstance().AddReadLineID(currentLine.ID);
+
+        int preIndex = CurrentLineIndex;
+        if (!string.IsNullOrEmpty(currentLine.Command))
+        {
+            CommandManager.GetInstance().SimulateCommands(currentLine.Command);
+        }
+
+        if (CurrentLineIndex != preIndex)
+        {
+            PlayCurrentLineImmediately();
+        }
+        else
+        {
+            CheckAndTriggerAutoPlay();
+        }
     }
 
     private void ApplyInheritance(StoryLine currentLine)
     {
         if (string.IsNullOrEmpty(currentLine.Speaker))
         {
-            currentLine.Speaker = lastValidSpeaker;
+            // currentLine.Speaker = lastValidSpeaker;
+            currentLine.Speaker = "";
         }
         else
         {
@@ -1414,7 +1071,9 @@ public class VNManager : BaseManager<VNManager>
 
         if (string.IsNullOrEmpty(currentLine.Text))
         {
-            currentLine.Text = lastValidText;
+            // currentLine.Text = lastValidText;
+
+            currentLine.Text = "";
         }
         else
         {
@@ -1716,7 +1375,649 @@ public class VNManager : BaseManager<VNManager>
             case "textspeed": isTextSpeedEnabled = value.ToLower() == "true"; break;
         }
     }
+
+    #region 协程区
+    /// <summary>
+    /// 加载等待协程
+    /// </summary>
+    /// <returns></returns>
+    private IEnumerator WaitLoadingQueueThenContinueGameplay()
+    {
+        LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
+
+        const string scriptTaskID = "load_script_continue";
+        const string uiTaskID = "ui_VNGameplayPanel";
+        const int maxWaitFrames = 120;
+
+        VNGameplayPanel gameplayPanel = null;
+
+        for (int i = 0; i < maxWaitFrames; i++)
+        {
+            float scriptProgress = progressManager.GetTaskProgress(scriptTaskID);
+            float uiProgress = progressManager.GetTaskProgress(uiTaskID);
+
+            bool scriptDone = scriptProgress >= 1f || scriptProgress < 0f;
+            bool uiDone = uiProgress >= 1f || uiProgress < 0f;
+
+            gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            bool panelReady =
+                isGameplayPanelLoadCallbackFired &&
+                gameplayPanel != null &&
+                gameplayPanel.gameObject != null &&
+                gameplayPanel.gameObject.activeInHierarchy;
+
+            if (scriptDone && uiDone && panelReady)
+            {
+                Debug.Log($"[VNManager] 加载任务与 VNGameplayPanel 均已就绪（ContinueGame），等待了 {i + 1} 帧");
+                break;
+            }
+
+            yield return null;
+        }
+
+        gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        if (gameplayPanel == null || gameplayPanel.gameObject == null || !gameplayPanel.gameObject.activeInHierarchy)
+        {
+            Debug.LogError("[VNManager] 无法获取VNGameplayPanel，继续游戏失败");
+
+            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+            progressManager.ClearAllTasks();
+            currentLoadingSaveData = null;
+
+            yield break;
+        }
+
+        UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+        progressManager.ClearAllTasks();
+
+        yield return DelayedContinueGameplay();
+    }
+    
+     /// <summary>
+    /// 带进度更新的剧本加载协程
+    /// </summary>
+    private System.Collections.IEnumerator LoadScriptWithProgress(string scriptTaskID)
+    {
+        LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
+        
+        // 【新增】跨剧本加载时清空历史记录（新游戏或切换剧本）
+        // 在设置新剧本名之前，检查是否是切换剧本
+        string previousScriptName = this.currentScriptName;
+        bool isNewScript = string.IsNullOrEmpty(previousScriptName) || previousScriptName != pendingScriptName;
+        
+        if (isNewScript)
+        {
+            // 新游戏或切换剧本，清空历史记录
+            ClearHistoryLog();
+            Debug.Log($"[VNManager] 检测到新剧本或首次启动，已清空历史记录。旧剧本: {previousScriptName}, 新剧本: {pendingScriptName}");
+        }
+        
+        this.currentScriptName = pendingScriptName;
+
+        // 1. 加载剧本数据 (纯数据操作，同步加载，但用协程分步更新进度)
+        progressManager.UpdateTaskProgress(scriptTaskID, 0.1f); // 开始加载
+        yield return null; // 等待一帧，让UI更新
+        
+        progressManager.UpdateTaskProgress(scriptTaskID, 0.3f); // 解析中
+        yield return null; // 等待一帧，让UI更新
+        
+        CommandManager.GetInstance().ExecuteCommand($"loadscript({pendingScriptName})");
+        progressManager.UpdateTaskProgress(scriptTaskID, 0.7f); // 加载中
+        yield return null; // 等待一帧，让UI更新
+        
+        ResetState();
+        progressManager.UpdateTaskProgress(scriptTaskID, 0.9f); // 即将完成
+        yield return null; // 等待一帧，让UI更新
+        
+        progressManager.CompleteTask(scriptTaskID); // 剧本加载完成
+
+        // 2. 计算目标行索引 (暂不预演，只算位置)
+        int targetIndex = 0;
+        if (!string.IsNullOrEmpty(pendingLineID))
+        {
+            string cleanID = pendingLineID.Trim();
+            if (LineIDIndexMap.ContainsKey(cleanID))
+            {
+                targetIndex = LineIDIndexMap[cleanID];
+            }
+            else
+            {
+                Debug.LogError($"[VNManager] 找不到指定的行号 ID: {cleanID}，将从头开始。");
+                targetIndex = 0;
+            }
+        }
+        
+        // 3. 显示 UI (异步过程，UIManager会自动注册并跟踪进度)
+        if (StoryLines.Count > 0)
+        {
+            // UIManager会自动注册任务 "ui_VNGameplayPanel"，我们只需要等待它完成
+            UIManager.GetInstance().ShowPanel<VNGameplayPanel>("VNGameplayPanel", VNProjectConfig.Instance.UI_VNGamePlayPath, E_UI_Layer.Middle, (panel) =>
+            {
+                isGameplayPanelLoadCallbackFired = true;
+                Debug.Log("[VNManager] VNGameplayPanel 的 ShowPanel 回调已触发");
+            });
+        }
+        else
+        {
+            Debug.LogError("[VNManager] 剧本加载失败，无法启动游戏。");
+            
+            // 清理并隐藏加载面板
+            progressManager.OnAllTasksCompleted -= OnGameLoadingCompleted;
+            progressManager.ClearAllTasks();
+            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+            
+            // 调用失败回调
+            if (onGameStartedCallback != null)
+            {
+                onGameStartedCallback.Invoke();
+                onGameStartedCallback = null;
+            }
+        }
+    }
+    
+
+    private IEnumerator DelayedStartGameplay()
+{
+    // VNGameplayPanel gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+    // // VNGameplayPanel拿不到，考虑文件缺失的情况
+    // if (gameplayPanel == null)
+    // {
+    //     Debug.LogError("[VNManager] 无法获取VNGameplayPanel，游戏启动失败");
+    //
+    //     if (onGameStartedCallback != null)
+    //     {
+    //         onGameStartedCallback.Invoke();
+    //         onGameStartedCallback = null;
+    //     }
+    //
+    //     yield break;
+    // }
+    
+    VNGameplayPanel gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+
+    // 如果还没拿到，强制再创建一次
+    if (gameplayPanel == null)
+    {
+        Debug.LogWarning("[VNManager] DelayedStartGameplay 时未找到 VNGameplayPanel，尝试强制补建...");
+
+        UIManager.GetInstance().ShowPanel<VNGameplayPanel>(
+            "VNGameplayPanel",
+            VNProjectConfig.Instance.UI_VNGamePlayPath,
+            E_UI_Layer.Middle,
+            (panel) =>
+            {
+                Debug.Log("[VNManager] VNGameplayPanel 强制补建回调成功（StartGame）");
+            }
+        );
+
+        // 最多再等 30 帧
+        for (int i = 0; i < 30; i++)
+        {
+            gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            if (gameplayPanel != null &&
+                gameplayPanel.gameObject != null &&
+                gameplayPanel.gameObject.activeInHierarchy)
+            {
+                Debug.Log($"[VNManager] 强制补建后成功获取 VNGameplayPanel（StartGame），等待了 {i + 1} 帧");
+                break;
+            }
+
+            yield return null;
+        }
+    }
+    
+    //再尝试重新拿
+    gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+    if (gameplayPanel == null || gameplayPanel.gameObject == null || !gameplayPanel.gameObject.activeInHierarchy)
+    {
+        Debug.LogError("[VNManager] 无法获取VNGameplayPanel，游戏启动失败");
+
+        UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+        LoadingProgressManager.GetInstance().ClearAllTasks();
+
+        if (onGameStartedCallback != null)
+        {
+            onGameStartedCallback.Invoke();
+            onGameStartedCallback = null;
+        }
+
+        yield break;
+    }
+    
+    
+    // 计算目标行索引
+    int targetIndex = 0;
+    if (!string.IsNullOrEmpty(pendingLineID))
+    {
+        string cleanID = pendingLineID.Trim();
+        if (LineIDIndexMap.ContainsKey(cleanID))
+        {
+            targetIndex = LineIDIndexMap[cleanID];
+        }
+        else
+        {
+            targetIndex = 0;
+        }
+    }
+    // 确保游戏状态设置为 Gameplay
+    GameStateManager.GetInstance().SetState(GameState.Gameplay);
+// 强力清理 UI 现场
+    VNAPI.ClearAllEffects();
+    EventCenter.GetInstance().EventTrigger("HideCharacter", "Left");
+    EventCenter.GetInstance().EventTrigger("HideCharacter", "Mid");
+    EventCenter.GetInstance().EventTrigger("HideCharacter", "Right");
+// 快进到目标行，如果遇到 choice 命令则停止
+    bool encounteredChoice = false;
+    if (targetIndex > 0)
+    {
+        Debug.Log($"[VNManager] UI就绪，开始预演至索引: {targetIndex}");
+        encounteredChoice = FastForwardToLine(targetIndex);
+    }
+    // 设置当前行
+    if (!encounteredChoice)
+    {
+        CurrentLineIndex = targetIndex;
+    }
+// 同步立绘显示
+    foreach (var kvp in currentCharacters)
+    {
+        string[] parts = kvp.Value.Split('_');
+        if (parts.Length >= 2)
+        {
+            Dictionary<string, object> info = new Dictionary<string, object>
+            {
+                { "position", kvp.Key },
+                { "characterID", parts[0] },
+                { "emotion", parts[1] }
+            };
+
+            EventCenter.GetInstance().EventTrigger("ShowCharacter", info);
+
+            string posCode = NormalizePositionCode(kvp.Key);
+            if (currentCharactersScaleX.ContainsKey(posCode))
+            {
+                float savedScaleX = currentCharactersScaleX[posCode];
+                string characterID = parts[0];
+                CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
+
+                if (profile != null)
+                {
+                    float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
+                    Vector3 scale = Vector3.one * profileScale;
+                    scale.x = savedScaleX * profileScale;
+
+                    RectTransform charRect = VNAPI.GetCharRect(posCode);
+                    if (charRect != null)
+                    {
+                        charRect.localScale = scale;
+                    }
+                }
+                else
+                {
+                    RectTransform charRect = VNAPI.GetCharRect(posCode);
+                    if (charRect != null)
+                    {
+                        Vector3 scale = charRect.localScale;
+                        scale.x = savedScaleX;
+                        charRect.localScale = scale;
+                    }
+                }
+            }
+        }
+    }
+    // 同步背景显示
+    if (!string.IsNullOrEmpty(currentBG))
+    {
+        EventCenter.GetInstance().EventTrigger("ChangeBackground", currentBG);
+    }
+// 正式播放
+    PlayCurrentLine();
+    // 启动完成回调
+    if (onGameStartedCallback != null)
+    {
+        onGameStartedCallback.Invoke();
+        onGameStartedCallback = null;
+    }
+}
+    
+    /// <summary>
+    /// 带进度更新的继续游戏剧本加载协程
+    /// </summary>
+    private System.Collections.IEnumerator LoadScriptForContinueWithProgress(string scriptTaskID, SaveData saveData)
+    {
+        LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
+        
+        // 【Bug修复】清理pending变量，避免与新游戏逻辑冲突
+        pendingScriptName = null;
+        pendingLineID = null;
+        
+        // 【Bug修复】确保游戏状态是Gameplay
+        if (GameStateManager.GetInstance().CurrentState != GameState.Gameplay && 
+            GameStateManager.GetInstance().CurrentState != GameState.AutoPlay)
+        {
+            GameStateManager.GetInstance().SetState(GameState.Gameplay);
+        }
+        
+        InitializeManager();
+
+        // 1. 加载剧本数据
+        progressManager.UpdateTaskProgress(scriptTaskID, 0.1f);
+        yield return null; // 等待一帧，让UI更新
+        
+        progressManager.UpdateTaskProgress(scriptTaskID, 0.3f);
+        yield return null; // 等待一帧，让UI更新
+        
+        var scriptData = ScriptParser.Parse(saveData.ScriptFileName);
+        if (scriptData != null)
+        {
+            SetScriptData(scriptData.Lines, scriptData.IDMap, saveData.ScriptFileName);
+            progressManager.UpdateTaskProgress(scriptTaskID, 0.7f);
+            yield return null; // 等待一帧，让UI更新
+        }
+        else
+        {
+            Debug.LogError($"无法加载存档: {saveData.ScriptFileName}");
+            progressManager.CompleteTask(scriptTaskID);
+            progressManager.OnAllTasksCompleted -= OnContinueGameLoadingCompleted;
+            progressManager.ClearAllTasks();
+            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+            yield break;
+        }
+        
+        progressManager.UpdateTaskProgress(scriptTaskID, 0.9f);
+        yield return null; // 等待一帧，让UI更新
+        
+        progressManager.CompleteTask(scriptTaskID);
+
+        // 恢复游戏状态数据
+        currentBG = saveData.CurrentBG;
+        currentBGM = saveData.CurrentBGM;
+
+        // 恢复特效状态（先清空，再恢复）
+        VNAPI.ClearAllEffects();
+        activeEffects.Clear();
+        
+        // 恢复历史记录（在恢复特效前）
+        if (saveData.HistoryLog != null && saveData.HistoryLog.Count > 0)
+        {
+            GlobalDataManager.GetInstance().RestoreHistoryLog(saveData.HistoryLog);
+            Debug.Log($"[VNManager] 已恢复 {saveData.HistoryLog.Count} 条历史记录");
+        }
+        else
+        {
+            // 如果存档中没有历史记录，清空当前的历史记录（防止残留）
+            GlobalDataManager.GetInstance().ClearHistoryLog();
+        }
+
+        // 恢复标志
+        if (saveData.Flags != null)
+        {
+            GlobalDataManager.GetInstance().GetGlobalData().Flags = new Dictionary<string, bool>(saveData.Flags);
+        }
+        
+        if (saveData.IntFlags != null)
+        {
+            GlobalDataManager.GetInstance().GetGlobalData().IntFlags = new Dictionary<string, int>(saveData.IntFlags);
+        }
+        
+        if (saveData.StringFlags != null)
+        {
+            GlobalDataManager.GetInstance().GetGlobalData().StringFlags = new Dictionary<string, string>(saveData.StringFlags);
+        }
+
+        // 恢复立绘数据
+        currentCharactersScaleX.Clear();
+        if (saveData.CharacterScaleX != null) 
+        {
+            this.currentCharactersScaleX = new Dictionary<string, float>(saveData.CharacterScaleX);
+        }
+
+        // 计算目标行索引
+        int targetIndex = 0;
+        if (!string.IsNullOrEmpty(saveData.LineID) && LineIDIndexMap.ContainsKey(saveData.LineID))
+        {
+            targetIndex = LineIDIndexMap[saveData.LineID];
+        }
+        
+        // 保存到成员变量，供DelayedContinueGameplay使用
+        currentLoadingSaveData = saveData;
+        currentLoadingTargetIndex = targetIndex;
+
+        // 2. 显示 UI (异步过程，UIManager会自动注册并跟踪进度)
+        if (StoryLines.Count > 0)
+        {
+            UIManager.GetInstance().ShowPanel<VNGameplayPanel>("VNGameplayPanel", VNProjectConfig.Instance.UI_VNGamePlayPath, E_UI_Layer.Middle, (panel) =>
+            {
+                // UI加载完成，UIManager会自动完成任务
+                // 注意：这里不立即执行游戏逻辑，等待OnContinueGameLoadingCompleted回调
+                isGameplayPanelLoadCallbackFired = true;
+                Debug.Log("[VNManager] VNGameplayPanel 的 ShowPanel 回调已触发（ContinueGame）");
+            });
+        }
+        else
+        {
+            Debug.LogError("[VNManager] 剧本数据为空，无法继续游戏");
+            
+            // 清理并隐藏加载面板
+            progressManager.OnAllTasksCompleted -= OnContinueGameLoadingCompleted;
+            progressManager.ClearAllTasks();
+            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+            
+            // 清理临时数据
+            currentLoadingSaveData = null;
+        }
+    }
+    
+    /// <summary>
+    /// 延迟继续游戏逻辑（确保UI完全初始化）
+    /// </summary>
+    private System.Collections.IEnumerator DelayedContinueGameplay()
+    {
+        // yield return null; // 等待一帧
+        
+        // 获取游戏面板
+        VNGameplayPanel gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        if (gameplayPanel == null)
+        {
+            Debug.LogError("[VNManager] 无法获取VNGameplayPanel，继续游戏失败");
+            // currentLoadingSaveData = null;
+            yield break;
+        }
+        
+        // 检查是否有保存的存档数据
+        if (currentLoadingSaveData == null)
+        {
+            Debug.LogError("[VNManager] 存档数据丢失，继续游戏失败");
+            yield break;
+        }
+        
+        // 【修复】确保游戏状态设置为 Gameplay（加载存档时需要）
+        GameStateManager.GetInstance().SetState(GameState.Gameplay);
+        
+        // 恢复游戏状态
+        RestoreGameStateFromSave(currentLoadingSaveData, currentLoadingTargetIndex);
+        
+        // 清理临时数据
+        currentLoadingSaveData = null;
+    }
+    
+    
+    
+    // private IEnumerator ExecuteActionsAndContinue(string actionString)
+    // {
+    //     int preIndex = CurrentLineIndex;
+    //     yield return CommandManager.GetInstance().ExecuteCommandsAsync(actionString);
+    //     _flowCoroutine = null;
+    //
+    //     // 【修复】检查游戏状态，如果是 Choice 状态，不应该继续前进或触发自动播放
+    //     GameStateManager stateManager = GameStateManager.GetInstance();
+    //     if (stateManager != null && stateManager.CurrentState == GameState.Choice)
+    //     {
+    //         // 在 Choice 状态下，等待玩家选择，不继续前进
+    //         Debug.Log("[VNManager] 命令执行完成，当前处于 Choice 状态，停止继续前进");
+    //         yield return null;
+    //     }
+    //
+    //     if (CurrentLineIndex != preIndex) PlayCurrentLine();
+    //     else CheckAndTriggerAutoPlay();
+    // }
+    private IEnumerator ExecuteActionsAndContinue(string actionString)
+    {
+        int preIndex = CurrentLineIndex;
+
+        yield return CommandManager.GetInstance().ExecuteCommandsAsync(actionString);
+
+        _flowCoroutine = null;
+
+        bool shouldAdvanceAfterCommands = ConsumeAdvanceAfterCommandsRequest();
+
+        GameStateManager stateManager = GameStateManager.GetInstance();
+        if (stateManager != null && stateManager.CurrentState == GameState.Choice)
+        {
+            Debug.Log("[VNManager] 命令执行完成，当前处于 Choice 状态，停止继续前进");
+            yield break;
+        }
+
+        // 如果命令过程中已经改了行号（例如 jump），优先播放新位置
+        if (CurrentLineIndex != preIndex)
+        {
+            PlayCurrentLine();
+            yield break;
+        }
+
+        // 如果某个命令登记了“命令全部执行完后自动前进”
+        if (shouldAdvanceAfterCommands)
+        {
+            CurrentLineIndex++;
+            PlayCurrentLine();
+            yield break;
+        }
+
+        CheckAndTriggerAutoPlay();
+    }
+
+    private IEnumerator AutoPlayCountdown(float delay)
+    {
+        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        bool isTextTyping = false;
+        bool isVoicePlaying = false;
+        
+        // 第一步：等待打字机效果和语音播放都完成（以慢的为准）
+        Debug.Log("[VNManager] 自动播放等待中：等待打字机效果和语音播放完成...");
+        while (true)
+        {
+            // 检查打字机效果
+            if (gameplayPanel != null)
+            {
+                isTextTyping = gameplayPanel.IsTextTyping();
+            }
+            
+            // 检查语音播放
+            if (VoiceManager.GetInstance() != null)
+            {
+                isVoicePlaying = VoiceManager.GetInstance().IsVoicePlaying();
+                Debug.Log("Voice: " + isVoicePlaying);
+            }
+            
+            // 如果两者都完成，跳出循环
+            if (!isTextTyping && !isVoicePlaying)
+            {
+                Debug.Log("[VNManager] 打字机效果和语音播放已完成，等待额外延迟后进入下一行");
+                break;
+            }
+            
+            // 等待一帧后继续检查
+            yield return null;
+        }
+        
+        // 第二步：等待AutoSpeed时间后进入下一行
+        yield return new WaitForSeconds(delay);
+        
+        Debug.Log($"[VNManager] 自动播放进入下一行 (行索引: {CurrentLineIndex + 1})");
+        _autoPlayCoroutine = null;
+        CurrentLineIndex++;
+        PlayCurrentLine();
+    }
+    
+    private IEnumerator WaitLoadingQueueThenStartGameplay()
+    {
+        LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
+
+        const string scriptTaskID = "load_script";
+        const string uiTaskID = "ui_VNGameplayPanel";
+        const int maxWaitFrames = 120;
+
+        VNGameplayPanel gameplayPanel = null;
+
+        for (int i = 0; i < maxWaitFrames; i++)
+        {
+            float scriptProgress = progressManager.GetTaskProgress(scriptTaskID);
+            float uiProgress = progressManager.GetTaskProgress(uiTaskID);
+
+            bool scriptDone = scriptProgress >= 1f || scriptProgress < 0f;
+            bool uiDone = uiProgress >= 1f || uiProgress < 0f;
+
+            gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            bool panelReady =
+                isGameplayPanelLoadCallbackFired &&
+                gameplayPanel != null &&
+                gameplayPanel.gameObject != null &&
+                gameplayPanel.gameObject.activeInHierarchy;
+
+            if (scriptDone && uiDone && panelReady)
+            {
+                Debug.Log($"[VNManager] 加载任务与 VNGameplayPanel 均已就绪，等待了 {i + 1} 帧");
+                break;
+            }
+
+            yield return null;
+        }
+
+        gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        if (gameplayPanel == null || gameplayPanel.gameObject == null || !gameplayPanel.gameObject.activeInHierarchy)
+        {
+            Debug.LogError("[VNManager] 加载任务已结束，但仍无法获取 VNGameplayPanel，游戏启动失败");
+
+            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+            progressManager.ClearAllTasks();
+
+            if (onGameStartedCallback != null)
+            {
+                onGameStartedCallback.Invoke();
+                onGameStartedCallback = null;
+            }
+
+            yield break;
+        }
+
+        UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+        progressManager.ClearAllTasks();
+
+        yield return DelayedStartGameplay();
+    }
+
+    
+    #endregion
+    
+    
+    
     #region API供外部调用
+    public void RequestAdvanceAfterCommands()
+    {
+        _advanceAfterCommandsRequested = true;
+    }
+
+    public void ClearAdvanceAfterCommandsRequest()
+    {
+        _advanceAfterCommandsRequested = false;
+    }
+
+    public bool ConsumeAdvanceAfterCommandsRequest()
+    {
+        bool result = _advanceAfterCommandsRequested;
+        _advanceAfterCommandsRequested = false;
+        return result;
+    }
     public float GetCharacterScaleX(string posCode)
     {
         string normalized = NormalizePositionCode(posCode);

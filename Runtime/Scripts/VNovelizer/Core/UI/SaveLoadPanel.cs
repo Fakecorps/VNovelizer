@@ -30,6 +30,9 @@ public class SaveLoadPanel : BasePanel
     // 存档数据（延迟初始化，在Awake中根据MAX_SAVE_SLOTS创建）
     private SaveData[] saveDatas;
 
+    //读取存档协程变量
+    private bool _isLoadingGame = false;
+    
     protected override void Awake()
     {
         base.Awake();
@@ -156,6 +159,73 @@ public class SaveLoadPanel : BasePanel
     /// <summary>
     /// 存档槽位点击事件
     /// </summary>
+    // private void OnSaveSlotClick(int slotIndex)
+    // {
+    //     if (currentMode == Mode.Save)
+    //     {
+    //         // 保存游戏
+    //         VNManager.GetInstance().SaveGame(slotIndex);
+    //
+    //         // 更新存档数据
+    //         saveDatas[slotIndex] = SaveManager.GetInstance().LoadGame(slotIndex);
+    //         UpdatePage();
+    //     }
+    //     else
+    //     {
+    //         // 加载游戏
+    //         SaveData saveData = saveDatas[slotIndex];
+    //         if (saveData != null)
+    //         {
+    //             // 【Bug修复】加载存档时，需要关闭所有面板并恢复Gameplay状态
+    //             GameStateManager stateManager = GameStateManager.GetInstance();
+    //             
+    //             // 检查是否是从Pause状态打开的（栈中有状态）
+    //             bool wasFromPause = !stateManager.IsStateStackEmpty();
+    //             
+    //             // 关闭SaveLoadPanel
+    //             UIManager.GetInstance().HidePanel("SaveLoadPanel");
+    //             
+    //             // 恢复状态
+    //             if (stateManager.CurrentState == GameState.SaveLoad)
+    //             {
+    //                 // 如果栈中有状态，说明是从Pause打开的
+    //                 if (wasFromPause)
+    //                 {
+    //                     // PopState回到Pause
+    //                     stateManager.PopState();
+    //                     
+    //                     // 关闭PausePanel
+    //                     UIManager.GetInstance().HidePanel("PausePanel");
+    //                     
+    //                     // 直接设置为Gameplay（因为加载存档后应该进入游戏状态）
+    //                     stateManager.SetState(GameState.Gameplay);
+    //                 }
+    //                 else
+    //                 {
+    //                     // 不是从Pause打开的，直接RestoreState
+    //                     stateManager.RestoreState();
+    //                 }
+    //             }
+    //             else
+    //             {
+    //                 stateManager.RestoreState();
+    //             }
+    //             
+    //             // 确保状态是Gameplay（加载存档后应该进入游戏状态）
+    //             if (stateManager.CurrentState != GameState.Gameplay && stateManager.CurrentState != GameState.AutoPlay)
+    //             {
+    //                 stateManager.SetState(GameState.Gameplay);
+    //             }
+    //             
+    //             // 加载存档（这会处理场景切换等）
+    //             VNManager.GetInstance().ContinueGame(saveData);
+    //         }
+    //         else
+    //         {
+    //             Debug.Log($"Slot {slotIndex + 1} 是空的，无法加载。");
+    //         }
+    //     }
+    // }
     private void OnSaveSlotClick(int slotIndex)
     {
         if (currentMode == Mode.Save)
@@ -169,53 +239,13 @@ public class SaveLoadPanel : BasePanel
         }
         else
         {
-            // 加载游戏
+            if (_isLoadingGame)
+                return;
+
             SaveData saveData = saveDatas[slotIndex];
             if (saveData != null)
             {
-                // 【Bug修复】加载存档时，需要关闭所有面板并恢复Gameplay状态
-                GameStateManager stateManager = GameStateManager.GetInstance();
-                
-                // 检查是否是从Pause状态打开的（栈中有状态）
-                bool wasFromPause = !stateManager.IsStateStackEmpty();
-                
-                // 关闭SaveLoadPanel
-                UIManager.GetInstance().HidePanel("SaveLoadPanel");
-                
-                // 恢复状态
-                if (stateManager.CurrentState == GameState.SaveLoad)
-                {
-                    // 如果栈中有状态，说明是从Pause打开的
-                    if (wasFromPause)
-                    {
-                        // PopState回到Pause
-                        stateManager.PopState();
-                        
-                        // 关闭PausePanel
-                        UIManager.GetInstance().HidePanel("PausePanel");
-                        
-                        // 直接设置为Gameplay（因为加载存档后应该进入游戏状态）
-                        stateManager.SetState(GameState.Gameplay);
-                    }
-                    else
-                    {
-                        // 不是从Pause打开的，直接RestoreState
-                        stateManager.RestoreState();
-                    }
-                }
-                else
-                {
-                    stateManager.RestoreState();
-                }
-                
-                // 确保状态是Gameplay（加载存档后应该进入游戏状态）
-                if (stateManager.CurrentState != GameState.Gameplay && stateManager.CurrentState != GameState.AutoPlay)
-                {
-                    stateManager.SetState(GameState.Gameplay);
-                }
-                
-                // 加载存档（这会处理场景切换等）
-                VNManager.GetInstance().ContinueGame(saveData);
+                StartCoroutine(LoadGameFlow(saveData));
             }
             else
             {
@@ -223,7 +253,73 @@ public class SaveLoadPanel : BasePanel
             }
         }
     }
+    /// <summary>
+    /// 加载存档协程
+    /// </summary>
+    /// <param name="saveData"></param>
+    /// <returns></returns>
+    private IEnumerator LoadGameFlow(SaveData saveData)
+    {
+        _isLoadingGame = true;
 
+        // 记录当前是否是从 Pause 打开的
+        GameStateManager stateManager = GameStateManager.GetInstance();
+        bool wasFromPause = !stateManager.IsStateStackEmpty();
+
+        // 先显示常驻 loading
+        UIManager.GetInstance().ShowPanel<LoadingProgressPanel>(
+            "LoadingProgressPanel",
+            VNProjectConfig.Instance.UI_LoadingPath,
+            E_UI_Layer.System,
+            null
+        );
+
+        // 强制刷新并等待一帧，让 loading 先真正显示出来
+        Canvas.ForceUpdateCanvases();
+        yield return null;
+        yield return new WaitForEndOfFrame();
+
+        // 再关闭当前面板
+        UIManager.GetInstance().HidePanel("SaveLoadPanel");
+
+        // 如果是从 Pause 打开的，再关闭 PausePanel
+        if (wasFromPause)
+        {
+            UIManager.GetInstance().HidePanel("PausePanel");
+        }
+
+        // 恢复状态
+        if (stateManager.CurrentState == GameState.SaveLoad)
+        {
+            if (wasFromPause)
+            {
+                // 先退回 Pause
+                stateManager.PopState();
+                // 然后明确切到 Gameplay
+                stateManager.SetState(GameState.Gameplay);
+            }
+            else
+            {
+                stateManager.RestoreState();
+            }
+        }
+        else
+        {
+            stateManager.RestoreState();
+        }
+
+        // 保证状态正确
+        if (stateManager.CurrentState != GameState.Gameplay &&
+            stateManager.CurrentState != GameState.AutoPlay)
+        {
+            stateManager.SetState(GameState.Gameplay);
+        }
+
+        //正式继续游戏（这里会走加载存档、场景恢复等逻辑）
+        VNManager.GetInstance().ContinueGame(saveData);
+    }
+    
+    
     /// <summary>
     /// 存档删除点击事件
     /// </summary>

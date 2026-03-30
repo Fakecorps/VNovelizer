@@ -19,7 +19,7 @@ public enum E_UI_Layer
 public class UIManager : BaseManager<UIManager>
 {
     public Dictionary<string, BasePanel> panelDic = new Dictionary<string, BasePanel>();
-
+    
     private Transform Bottom;
     private Transform Top;
     private Transform Left;
@@ -38,9 +38,21 @@ public class UIManager : BaseManager<UIManager>
     private bool _isEventSystemDynamicallyCreated = false;
 
     private static bool isListeningSceneLoad = false;
-
+    
+    //记录全局加载界面界面
+    private LoadingProgressPanel _persistentLoadingPanel;
+    private GameObject _persistentLoadingPanelGO;
+    
+    //test
+    private static int _instanceCounter = 0;
+    private int _instanceId;
+    
     public UIManager()
     {
+        //测试，查看UIManager的创建问题
+        _instanceId = ++_instanceCounter;
+        Debug.Log($"[UIManager] ctor, instanceId = {_instanceId}");
+        
         // 构造函数不再初始化Canvas，留待Init方法调用
         
         // 监听场景加载事件
@@ -50,6 +62,90 @@ public class UIManager : BaseManager<UIManager>
             isListeningSceneLoad = true;
         }
     }
+    /// <summary>
+    /// 加载界面的预加载
+    /// </summary>
+    private void PreloadPersistentLoadingPanel()
+    {
+        // 已经缓存过，直接返回
+        if (_persistentLoadingPanel != null && _persistentLoadingPanelGO != null)
+            return;
+
+        const string panelName = "LoadingProgressPanel";
+        string loadPath = VNProjectConfig.Instance.UI_LoadingPath;
+
+        // 1. 先检查当前场景里是否已经有运行时实例（防止重复）
+        LoadingProgressPanel[] existingPanels =
+            Object.FindObjectsByType<LoadingProgressPanel>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+        if (existingPanels != null && existingPanels.Length > 0)
+        {
+            // 取第一个作为唯一常驻实例
+            _persistentLoadingPanel = existingPanels[0];
+            _persistentLoadingPanelGO = _persistentLoadingPanel.gameObject;
+
+            // 如果有重复实例，销毁多余的
+            for (int i = 1; i < existingPanels.Length; i++)
+            {
+                if (existingPanels[i] != null && existingPanels[i].gameObject != null)
+                {
+                    GameObject.Destroy(existingPanels[i].gameObject);
+                }
+            }
+
+            // 确保是根对象
+            _persistentLoadingPanelGO.transform.SetParent(null, false);
+
+            // 放进 DontDestroyOnLoad
+            GameObject.DontDestroyOnLoad(_persistentLoadingPanelGO);
+
+            // 预加载阶段直接隐藏
+            _persistentLoadingPanelGO.SetActive(false);
+
+            Debug.Log("[UIManager] 复用现有 LoadingProgressPanel，并设为常驻隐藏对象");
+            return;
+        }
+
+        // 2. 场景里没有，就通过 ResourcesManager 创建
+        // 注意：ResourcesManager.Load<GameObject>() 已经会自动 Instantiate
+        GameObject obj = ResourcesManager.GetInstance().Load<GameObject>(loadPath + "/" + panelName);
+        if (obj == null)
+        {
+            Debug.LogError($"[UIManager] 无法加载全局 LoadingProgressPanel: {loadPath}/{panelName}");
+            return;
+        }
+
+        // 确保是根对象
+        obj.transform.SetParent(null, false);
+
+        // 先拿脚本
+        LoadingProgressPanel panel = obj.GetComponent<LoadingProgressPanel>();
+        if (panel == null)
+        {
+            // 兼容脚本挂在子物体上的情况
+            panel = obj.GetComponentInChildren<LoadingProgressPanel>(true);
+        }
+
+        if (panel == null)
+        {
+            Debug.LogError("[UIManager] LoadingProgressPanel 预制体上未找到 LoadingProgressPanel 组件！");
+            GameObject.Destroy(obj);
+            return;
+        }
+
+        // 标记为常驻
+        GameObject.DontDestroyOnLoad(obj);
+
+        _persistentLoadingPanel = panel;
+        _persistentLoadingPanelGO = obj;
+
+        // 预加载阶段直接隐藏，不调用 HideMe，避免初始逻辑被扰动
+        _persistentLoadingPanelGO.SetActive(false);
+
+        Debug.Log("[UIManager] 已预创建常驻 LoadingProgressPanel（隐藏）");
+    }
+        
+    
     
     /// <summary>
     /// 场景加载完成回调
@@ -98,11 +194,39 @@ public class UIManager : BaseManager<UIManager>
         else
         {
             // 延迟一帧执行，确保场景中的Camera已经初始化
-            MonoManager.GetInstance().StartCoroutine(DelayedSetupCanvasCamera());
+            // MonoManager.GetInstance().StartCoroutine(DelayedSetupCanvasCamera());
+            MonoManager.GetInstance().StartCoroutine(DelayedInitGameplayUI());
         }
 
         SetupCanvasCamera();
     }
+    /// <summary>
+    /// 协程，进入新场景清除应用，重新初始化
+    /// </summary>
+    /// <returns></returns>
+    private IEnumerator DelayedInitGameplayUI()
+    {
+        yield return null; // 等新场景对象起来
+
+        // 清掉旧层级引用，避免沿用上一场景已经失效的对象
+        Bottom = null;
+        Top = null;
+        Left = null;
+        Middle = null;
+        Right = null;
+        System = null;
+
+        if (canvas == null || _canvasGameObject == null)
+        {
+            canvas = null;
+            _canvasGameObject = null;
+        }
+
+        Debug.Log("[UIManager] 非主菜单场景，重新初始化 UIManager...");
+        Init();
+        SetupCanvasCamera();
+    }
+    
     
     /// <summary>
     /// 延迟设置Canvas的Camera引用（等待场景完全加载）
@@ -148,6 +272,8 @@ public class UIManager : BaseManager<UIManager>
     /// </summary>
     public void Init()
     {
+        Debug.Log("[UIManager] 尝试创建UIManager");
+
         //检查是否已经创建，防止重复
         if (canvas != null && _canvasGameObject != null)
         {
@@ -159,7 +285,14 @@ public class UIManager : BaseManager<UIManager>
         }
 
         //首先检查场景中是否已存在Canvas
-        Canvas existingCanvas = Object.FindFirstObjectByType<Canvas>();
+        // Canvas existingCanvas = Object.FindFirstObjectByType<Canvas>();
+        Canvas existingCanvas = FindUsableSceneCanvas();
+        // if (existingCanvas != null)
+        // {
+        //     Debug.Log($"[UIManager] Init 找到的 existingCanvas = {existingCanvas.name}, root = {existingCanvas.transform.root.name}");
+        //     
+        // }
+        
         if (existingCanvas != null)
         {
             Debug.Log("[UIManager] 检测到场景中已存在Canvas，使用场景中的Canvas");
@@ -225,9 +358,60 @@ public class UIManager : BaseManager<UIManager>
                 _isEventSystemDynamicallyCreated = true; // 标记为动态创建
             }
         }
-
-
+        
+        PreloadPersistentLoadingPanel();
     }
+    /// <summary>
+    /// 查找主Canvas
+    /// </summary>
+    /// <returns></returns>
+    private Canvas FindUsableSceneCanvas()
+    {
+        Canvas[] canvases = Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+        for (int i = 0; i < canvases.Length; i++)
+        {
+            Canvas c = canvases[i];
+            if (c == null) continue;
+
+            // 1) 跳过常驻 LoadingProgressPanel 自带的 Canvas
+            if (_persistentLoadingPanelGO != null)
+            {
+                if (c.gameObject == _persistentLoadingPanelGO || c.transform.IsChildOf(_persistentLoadingPanelGO.transform))
+                {
+                    Debug.Log($"[UIManager] 跳过 LoadingProgressPanel Canvas: {c.name}");
+                    continue;
+                }
+            }
+
+            // 2) 跳过黑幕过场的 Canvas_FadeOverlay
+            if (c.name == "Canvas_FadeOverlay")
+            {
+                Debug.Log($"[UIManager] 跳过 FadeOverlay Canvas: {c.name}");
+                continue;
+            }
+
+            // 3) 优先使用真正的 VNGamePlayCanvas
+            if (c.name == "VNGamePlayCanvas")
+            {
+                return c;
+            }
+
+            // 4) 或者至少要求它已经有完整的 UI 层级
+            bool hasBottom = c.transform.Find("Bottom") != null;
+            bool hasMiddle = c.transform.Find("Middle") != null;
+            bool hasTop = c.transform.Find("Top") != null;
+            bool hasSystem = c.transform.Find("System") != null;
+
+            if (hasBottom && hasMiddle && hasTop && hasSystem)
+            {
+                return c;
+            }
+        }
+
+        return null;
+    }
+    
     
     /// <summary>
     /// 刷新层级引用
@@ -333,10 +517,173 @@ public class UIManager : BaseManager<UIManager>
         {
             Debug.Log($"[UIManager] Canvas renderMode 不是 ScreenSpaceCamera，当前模式: {canvasComponent.renderMode}");
         }
-    }
+    } 
+    
+    
+//     /// <summary>
+// /// 确保存在一个全局常驻的Canvas，用于放置 DontDestroyOnLoad 的UI
+// /// </summary>
+// private void EnsurePersistentUICanvas()
+// {
+//     if (_persistentCanvas != null)
+//     {
+//         return;
+//     }
+//
+//     GameObject root = new GameObject("VNGlobalPersistentCanvas");
+//     Canvas canvasComp = root.AddComponent<Canvas>();
+//     canvasComp.renderMode = RenderMode.ScreenSpaceOverlay;
+//     canvasComp.sortingOrder = 5000; // 保证盖在普通UI上面
+//
+//     CanvasScaler scaler = root.AddComponent<CanvasScaler>();
+//     scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+//     scaler.referenceResolution = new Vector2(1920, 1080);
+//     scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+//     scaler.matchWidthOrHeight = 0.5f;
+//
+//     root.AddComponent<GraphicRaycaster>();
+//
+//     _persistentCanvas = root.GetComponent<RectTransform>();
+//     GameObject.DontDestroyOnLoad(root);
+//
+//     GameObject systemLayer = new GameObject("System");
+//     systemLayer.transform.SetParent(_persistentCanvas, false);
+//
+//     RectTransform layerRect = systemLayer.AddComponent<RectTransform>();
+//     layerRect.anchorMin = Vector2.zero;
+//     layerRect.anchorMax = Vector2.one;
+//     layerRect.offsetMin = Vector2.zero;
+//     layerRect.offsetMax = Vector2.zero;
+//
+//     _persistentSystemLayer = systemLayer.transform;
+//
+//     Debug.Log("[UIManager] 已创建全局常驻UI根节点 VNGlobalPersistentCanvas");
+// }
+
+/// <summary>
+/// 预创建全局 LoadingProgressPanel，默认隐藏，且不随场景销毁
+/// </summary>
+// private void PreloadGlobalLoadingPanel()
+// {
+//     if (_hasPreloadedGlobalLoadingPanel)
+//     {
+//         return;
+//     }
+//
+//     EnsurePersistentUICanvas();
+//
+//     const string panelName = "LoadingProgressPanel";
+//     if (persistentPanelDic.ContainsKey(panelName))
+//     {
+//         _hasPreloadedGlobalLoadingPanel = true;
+//         return;
+//     }
+//
+//     string loadPath = VNProjectConfig.Instance != null
+//         ? VNProjectConfig.Instance.UI_LoadingPath
+//         : "VNovelizerRes/VNPrefabs/UI/Loading";
+//
+//     GameObject prefab = ResourcesManager.GetInstance().Load<GameObject>(loadPath + "/" + panelName);
+//     if (prefab == null)
+//     {
+//         Debug.LogError($"[UIManager] 无法预加载全局面板: {loadPath}/{panelName}");
+//         return;
+//     }
+//
+//     GameObject obj = GameObject.Instantiate(prefab, _persistentSystemLayer, false);
+//
+//     RectTransform rect = obj.transform as RectTransform;
+//     if (rect != null)
+//     {
+//         rect.anchorMin = Vector2.zero;
+//         rect.anchorMax = Vector2.one;
+//         rect.offsetMin = Vector2.zero;
+//         rect.offsetMax = Vector2.zero;
+//         rect.localScale = Vector3.one;
+//         rect.localPosition = Vector3.zero;
+//     }
+//
+//     LoadingProgressPanel panel = obj.GetComponent<LoadingProgressPanel>();
+//     if (panel == null)
+//     {
+//         Debug.LogError("[UIManager] 预加载失败：LoadingProgressPanel 预制体上没有 LoadingProgressPanel 组件");
+//         GameObject.Destroy(obj);
+//         return;
+//     }
+//
+//     persistentPanelDic[panelName] = panel;
+//
+//     // 默认隐藏
+//     panel.HideMe();
+//     obj.SetActive(false);
+//
+//     _hasPreloadedGlobalLoadingPanel = true;
+//
+//     Debug.Log("[UIManager] 已预创建全局 LoadingProgressPanel（隐藏，DontDestroyOnLoad）");
+// }
+
+/// <summary>
+/// 显示全局常驻面板
+/// </summary>
+// private bool TryShowPersistentPanel<T>(string panelName, UnityAction<T> callBack) where T : BasePanel
+// {
+//     if (!persistentPanelDic.ContainsKey(panelName))
+//     {
+//         return false;
+//     }
+//
+//     BasePanel basePanel = persistentPanelDic[panelName];
+//     if (basePanel == null || basePanel.gameObject == null)
+//     {
+//         persistentPanelDic.Remove(panelName);
+//         return false;
+//     }
+//
+//     basePanel.gameObject.SetActive(true);
+//     basePanel.transform.SetAsLastSibling();
+//     basePanel.ShowMe();
+//
+//     if (callBack != null)
+//     {
+//         callBack(basePanel as T);
+//     }
+//
+//     return true;
+// }
 
     public void ShowPanel<T>(string panelName,string loadPath, E_UI_Layer layer, UnityAction<T> callBack) where T : BasePanel
     {
+        
+        if (panelName == "LoadingProgressPanel")
+        {
+            if (_persistentLoadingPanel == null || _persistentLoadingPanelGO == null)
+            {
+                PreloadPersistentLoadingPanel();
+            }
+
+            if (_persistentLoadingPanel != null && _persistentLoadingPanelGO != null)
+            {
+                _persistentLoadingPanelGO.SetActive(true);
+                _persistentLoadingPanel.ShowMe();
+
+                if (callBack != null)
+                    callBack(_persistentLoadingPanel as T);
+
+                return;
+            }
+
+            Debug.LogError("[UIManager] 常驻 LoadingProgressPanel 显示失败");
+            return;
+        }
+
+        
+        
+        // // 先尝试显示全局常驻面板（例如 LoadingProgressPanel）
+        // if (TryShowPersistentPanel(panelName, callBack))
+        // {
+        //     return;
+        // }
+        
         // 确保Canvas已初始化
         if (canvas == null || Middle == null)
         {
@@ -355,16 +702,46 @@ public class UIManager : BaseManager<UIManager>
         LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
         
         // 检查面板是否已存在
+        // if (panelDic.ContainsKey(panelName))
+        // {
+        //     // 【修复】如果面板已存在，也需要完成任务，避免进度条卡住
+        //     if (progressManager.GetTaskProgress(uiTaskID) >= 0)
+        //     {
+        //         // 任务已注册，直接完成它
+        //         progressManager.CompleteTask(uiTaskID);
+        //     }
+        //     
+        //     panelDic[panelName].ShowMe();
+        //     if (callBack != null)
+        //     {
+        //         callBack(panelDic[panelName] as T);
+        //     }
+        //     return;
+        // }
+        
+        // 清理失效的旧引用
         if (panelDic.ContainsKey(panelName))
         {
-            // 【修复】如果面板已存在，也需要完成任务，避免进度条卡住
+            BasePanel existingPanel = panelDic[panelName];
+            if (existingPanel == null || existingPanel.gameObject == null)
+            {
+                Debug.LogWarning($"[UIManager] 检测到失效的面板引用，移除: {panelName}");
+                panelDic.Remove(panelName);
+            }
+        }
+
+        // 检查是否真的已存在
+        if (panelDic.ContainsKey(panelName))
+        {
             if (progressManager.GetTaskProgress(uiTaskID) >= 0)
             {
-                // 任务已注册，直接完成它
                 progressManager.CompleteTask(uiTaskID);
             }
-            
+
             panelDic[panelName].ShowMe();
+
+            Debug.Log($"[UIManager] 复用已有面板: {panelName}");
+
             if (callBack != null)
             {
                 callBack(panelDic[panelName] as T);
@@ -372,13 +749,13 @@ public class UIManager : BaseManager<UIManager>
             return;
         }
         
+        
         // 注册UI加载任务（如果任务已存在，不重复注册，只更新名称）
         bool taskExists = progressManager.GetTaskProgress(uiTaskID) >= 0;
         
         if (!taskExists)
         {
-            // 任务不存在，注册新任务（权重通常会在外部（如 VNManager）中设置，
-            // 但这里先注册，避免任务不存在导致进度管理异常）
+            // 任务不存在，注册新任务（权重会在ResourcesManager中设置，但这里先注册确保存在）
             progressManager.RegisterTask(uiTaskID, $"加载UI: {panelName}", 1f);
         }
         else
@@ -386,9 +763,6 @@ public class UIManager : BaseManager<UIManager>
             // 任务已存在，只更新名称（可能权重已在其他地方设置）
             progressManager.UpdateTaskName(uiTaskID, $"加载UI: {panelName}");
         }
-
-        // 【重要】UI 任务的完成时机由 UIManager 自己控制，
-        // 不再让 ResourcesManager 自动 CompleteTask，避免 UI 尚未注册到字典时就触发“全部任务完成”的事件。
         ResourcesManager.GetInstance().LoadAsync<GameObject>(
             loadPath +"/"+ panelName, 
             (obj) =>
@@ -413,11 +787,6 @@ public class UIManager : BaseManager<UIManager>
                 if (obj == null)
                 {
                     Debug.LogError($"[UIManager] 无法加载面板预制体: {loadPath}/{panelName}");
-                    // 即使失败也要完成任务，避免进度面板永远卡住
-                    if (progressManager.GetTaskProgress(uiTaskID) >= 0)
-                    {
-                        progressManager.CompleteTask(uiTaskID);
-                    }
                     return;
                 }
 
@@ -431,50 +800,57 @@ public class UIManager : BaseManager<UIManager>
                     {
                         Debug.LogError("[UIManager] Canvas初始化失败，销毁面板对象");
                         GameObject.Destroy(obj);
-                        // Canvas 初始化失败，同样视为该 UI 任务失败，直接完成任务
-                        if (progressManager.GetTaskProgress(uiTaskID) >= 0)
-                        {
-                            progressManager.CompleteTask(uiTaskID);
-                        }
                         return;
                     }
                 }
 
-                Transform father = null;
-                switch (layer)
+                // Transform father = null;
+                // switch (layer)
+                // {
+                //     case E_UI_Layer.Bottom:
+                //         father = Bottom;
+                //         break;
+                //     case E_UI_Layer.Middle:
+                //         father = Middle;
+                //         break;
+                //     case E_UI_Layer.Right:
+                //         father = Right;
+                //         break;
+                //     case E_UI_Layer.Left:
+                //         father = Left;
+                //         break;
+                //     case E_UI_Layer.Top:
+                //         father = Top;
+                //         break;
+                //     case E_UI_Layer.System:
+                //         father = System;
+                //         break;
+                // }
+                //
+                // // 检查UI层级是否存在
+                // if (father == null)
+                // {
+                //     Debug.LogError($"[UIManager] UI层级 {layer} 未找到，请检查Canvas预制体结构");
+                //     GameObject.Destroy(obj);
+                //     return;
+                // }
+                
+                Transform father = GetLayerFather(layer);
+                
+                if (father == null || canvas == null)
                 {
-                    case E_UI_Layer.Bottom:
-                        father = Bottom;
-                        break;
-                    case E_UI_Layer.Middle:
-                        father = Middle;
-                        break;
-                    case E_UI_Layer.Right:
-                        father = Right;
-                        break;
-                    case E_UI_Layer.Left:
-                        father = Left;
-                        break;
-                    case E_UI_Layer.Top:
-                        father = Top;
-                        break;
-                    case E_UI_Layer.System:
-                        father = System;
-                        break;
+                    Debug.LogWarning($"[UIManager] 异步创建 {panelName} 时发现父节点/Canvas失效，尝试重新初始化...");
+                    Init();
+                    father = GetLayerFather(layer);
                 }
 
-                // 检查UI层级是否存在
                 if (father == null)
                 {
-                    Debug.LogError($"[UIManager] UI层级 {layer} 未找到，请检查Canvas预制体结构");
-                    GameObject.Destroy(obj);
-                    // 层级异常，同样直接完成任务，避免进度卡死
-                    if (progressManager.GetTaskProgress(uiTaskID) >= 0)
-                    {
-                        progressManager.CompleteTask(uiTaskID);
-                    }
+                    Debug.LogError($"[UIManager] UI层级 {layer} 未找到，无法创建面板: {panelName}");
+                    if (obj != null) GameObject.Destroy(obj);
                     return;
                 }
+                
 
                 obj.transform.SetParent(father);
                 obj.transform.localPosition = Vector3.zero;
@@ -493,11 +869,6 @@ public class UIManager : BaseManager<UIManager>
                 {
                     Debug.LogError($"[UIManager] 面板预制体 {panelName} 上未找到 {typeof(T).Name} 组件！");
                     GameObject.Destroy(obj);
-                    // 预制体不符合预期，标记任务完成
-                    if (progressManager.GetTaskProgress(uiTaskID) >= 0)
-                    {
-                        progressManager.CompleteTask(uiTaskID);
-                    }
                     return;
                 }
 
@@ -510,39 +881,53 @@ public class UIManager : BaseManager<UIManager>
                 {
                     Debug.LogWarning($"[UIManager] 面板 {panelName} 已存在于字典中，销毁重复实例");
                     GameObject.Destroy(obj);
-                    // 字典中已经有该面板，认为 UI 任务已就绪，直接完成任务
-                    if (progressManager.GetTaskProgress(uiTaskID) >= 0)
-                    {
-                        progressManager.CompleteTask(uiTaskID);
-                    }
                     return;
                 }
 
                 //显示面板（调用ShowMe，让面板执行初始化逻辑，如订阅事件等）
                 panel.ShowMe();
-
+                
+                Debug.Log($"[UIManager] ShowPanel 成功: {panelName}, 父节点 = {father.name}, Canvas = {canvas.name}");
+                
                 //处理面板创建后的逻辑（在ShowMe之后调用，确保面板已完全初始化）
                 if (callBack != null)
                 {
                     callBack(panel);
                 }
-
-                // 【关键】到这里说明：
-                // - 资源已加载
-                // - Canvas / 层级有效
-                // - 面板脚本已挂载且加入字典
-                // 可以安全地将 UI 任务标记为完成
-                if (progressManager.GetTaskProgress(uiTaskID) >= 0)
-                {
-                    progressManager.CompleteTask(uiTaskID);
-                }
-            }
+            },
+            uiTaskID,  // 传递taskID，让ResourcesManager跟踪进度
+            $"加载UI: {panelName}",  // 任务名称
+            1f  // 权重（如果任务已存在，这个权重会被忽略）
         );
     }
 
     //隐藏面板
+    // public void HidePanel(string panelName)
+    // {
+    //     if (panelDic.ContainsKey(panelName))
+    //     {
+    //         BasePanel panel = panelDic[panelName];
+    //         if (panel != null && panel.gameObject != null)
+    //         {
+    //             GameObject.Destroy(panel.gameObject);
+    //         }
+    //         panelDic.Remove(panelName);
+    //     }
+    // }
+    
+    
     public void HidePanel(string panelName)
     {
+        if (panelName == "LoadingProgressPanel")
+        {
+            if (_persistentLoadingPanel != null && _persistentLoadingPanelGO != null)
+            {
+                _persistentLoadingPanel.HideMe();
+                _persistentLoadingPanelGO.SetActive(false);
+            }
+            return;
+        }
+
         if (panelDic.ContainsKey(panelName))
         {
             BasePanel panel = panelDic[panelName];
@@ -553,16 +938,39 @@ public class UIManager : BaseManager<UIManager>
             panelDic.Remove(panelName);
         }
     }
+    
 
+    // public T GetPanel<T>(string panelName) where T : BasePanel
+    // {
+    //     //Testhere
+    //     Debug.Log("[UIManager] current Panel List:");
+    //     foreach (var pair in panelDic)
+    //     {
+    //         Debug.Log($"[UIManager]key = {pair.Key}, value = {pair.Value}");
+    //     }
+    //     
+    //     if (panelDic.ContainsKey(panelName))
+    //     {
+    //         return panelDic[panelName] as T;
+    //     }
+    //     return null;
+    // }
+    
     public T GetPanel<T>(string panelName) where T : BasePanel
     {
+        if (panelName == "LoadingProgressPanel")
+        {
+            return _persistentLoadingPanel as T;
+        }
+
         if (panelDic.ContainsKey(panelName))
         {
             return panelDic[panelName] as T;
         }
+
         return null;
     }
-
+    
     //获得对应层级的父对象
     public Transform GetLayerFather(E_UI_Layer layer)
     {
