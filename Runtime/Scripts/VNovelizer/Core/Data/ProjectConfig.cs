@@ -150,6 +150,19 @@ public class VNProjectConfig : ScriptableObject
     [Tooltip("主界面点击新游戏时加载的默认行ID (留空则从剧本开头开始)")]
     public string DefaultLineID = "";
 
+    [Header("=== 剧情本地化设置 ===")]
+    [Tooltip("启用剧情 Text/Speaker 的多语言本地化。关闭时保持旧版 CSV 行为。")]
+    public bool EnableLocalization = false;
+
+    [Tooltip("兼容旧方案字段：共享 StringTableCollection 名称（当前一剧本一表方案不使用）。")]
+    public string LocalizationCollectionName = "VN_Scripts";
+
+    [Tooltip("一剧本一表方案使用的 Collection 前缀，例如 VNScript_ + 剧本名。")]
+    public string ScriptTablePrefix = "VNScript_";
+
+    [Tooltip("当当前语言缺失翻译时，是否回退到 CSV/继承缓存。")]
+    public bool FallbackToCsvWhenMissing = true;
+
     [Header("=== AES存档加密设置 ===")]
     [Tooltip("是否启用存档加密 (开发时建议关闭，发布时开启)")]
     public bool UseAES = false;

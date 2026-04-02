@@ -6,6 +6,7 @@ using VNovelizer.Core.Commands;
 using UnityEngine.SceneManagement;
 using UnityEngine.Events;
 using VNovelizer.Core.API; // 引用 API 以便调用 ClearAllEffects
+using VNovelizer.Core.Localization;
 
 /// <summary>
 /// 视觉小说核心管理器 (终极预演版)
@@ -26,6 +27,9 @@ public class VNManager : BaseManager<VNManager>
     private string currentScriptName;
     private string lastValidSpeaker = "";
     private string lastValidText = "";
+    // 【新增】同语言继承缓存（仅当启用本地化时生效）
+    private string lastValidLocalizedSpeaker = "";
+    private string lastValidLocalizedText = "";
     private string lastValidHeadProfile = ""; // 记录上一个有效的 HeadProfile
     private Dictionary<string, string> currentCharacters = new Dictionary<string, string>();
     private Dictionary<string, float> currentCharactersScaleX = new Dictionary<string, float>();
@@ -411,6 +415,8 @@ public class VNManager : BaseManager<VNManager>
         currentBGM = "";
         lastValidSpeaker = "";
         lastValidText = "";
+        lastValidLocalizedSpeaker = "";
+        lastValidLocalizedText = "";
         lastValidHeadProfile = "";
         currentCharacters.Clear();
         activeEffects.Clear();
@@ -664,6 +670,11 @@ public class VNManager : BaseManager<VNManager>
         this.CurrentLineIndex = 0;
         this.lastLine = null;
         this.currentScriptName = scriptName;
+    }
+
+    public string GetCurrentScriptName()
+    {
+        return currentScriptName;
     }
 
     /// <summary>
@@ -1264,9 +1275,50 @@ public class VNManager : BaseManager<VNManager>
 
     private void UpdateDialogue(StoryLine currentLine)
     {
+        string finalSpeaker = currentLine.Speaker;
+        string finalText = currentLine.Text;
+
+        // 【新增】启用本地化时使用“同语言继承”，而不是继承 CSV 原文
+        if (VNLocalizationService.IsEnabled())
+        {
+            bool fallbackToCsv = VNProjectConfig.Instance != null && VNProjectConfig.Instance.FallbackToCsvWhenMissing;
+
+            // Speaker
+            if (VNLocalizationService.TryGetSpeaker(currentScriptName, currentLine.ID, out var localizedSpeaker) && !string.IsNullOrEmpty(localizedSpeaker))
+            {
+                finalSpeaker = localizedSpeaker;
+                lastValidLocalizedSpeaker = localizedSpeaker;
+            }
+            else if (!string.IsNullOrEmpty(lastValidLocalizedSpeaker))
+            {
+                finalSpeaker = lastValidLocalizedSpeaker;
+            }
+            else
+            {
+                // 缓存为空：按配置回退 CSV/原继承值
+                finalSpeaker = fallbackToCsv ? currentLine.Speaker : "";
+            }
+
+            // Text
+            if (VNLocalizationService.TryGetText(currentScriptName, currentLine.ID, out var localizedText) && !string.IsNullOrEmpty(localizedText))
+            {
+                finalText = localizedText;
+                lastValidLocalizedText = localizedText;
+            }
+            else if (!string.IsNullOrEmpty(lastValidLocalizedText))
+            {
+                finalText = lastValidLocalizedText;
+            }
+            else
+            {
+                // 缓存为空：按配置回退 CSV/原继承值
+                finalText = fallbackToCsv ? currentLine.Text : "";
+            }
+        }
+
         Dictionary<string, string> info = new Dictionary<string, string>
         {
-            { "speaker", currentLine.Speaker }, { "text", currentLine.Text }
+            { "speaker", finalSpeaker }, { "text", finalText }
         };
         EventCenter.GetInstance().EventTrigger("UpdateDialogue", info);
         
@@ -1274,12 +1326,12 @@ public class VNManager : BaseManager<VNManager>
         Dictionary<string, string> headProfileInfo = new Dictionary<string, string>
         {
             { "headProfile", string.IsNullOrEmpty(currentLine.HeadProfile) ? "hide" : currentLine.HeadProfile },
-            { "speaker", currentLine.Speaker }
+            { "speaker", finalSpeaker }
         };
         EventCenter.GetInstance().EventTrigger("UpdateHeadProfile", headProfileInfo);
 
         isTextDisplaying = true;
-        AddHistoryEntry(currentLine.Speaker, currentLine.Text, currentLine.Voice);
+        AddHistoryEntry(finalSpeaker, finalText, currentLine.Voice);
     }
 
     public void UpdateCurrentBG_OnlyData(string bgName)

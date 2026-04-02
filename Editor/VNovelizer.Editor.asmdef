@@ -3,7 +3,10 @@
     "rootNamespace": "",
     "references": [
         "VNovelizer.Runtime",
-        "ExcelDataReader"
+        "ExcelDataReader",
+        "Unity.Localization.Editor",
+        "Unity.Localization",
+        "Unity.ResourceManager"
     ],
     "includePlatforms": [
         "Editor"
@@ -14,7 +17,13 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.localization",
+            "expression": "[0.0.0,9999.9999]",
+            "define": "VN_LOCALIZATION"
+        }
+    ],
     "noEngineReferences": false
 }
 

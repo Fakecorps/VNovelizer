@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Localization;
 
 namespace VNovelizer.Core.Commands
 {
@@ -17,6 +18,23 @@ namespace VNovelizer.Core.Commands
             var result = ParseArgs(args);
             string text = result.Item1;
             string cmd = result.Item2;
+
+            // 【新增】多语言 choice 参数：choice(@loc:FULL_KEY|jump(...))
+            if (VNLocalizationService.IsEnabled() && !string.IsNullOrEmpty(text) &&
+                text.TrimStart().StartsWith("@loc:", System.StringComparison.OrdinalIgnoreCase))
+            {
+                string fullKey = text.Trim().Substring("@loc:".Length).Trim();
+                string scriptName = VNManager.GetInstance().GetCurrentScriptName();
+                if (VNLocalizationService.TryGetByFullKey(scriptName, fullKey, out var localized) && !string.IsNullOrEmpty(localized))
+                {
+                    text = localized;
+                }
+                else
+                {
+                    // 翻译缺失：不要显示 @loc: 原样，改为可读 fallback
+                    text = GetReadableTail(fullKey);
+                }
+            }
 
             // 调试：看看解析对不对
             Debug.Log($"[ChoiceCommand] 解析选项 -> Text: {text}, Cmd: {cmd}");
@@ -68,6 +86,18 @@ namespace VNovelizer.Core.Commands
             }
 
             return (text, cmd);
+        }
+
+        private static string GetReadableTail(string fullKey)
+        {
+            if (string.IsNullOrEmpty(fullKey))
+                return "";
+
+            int idx = fullKey.LastIndexOf('.');
+            if (idx >= 0 && idx < fullKey.Length - 1)
+                return fullKey.Substring(idx + 1);
+
+            return fullKey;
         }
     }
 }

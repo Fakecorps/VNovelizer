@@ -7,7 +7,9 @@
         "Unity.UGUI",
         "Coffee.UIParticle",
         "PrimeTween.Runtime",
-        "LitJson"
+        "LitJson",
+        "Unity.Localization",
+        "Unity.ResourceManager"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -16,7 +18,13 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.localization",
+            "expression": "[0.0.0,9999.9999]",
+            "define": "VN_LOCALIZATION"
+        }
+    ],
     "noEngineReferences": false
 }
 

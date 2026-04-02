@@ -1,4 +1,4 @@
-﻿using UnityEditor;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 using UnityEditor.UIElements;
@@ -87,6 +87,14 @@ public class VNProjectConfigEditor : Editor
         gameStartFoldout.Add(gameStartHelp);
         
         root.Add(gameStartFoldout);
+
+        // 5.5 剧情本地化设置 (Foldout)
+        var localizationFoldout = new Foldout { text = "剧情本地化设置", value = false };
+        localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("EnableLocalization"), "启用本地化"));
+        localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("ScriptTablePrefix"), "剧本 Collection 前缀"));
+        localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("LocalizationCollectionName"), "共享 Collection 名称（已弃用）"));
+        localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("FallbackToCsvWhenMissing"), "缺失时回退 CSV/继承缓存"));
+        root.Add(localizationFoldout);
 
         // 6. AES 加密设置 (高级逻辑)
         var aesFoldout = new Foldout { text = "存档加密设置", value = true };

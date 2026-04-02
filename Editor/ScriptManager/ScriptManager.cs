@@ -1,4 +1,4 @@
-﻿using UnityEditor;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 using UnityEditor.UIElements;
@@ -261,10 +261,38 @@ public class ScriptManagerWindow : EditorWindow
         string path = EditorUtility.SaveFilePanel("新建剧本", excelFolderPath, "NewChapter", "xlsx");
         if (string.IsNullOrEmpty(path)) return;
 
+        string scriptName = Path.GetFileNameWithoutExtension(path);
+
         try
         {
             File.Copy(templatePath, path);
             RefreshList();
+
+            // 【新增】创建时选择是否启用多语言剧本
+            int opt = EditorUtility.DisplayDialogComplex(
+                "剧本创建方式",
+                "请选择本剧本是否使用“剧情本地化”：\n多语言：会准备共享 StringTable 并尝试同步 key（CSV 未生成则仅提示）。\n普通：保持旧工作流。",
+                "多语言",
+                "普通",
+                "取消");
+
+            if (opt == 0) // 多语言
+            {
+                var config = VNProjectConfig.Instance;
+                if (config != null)
+                {
+                    VNLocalizationSyncUtility.EnsureScriptCollection(scriptName, out _, out _);
+                    if (!VNLocalizationSyncUtility.TrySyncKeysFromCsv(scriptName, true, out var error))
+                    {
+                        EditorUtility.DisplayDialog("提示", error ?? "同步 key 未完成（可能是 CSV 未生成）。", "确定");
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning("[ScriptManager] VNProjectConfig 未找到，跳过本地化准备。");
+                }
+            }
+
             statusLabel.text = $"已创建：{Path.GetFileName(path)}";
             Application.OpenURL(path);
         }
@@ -301,8 +329,10 @@ public class ScriptManagerWindow : EditorWindow
     {
         if (EditorUtility.DisplayDialog("删除剧本", $"确定要删除 {file.Name} 吗？\n此操作将同时删除对应的 CSV 文件。\n此操作无法撤销！", "删除", "取消"))
         {
+            string scriptName = Path.GetFileNameWithoutExtension(file.Name);
+
             // 1. 获取 CSV 文件路径
-            string csvFileName = Path.GetFileNameWithoutExtension(file.Name) + ".csv";
+            string csvFileName = scriptName + ".csv";
             var config = VNProjectConfig.Instance;
 
             // 确保 Config 存在且路径已配置
@@ -324,6 +354,16 @@ public class ScriptManagerWindow : EditorWindow
                     {
                         Debug.LogWarning($"[ScriptManager] 无法删除 CSV 文件: {e.Message}");
                     }
+                }
+            }
+
+            // 2.5 删除同名本地化 Collection（按 ScriptTablePrefix + scriptName）
+            if (!VNLocalizationSyncUtility.DeleteScriptCollection(scriptName, out var deleteCollectionError))
+            {
+                // Collection 不存在时不视为硬错误；其他错误给出提醒
+                if (!string.IsNullOrEmpty(deleteCollectionError) && !deleteCollectionError.Contains("未找到 Collection"))
+                {
+                    Debug.LogWarning($"[ScriptManager] 删除本地化 Collection 失败: {deleteCollectionError}");
                 }
             }
 
