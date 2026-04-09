@@ -3,8 +3,8 @@
 ## 0. 目标与总开关
 当 `VNProjectConfig.EnableLocalization = true` 时：
 - 每个剧本使用自己的 `StringTableCollection`
-- 表内翻译空值（value 为空）视为“未翻译”，遵循同语言继承
-- 仅在同语言继承缓存为空时，按 `FallbackToCsvWhenMissing` 回退 CSV
+- **每一行独立取词**：`speaker.{lineID}` / `text.{lineID}` 无 entry 或 value 为空时，不沿用上一句译文
+- 此时若开启 `FallbackToCsvWhenMissing`，则显示**本行 CSV** 的 Speaker/Text；否则对应字段显示为空
 
 当 `EnableLocalization = false` 时：行为保持旧工作流（完全等同 CSV）。
 
@@ -23,7 +23,7 @@ Choice key（建议）：
 - 运行时写法：`choice(@loc:choice.rooftop|jump(C_100))`
 
 ## 2. 如何填表（推荐流程）
-1. 安装并启用 Unity Localization 包
+1. `com.unity.localization` 已作为 VNovelizer 的 UPM 依赖声明；在 Package Manager 中确认已解析即可（通常无需再手动添加）
 2. 打开 `VNProjectConfig`：
    - 勾选 `启用本地化`
    - 确认 `ScriptTablePrefix = VNScript_`
@@ -32,7 +32,7 @@ Choice key（建议）：
    - 输入 `scriptName`（不含扩展名）
    - 点击 `准备当前剧本 Collection`
    - 点击 `从 CSV 同步 Key`
-5. 在该剧本 Collection 的各语言表内填写 value（允许空值）
+5. 在该剧本 Collection 的各语言表内填写 value；**需要显示对白的每一行**建议在目标语言填非空 value，否则将依赖 `FallbackToCsvWhenMissing` 或显示为空
 
 ## 3. Choice 本地化
 旧写法（兼容）：

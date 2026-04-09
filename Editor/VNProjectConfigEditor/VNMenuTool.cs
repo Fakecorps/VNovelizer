@@ -3,7 +3,7 @@ using UnityEngine;
 
 public class VNMenuTools : Editor
 {
-    [MenuItem("VNovelizer/⚙️ 打开全局配置 (Open Config)",false,10)]
+    [MenuItem("VNovelizer/打开全局配置 (Open Config)", false, 10)]
     public static void SelectConfig()
     {
         // 1. 尝试从 Resources 加载

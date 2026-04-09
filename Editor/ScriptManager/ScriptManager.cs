@@ -19,7 +19,7 @@ public class ScriptManagerWindow : EditorWindow
 
     private FileInfo selectedFile;
 
-    [MenuItem("VNovelizer/📜 剧本管理器 (Script Manager)", false, 22)]
+    [MenuItem("VNovelizer/剧本管理器 (Script Manager)", false, 22)]
     public static void ShowWindow()
     {
         var wnd = GetWindow<ScriptManagerWindow>();
@@ -63,8 +63,8 @@ public class ScriptManagerWindow : EditorWindow
         toolbar.style.paddingLeft = 5;
         toolbar.style.paddingRight = 5;
 
-        var createBtn = new Button(CreateNewScript) { text = "➕ 新建", style = { flexGrow = 1 } };
-        var convertBtn = new Button(ConvertScripts) { text = "🔄 转换", style = { width = 60, backgroundColor = new Color(0.2f, 0.5f, 0.2f) } };
+        var createBtn = new Button(CreateNewScript) { text = "新建", style = { flexGrow = 1 } };
+        var convertBtn = new Button(ConvertScripts) { text = "转换", style = { width = 60, backgroundColor = new Color(0.2f, 0.5f, 0.2f) } };
         var refreshBtn = new Button(RefreshList) { text = "刷新", style = { width = 50 } };
 
         toolbar.Add(createBtn);
@@ -85,9 +85,9 @@ public class ScriptManagerWindow : EditorWindow
             var nameLabel = new Label() { name = "Name", style = { flexGrow = 1, unityTextAlign = TextAnchor.MiddleLeft } };
 
             var btnContainer = new VisualElement() { style = { flexDirection = FlexDirection.Row } };
-            var renameBtn = new Button() { text = "✎", name = "Rename", style = { width = 25, height = 20 } };
-            var playBtn = new Button() { text = "▶", name = "Play", style = { width = 25, height = 20, backgroundColor = new Color(0.2f, 0.2f, 0.5f) } };
-            var delBtn = new Button() { text = "×", name = "Delete", style = { width = 25, height = 20, backgroundColor = new Color(0.6f, 0.2f, 0.2f) } };
+            var renameBtn = new Button() { text = "改名", name = "Rename", style = { width = 36, height = 20 } };
+            var playBtn = new Button() { text = "试玩", name = "Play", style = { width = 36, height = 20, backgroundColor = new Color(0.2f, 0.2f, 0.5f) } };
+            var delBtn = new Button() { text = "删除", name = "Delete", style = { width = 36, height = 20, backgroundColor = new Color(0.6f, 0.2f, 0.2f) } };
 
             btnContainer.Add(renameBtn);
             btnContainer.Add(playBtn);

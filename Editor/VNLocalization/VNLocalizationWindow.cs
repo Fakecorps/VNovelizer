@@ -18,7 +18,7 @@ public class VNLocalizationWindow : EditorWindow
 
     private void OnGUI()
     {
-        GUILayout.Label("VNovelizer 戏剧情本地化管理器", EditorStyles.boldLabel);
+        GUILayout.Label("VNovelizer 剧情本地化管理器", EditorStyles.boldLabel);
         scriptName = EditorGUILayout.TextField("剧本名（不含扩展名）", scriptName);
         fillDefaultLocaleFromCsv = EditorGUILayout.Toggle("默认语言从 CSV 填充（value 为空时）", fillDefaultLocaleFromCsv);
 

@@ -34,7 +34,7 @@ public class CharacterEditorWindow : EditorWindow
     // 当前选中的 Tab (0=Expression, 1=Head)
     private int currentTab = 0;
 
-    [MenuItem("VNovelizer/🙋 角色编辑器 (Character Editor)", false, 21)]
+    [MenuItem("VNovelizer/角色编辑器 (Character Editor)", false, 21)]
     public static void ShowWindow()
     {
         var wnd = GetWindow<CharacterEditorWindow>();
@@ -77,8 +77,7 @@ public class CharacterEditorWindow : EditorWindow
         // searchField.placeholderText = "搜索角色..."; // 移除旧API
         toolbar.Add(searchField);
 
-        var refreshBtn = new Button(LoadAllProfiles) { text = "↻" };
-        refreshBtn.style.width = 25;
+        var refreshBtn = new Button(LoadAllProfiles) { text = "刷新", style = { width = 48 } };
         toolbar.Add(refreshBtn);
 
         var createBtn = new Button(CreateNewCharacter) { text = "+" };
@@ -420,7 +419,7 @@ public class CharacterEditorWindow : EditorWindow
 
         var nameField = new TextField() { name = "Name", style = { width = 120, marginRight = 5 } };
         var spriteField = new ObjectField() { name = "Sprite", objectType = typeof(Sprite), style = { flexGrow = 1 } };
-        var delBtn = new Button() { text = "×", name = "Delete" };
+        var delBtn = new Button() { text = "X", name = "Delete" };
         delBtn.style.width = 24;
         delBtn.style.backgroundColor = Color.clear;
         delBtn.style.color = new Color(0.8f, 0.4f, 0.4f);

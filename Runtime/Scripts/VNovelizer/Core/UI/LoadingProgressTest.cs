@@ -206,7 +206,7 @@ public class LoadingProgressTest : MonoBehaviour
     /// 在编辑器中快速测试（通过菜单调用）
     /// </summary>
     #if UNITY_EDITOR
-    [UnityEditor.MenuItem("VNovelizer/🎬测试(请在play模式下)/测试加载进度界面")]
+    [UnityEditor.MenuItem("VNovelizer/测试(请在 Play 模式下)/测试加载进度界面")]
     public static void QuickTestInEditor()
     {
         // 查找或创建测试对象

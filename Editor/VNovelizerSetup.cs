@@ -8,7 +8,7 @@ public class VNovelizerSetup : EditorWindow
 {
     private static bool isPrimeTweenInstalled = false;
 
-    [MenuItem("VNovelizer/🔧 一键初始化 (Setup Wizard)", false, 50)]
+    [MenuItem("VNovelizer/一键初始化 (Setup Wizard)", false, 50)]
     public static void ShowWindow()
     {
         CheckDependencies();
@@ -34,7 +34,7 @@ public class VNovelizerSetup : EditorWindow
         GUILayout.Label("此工具将帮助您初始化项目结构并导入必要资源。\n(字体文件将保持引用，不进行复制)", EditorStyles.wordWrappedLabel);
         GUILayout.Space(20);
 
-        if (GUILayout.Button("🚀 一键初始化项目", GUILayout.Height(40)))
+        if (GUILayout.Button("一键初始化项目", GUILayout.Height(40)))
         {
             SetupAll();
         }
@@ -132,7 +132,7 @@ public class VNovelizerSetup : EditorWindow
             var config = ScriptableObject.CreateInstance<VNProjectConfig>();
             config.ExcelSourceFolder = null; // 留空让用户自己拖
             AssetDatabase.CreateAsset(config, configPath);
-            Debug.Log("✅ 已创建默认配置文件: " + configPath);
+            Debug.Log("[VNovelizer Setup] 已创建默认配置文件: " + configPath);
         }
 
         AssetDatabase.Refresh();
@@ -155,7 +155,7 @@ public class VNovelizerSetup : EditorWindow
         {
             var so = ScriptableObject.CreateInstance<T>();
             AssetDatabase.CreateAsset(so, path);
-            Debug.Log($"📄 新建数据容器: {path}");
+            Debug.Log($"[VNovelizer Setup] 新建数据容器: {path}");
         }
     }
 

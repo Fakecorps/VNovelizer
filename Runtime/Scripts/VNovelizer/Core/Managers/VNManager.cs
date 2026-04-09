@@ -25,14 +25,10 @@ public class VNManager : BaseManager<VNManager>
     private string currentBG = null;
     private string currentBGM = null;
     private string currentScriptName;
-    private string lastValidSpeaker = "";
-    private string lastValidText = "";
-    // 【新增】同语言继承缓存（仅当启用本地化时生效）
-    private string lastValidLocalizedSpeaker = "";
-    private string lastValidLocalizedText = "";
-    private string lastValidHeadProfile = ""; // 记录上一个有效的 HeadProfile
     private Dictionary<string, string> currentCharacters = new Dictionary<string, string>();
     private Dictionary<string, float> currentCharactersScaleX = new Dictionary<string, float>();
+    /// <summary>读档后首帧播放：CSV 立绘列为空时，使用存档恢复的 currentCharacters，避免误清空槽位。</summary>
+    private bool _usePersistedCharacterSlotsWhenCsvCharCellsEmpty;
 
     // 【新增】特效状态追踪
     private HashSet<string> activeEffects = new HashSet<string>();
@@ -413,11 +409,6 @@ public class VNManager : BaseManager<VNManager>
     {
         currentBG = "";
         currentBGM = "";
-        lastValidSpeaker = "";
-        lastValidText = "";
-        lastValidLocalizedSpeaker = "";
-        lastValidLocalizedText = "";
-        lastValidHeadProfile = "";
         currentCharacters.Clear();
         activeEffects.Clear();
         VNAPI.ClearAllEffects(); // 物理清空特效
@@ -479,9 +470,6 @@ public class VNManager : BaseManager<VNManager>
                 SimulateCharacterUpdate("Right", line.CharRight);
                 if (line.Voice == "false") isVoiceEnabled = false;
                 else if (!string.IsNullOrEmpty(line.Voice)) isVoiceEnabled = true;
-                if (!string.IsNullOrEmpty(line.Speaker)) lastValidSpeaker = line.Speaker;
-                if (!string.IsNullOrEmpty(line.Text)) lastValidText = line.Text;
-                if (!string.IsNullOrEmpty(line.HeadProfile)) lastValidHeadProfile = line.HeadProfile;
                 lastLine = line;
                 
                 // 先应用其他命令（不包括 choice）
@@ -518,15 +506,6 @@ public class VNManager : BaseManager<VNManager>
             if (!string.IsNullOrEmpty(line.Command))
             {
                 CommandManager.GetInstance().SimulateCommands(line.Command);
-            }
-
-            if (!string.IsNullOrEmpty(line.Speaker)) lastValidSpeaker = line.Speaker;
-            if (!string.IsNullOrEmpty(line.Text)) lastValidText = line.Text;
-            
-            // 更新 lastValidHeadProfile（包括 "hide"）
-            if (!string.IsNullOrEmpty(line.HeadProfile))
-            {
-                lastValidHeadProfile = line.HeadProfile;
             }
 
             lastLine = line;
@@ -615,12 +594,16 @@ public class VNManager : BaseManager<VNManager>
 
     private void SimulateCharacterUpdate(string pos, string data)
     {
-        if (string.IsNullOrEmpty(data)) return;
+        string normalizedPos = pos;
+        string normalizedPosCode = NormalizePositionCode(pos);
 
-        // 标准化位置代码：内部统一使用 "Left"/"Mid"/"Right" 存储角色数据
-        // 但翻转状态使用 "L"/"M"/"R" 存储
-        string normalizedPos = pos; // 角色数据保持原格式
-        string normalizedPosCode = NormalizePositionCode(pos); // 翻转状态使用标准化格式
+        // 空槽：清除该位置（与运行时「空=隐藏」一致，避免快进后仍保留旧立绘状态）
+        if (string.IsNullOrEmpty(data))
+        {
+            if (currentCharacters.ContainsKey(normalizedPos)) currentCharacters.Remove(normalizedPos);
+            if (currentCharactersScaleX.ContainsKey(normalizedPosCode)) currentCharactersScaleX.Remove(normalizedPosCode);
+            return;
+        }
 
         if (data == "hide")
         {
@@ -838,8 +821,9 @@ public class VNManager : BaseManager<VNManager>
             }
         }
 
-        // 设置当前行索引并播放
+        // 设置当前行索引并播放（首帧允许用存档槽位补全 CSV 空立绘，与「无行际继承」不冲突：存档是显式快照）
         CurrentLineIndex = targetIndex;
+        _usePersistedCharacterSlotsWhenCsvCharCellsEmpty = true;
         PlayCurrentLine();
     }
 
@@ -847,6 +831,7 @@ public class VNManager : BaseManager<VNManager>
     {
         if (CurrentLineIndex < 0 || CurrentLineIndex >= StoryLines.Count)
         {
+            _usePersistedCharacterSlotsWhenCsvCharCellsEmpty = false;
 
             if (isReplayMode)
             {
@@ -896,6 +881,8 @@ public class VNManager : BaseManager<VNManager>
         {
             CheckAndTriggerAutoPlay();
         }
+
+        _usePersistedCharacterSlotsWhenCsvCharCellsEmpty = false;
     }
 
     
@@ -1070,54 +1057,13 @@ public class VNManager : BaseManager<VNManager>
 
     private void ApplyInheritance(StoryLine currentLine)
     {
-        if (string.IsNullOrEmpty(currentLine.Speaker))
-        {
-            // currentLine.Speaker = lastValidSpeaker;
-            currentLine.Speaker = "";
-        }
-        else
-        {
-            lastValidSpeaker = currentLine.Speaker;
-        }
+        // Speaker / Text / HeadProfile / 立绘三槽：不继承，以本行 CSV 为准（立绘空槽在 UpdateCharacter 中视为隐藏）。
 
-        if (string.IsNullOrEmpty(currentLine.Text))
-        {
-            // currentLine.Text = lastValidText;
-
-            currentLine.Text = "";
-        }
-        else
-        {
-            lastValidText = currentLine.Text;
-        }
-        
-        // HeadProfile 继承：如果当前行为空，继承上一个有效的 HeadProfile（包括 "hide"）
-        if (string.IsNullOrEmpty(currentLine.HeadProfile))
-        {
-            if (!string.IsNullOrEmpty(lastValidHeadProfile))
-            {
-                currentLine.HeadProfile = lastValidHeadProfile;
-            }
-        }
-        else
-        {
-            // 更新 lastValidHeadProfile（包括 "hide"）
-            lastValidHeadProfile = currentLine.HeadProfile;
-        }
-
-        // 2. 视觉/音频继承 (依赖当前 Manager 状态)
-        // 如果当前行没填，就用 Manager 现在的状态填回去
+        // 背景、BGM 相关：仍继承 Manager 当前状态（空单元格沿用上一有效背景）。
         if (string.IsNullOrEmpty(currentLine.Background))
             currentLine.Background = this.currentBG;
 
-        if (string.IsNullOrEmpty(currentLine.CharLeft) && currentCharacters.ContainsKey("Left"))
-            currentLine.CharLeft = currentCharacters["Left"];
-        if (string.IsNullOrEmpty(currentLine.CharMid) && currentCharacters.ContainsKey("Mid"))
-            currentLine.CharMid = currentCharacters["Mid"];
-        if (string.IsNullOrEmpty(currentLine.CharRight) && currentCharacters.ContainsKey("Right"))
-            currentLine.CharRight = currentCharacters["Right"];
-
-        // 3. 语音继承
+        // 语音：未填时仍按 isVoiceEnabled 自动生成路径（与「场景氛围继承」策略一致，减轻配音表负担）
         // 逻辑：没填->自动生成；填false->关；填其他->开
         if (string.IsNullOrEmpty(currentLine.Voice))
         {
@@ -1161,14 +1107,25 @@ public class VNManager : BaseManager<VNManager>
             EventCenter.GetInstance().EventTrigger("HideBackground");
         }
 
-        UpdateCharacter("Left", currentLine.CharLeft);
-        UpdateCharacter("Mid", currentLine.CharMid);
-        UpdateCharacter("Right", currentLine.CharRight);
+        string ResolveCharForSlot(string csvValue, string slotKey)
+        {
+            if (!string.IsNullOrEmpty(csvValue)) return csvValue;
+            if (_usePersistedCharacterSlotsWhenCsvCharCellsEmpty &&
+                currentCharacters.TryGetValue(slotKey, out var persisted) &&
+                !string.IsNullOrEmpty(persisted))
+                return persisted;
+            return csvValue;
+        }
+
+        UpdateCharacter("Left", ResolveCharForSlot(currentLine.CharLeft, "Left"));
+        UpdateCharacter("Mid", ResolveCharForSlot(currentLine.CharMid, "Mid"));
+        UpdateCharacter("Right", ResolveCharForSlot(currentLine.CharRight, "Right"));
     }
 
     private void UpdateCharacter(string position, string charData)
     {
-        if (charData == "hide")
+        // 空槽与 hide 等价：不继承上一行立绘，必须每行显式填写才会显示
+        if (string.IsNullOrEmpty(charData) || charData == "hide")
         {
             EventCenter.GetInstance().EventTrigger("HideCharacter", position);
             if (this.currentCharacters.ContainsKey(position))
@@ -1278,42 +1235,20 @@ public class VNManager : BaseManager<VNManager>
         string finalSpeaker = currentLine.Speaker;
         string finalText = currentLine.Text;
 
-        // 【新增】启用本地化时使用“同语言继承”，而不是继承 CSV 原文
+        // 启用本地化：每行独立解析，不在行与行之间继承译文（空/缺失则按配置回退 CSV）
         if (VNLocalizationService.IsEnabled())
         {
             bool fallbackToCsv = VNProjectConfig.Instance != null && VNProjectConfig.Instance.FallbackToCsvWhenMissing;
 
-            // Speaker
             if (VNLocalizationService.TryGetSpeaker(currentScriptName, currentLine.ID, out var localizedSpeaker) && !string.IsNullOrEmpty(localizedSpeaker))
-            {
                 finalSpeaker = localizedSpeaker;
-                lastValidLocalizedSpeaker = localizedSpeaker;
-            }
-            else if (!string.IsNullOrEmpty(lastValidLocalizedSpeaker))
-            {
-                finalSpeaker = lastValidLocalizedSpeaker;
-            }
             else
-            {
-                // 缓存为空：按配置回退 CSV/原继承值
                 finalSpeaker = fallbackToCsv ? currentLine.Speaker : "";
-            }
 
-            // Text
             if (VNLocalizationService.TryGetText(currentScriptName, currentLine.ID, out var localizedText) && !string.IsNullOrEmpty(localizedText))
-            {
                 finalText = localizedText;
-                lastValidLocalizedText = localizedText;
-            }
-            else if (!string.IsNullOrEmpty(lastValidLocalizedText))
-            {
-                finalText = lastValidLocalizedText;
-            }
             else
-            {
-                // 缓存为空：按配置回退 CSV/原继承值
                 finalText = fallbackToCsv ? currentLine.Text : "";
-            }
         }
 
         Dictionary<string, string> info = new Dictionary<string, string>
@@ -2234,9 +2169,6 @@ public class VNManager : BaseManager<VNManager>
         isTextDisplaying = false;
         isVoiceEnabled = true;
         lastLine = null;
-        lastValidSpeaker = "";
-        lastValidText = "";
-        lastValidHeadProfile = "";
         
         // 8. 停止所有协程
         if (_flowCoroutine != null)

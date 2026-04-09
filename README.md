@@ -30,12 +30,12 @@
 ### 🎨 零代码创作流
 *   **Excel 驱动**：从对话到逻辑跳转，全部在 Excel 中完成。支持一键转换为游戏数据。
 *   **富文本支持**：完美支持 TextMeshPro，轻松实现颜色、大小、字体变化。
-*   **状态继承机制**：智能识别上下文，无需每行重复填写背景或立绘，极大提高填表效率。
+*   **场景状态延续**：**背景、BGM** 等留空可沿用上一有效状态，减少重复填表；**说话人、正文、头像、三槽立绘**需按行显式填写（立绘列留空视为隐藏该槽）。
 
 ### ⚡ 强大的演出系统
 *   **指令系统 (Command System)**：内置 30+ 种常用指令（震屏、淡入淡出、立绘运动、视频播放等），支持指令并行与串行执行。
 *   **高性能动画**：底层集成 **PrimeTween**，实现 0 GC 的丝滑 UI 动画体验。
-*   **状态预演 (Fast Forward)**：支持任意节点的存读档与跳转。系统会自动模拟并演算跳转点之前的逻辑，确保背景、BGM、立绘状态的绝对正确，杜绝“读档立绘消失”的常见 Bug。
+*   **状态预演 (Fast Forward)**：支持任意节点的存读档与跳转。系统会预演跳转点之前的剧本行以同步背景、BGM、立绘字典等；读档时另会用**存档中的立绘快照**与首帧逻辑对齐，避免「CSV 立绘列为空」误清空刚恢复的槽位。
 
 ### 🧩 完善的 UI 模块
 *   **系统面板**：内置 标题界面、存档/读档（含截图）、设置（音量/画质）、历史记录（回放语音）、画廊（CG/BGM/剧情回放）。
@@ -50,6 +50,7 @@
 *   **Unity 2022.3 LTS** 或更高版本 (推荐 Unity 6)
 *   **TextMeshPro** (Unity 内置)
 *   **Input System** (Unity 内置)
+*   **Unity Localization** (`com.unity.localization`，本包已在 `package.json` 中声明依赖，UPM 会自动解析；剧情多语言见下文「本地化」)
 
 ### 2. 导入核心库 (必读 ⚠️)
 > **注意**：本框架动画系统依赖 **PrimeTween**。受限于 Asset Store 协议，无法内置分发。
@@ -66,7 +67,7 @@
 
 ### 4. 一键初始化项目
 导入完成后，执行顶部菜单：
-**VNovelizer -> 🔧 一键初始化 (Setup Wizard)**
+**VNovelizer -> 一键初始化 (Setup Wizard)**
 
 点击 **"🚀 一键初始化项目"**。向导将自动：
 *   构建标准目录结构 (`Assets/VNovelizerRes/...`)
@@ -97,16 +98,16 @@ VNovelizer 使用 `ScriptableObject` 管理角色资源，实现了逻辑 ID 与
 
 ### 第二步：编写剧本 (Scripting)
 
-1.  打开顶部菜单 **VNovelizer -> 📜 剧本管理器**。
-2.  点击 **"➕ 新建"**，输入文件名（如 `Chapter1`）。Excel 将自动打开。
+1.  打开顶部菜单 **VNovelizer -> 剧本管理器**。
+2.  点击 **"新建"**，输入文件名（如 `Chapter1`）。Excel 将自动打开。
 3.  **剧本字段详解**：
 
 | 字段 (Column) | 必填 | 说明 (Description) | 示例 |
 | :--- | :---: | :--- | :--- |
 | **ID** | ✅ | **行号**。必须唯一，用于跳转和存档定位。 | `1001` |
-| **Speaker** | | 说话人 ID。留空则继承上一句说话人。 | `Amy` |
-| **HeadProfile** | | 头像配置。格式：`ID_表情名`。填 `hide` 隐藏。 | `Amy_Smile` |
-| **CharLeft/Mid/Right** | | 左/中/右位置的立绘。格式：`ID_表情名`。填 `hide` 隐藏。 | `Amy_Normal` |
+| **Speaker** | | 说话人 ID。每行独立；留空则无说话人名显示。 | `Amy` |
+| **HeadProfile** | | 头像配置。格式：`ID_表情名`。填 `hide` 隐藏；**留空则按隐藏头像处理**（不沿用上句）。 | `Amy_Smile` |
+| **CharLeft/Mid/Right** | | 左/中/右立绘。格式：`ID_表情名`。填 `hide` 或**留空**均隐藏该槽（不沿用上句）。 | `Amy_Normal` |
 | **Text** | | 对话文本。支持 TMP 富文本标签。 | `你好，<color=red>陌生人</color>。` |
 | **Background** | | 背景图名 (需在 Resources 背景目录)。留空继承。 | `School_Day` |
 | **BGM** | | 背景音乐名。填 `stop` 停止，`pause` 暂停。 | `Theme_Song` |
@@ -115,7 +116,53 @@ VNovelizer 使用 `ScriptableObject` 管理角色资源，实现了逻辑 ID 与
 | **Note** | | 策划备注（游戏内不加载）。 | `第一章结束` |
 
 4.  编辑完成后保存 Excel。
-5.  在剧本管理器中点击 **"🔄 转换"**，生成游戏所需的 `.asset` 数据文件。
+5.  在剧本管理器中点击 **"转换"**，生成游戏所需的 `.asset` 数据文件。
+
+### 剧本：行级状态规则（延续 vs 显式）
+
+以下约定直接影响画面与读档表现，建议策划与程序共同对齐。
+
+#### 会「延续」的字段（空单元格 = 不改变当前状态）
+
+*   **Background**：本行留空时，沿用当前已生效的背景（与 `VNManager` 内 `currentBG` 一致）。若需切黑/隐藏请使用表内约定值或指令。
+*   **BGM**：本行 **BGM 列为空** 时，不会强制切换曲目（继续播放当前 BGM）；填写新曲名、`stop`、`pause`、`resume` 等才会改变播放状态。
+
+#### 必须按行显式的字段（空 = 无该项，不沿用上句）
+
+*   **Speaker**：留空则本行不显示说话人名。
+*   **Text**：留空则本行正文为空字符串（是否允许纯演出行由剧本设计决定）。
+*   **HeadProfile**：留空视为隐藏头像（`hide`）；不沿用上一行的头像配置。
+*   **CharLeft / CharMid / CharRight**：留空或填 `hide` 均会**隐藏该槽**并从内部立绘状态中移除该位置；**不会**自动沿用上一行同槽立绘。连续多句同一角色出场时，需要在每一行重复填写立绘（或使用表格公式批量填充）。
+
+#### 演出命令与立绘列（同行约束）
+
+下列指令在运行时会作用在**已显示**的槽位 Rect 上；预演模式（`Simulate`）会通过 `VNManager.GetCharacterData` 判断该槽是否有角色：
+
+*   `charmove`、`setchartrans`、`charflip` 等。
+
+**规则**：若某行 `Command` 中使用了 `charmove(M, …)` 等，该行 Excel 的 **CharMid（或对应槽）必须写明立绘**（如 `Amy_Normal`），不能依赖「上一行填过、本行留空」的旧习惯，否则本行会判定该槽无角色，命令无效或仅打警告日志。
+
+`charfadein` / `charfadeout` / `charjump` 等以当前 UI 对象为准；同样建议该行 CSV 已正确配置立绘或先由前序行显式显示。
+
+#### 存档与读档
+
+*   存档会写入当前 **三槽立绘**（`Characters` 字典）、翻转缩放（`CharacterScaleX`）、背景、BGM、特效与变量等。
+*   **读档首帧**：若当前行 CSV 中某立绘列为空，但存档里该槽仍有数据，则**首帧播放会用存档中的槽位数据补全显示**，避免刚读档就被「空槽 = 隐藏」清掉画面；**进入下一行后**仍严格按 CSV 规则执行（空列即隐藏）。
+*   存档**不包含** `HeadProfile`；读档后头像以**当前行 CSV 的 HeadProfile** 为准。若需在存档点精确还原头像，需在剧本该行写明头像字段。
+
+#### 多语言（Unity Localization）
+
+*   在 `VNProjectConfig` 中可开启剧情本地化；详细 Collection 命名、`text.{lineID}` / `speaker.{lineID}`、`choice(@loc:...)` 与回退策略见仓库内 **`Docs/VNLocalizationGuide.md`**。
+*   开启本地化后，**每一行独立解析**翻译条目，**不在行与行之间继承译文**；某语言缺失时可按 `FallbackToCsvWhenMissing` 回退到**本行 CSV** 的 Speaker/Text。
+
+#### 从旧版「空槽 / 空说话人沿用」迁移
+
+若旧剧本大量依赖「立绘或说话人列留空以沿用上一行」，升级本规则后需要：
+
+*   为连续对白行**补全** Speaker、三槽立绘、HeadProfile（按策划意图逐行填写或批量生成）；
+*   检查所有**同行含立绘类 Command** 的行是否已填写对应槽位。
+
+---
 
 ### 第三步：运行游戏 (Run)
 
@@ -179,6 +226,8 @@ VNManager.GetInstance().StartGame("Chapter1", "1005");
 *   `charfadeout(pos, duration)`: 立绘淡出。
 *   `charmove(pos, x, y, duration)`: 移动立绘到指定坐标。
 *   `setchartrans(pos, x, y, scale)`: 精确设置立绘位置和缩放。
+
+> **提示**：使用 `charmove` / `setchartrans` / `charflip` 时，**该行 Excel 中对应槽位（CharLeft/Mid/Right）须已填写立绘**，详见上文「剧本：行级状态规则 → 演出命令与立绘列」。
 
 </details>
 

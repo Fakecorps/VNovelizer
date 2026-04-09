@@ -24,7 +24,7 @@ public class GalleryEditor : EditorWindow
     // --- 选中项 ---
     private object selectedItem;
 
-    [MenuItem("VNovelizer/🖼️ 画廊编辑器 (Gallery Editor)", false,26)]
+    [MenuItem("VNovelizer/画廊编辑器 (Gallery Editor)", false, 26)]
     public static void ShowWindow()
     {
         var wnd = GetWindow<GalleryEditor>();
@@ -73,9 +73,9 @@ public class GalleryEditor : EditorWindow
         toolbar.style.borderBottomWidth = 1;
         toolbar.style.borderBottomColor = Color.black;
 
-        var cgBtn = new Button(() => SwitchMode(EditorMode.CG)) { text = "🖼️ CG 管理", style = { height = 30, width = 120 } };
-        var musicBtn = new Button(() => SwitchMode(EditorMode.Music)) { text = "🎵 音乐管理", style = { height = 30, width = 120 } };
-        var sceneBtn = new Button(() => SwitchMode(EditorMode.Scene)) { text = "🎬 场景管理", style = { height = 30, width = 120 } };
+        var cgBtn = new Button(() => SwitchMode(EditorMode.CG)) { text = "CG 管理", style = { height = 30, width = 120 } };
+        var musicBtn = new Button(() => SwitchMode(EditorMode.Music)) { text = "音乐管理", style = { height = 30, width = 120 } };
+        var sceneBtn = new Button(() => SwitchMode(EditorMode.Scene)) { text = "场景管理", style = { height = 30, width = 120 } };
 
         toolbar.Add(cgBtn);
         toolbar.Add(musicBtn);
@@ -96,7 +96,7 @@ public class GalleryEditor : EditorWindow
         listToolbar.style.paddingTop = 5; listToolbar.style.paddingBottom = 5;
         listToolbar.style.paddingLeft = 5; listToolbar.style.paddingRight = 5;
 
-        listToolbar.Add(new Button(CreateNewItem) { text = "➕ 新建项目", style = { flexGrow = 1 } });
+        listToolbar.Add(new Button(CreateNewItem) { text = "新建项目", style = { flexGrow = 1 } });
         leftPane.Add(listToolbar);
 
         leftList = new ListView();
@@ -430,7 +430,7 @@ public class GalleryEditor : EditorWindow
         var nameField = new TextField(label) { value = value, style = { flexGrow = 1 } };
         nameField.RegisterValueChangedCallback(evt => onNameChange(evt.newValue));
 
-        var delBtn = new Button(onDelete) { text = "🗑 删除" };
+        var delBtn = new Button(onDelete) { text = "删除" };
         delBtn.style.backgroundColor = new Color(0.6f, 0.2f, 0.2f);
 
         box.Add(nameField);
@@ -485,7 +485,7 @@ public class GalleryEditor : EditorWindow
         });
         box.Add(field);
 
-        var delBtn = new Button(onDelete) { text = "×" };
+        var delBtn = new Button(onDelete) { text = "X" };
         delBtn.style.backgroundColor = new Color(0.5f, 0.2f, 0.2f);
         box.Add(delBtn);
 

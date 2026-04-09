@@ -93,7 +93,7 @@ public class VNProjectConfigEditor : Editor
         localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("EnableLocalization"), "启用本地化"));
         localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("ScriptTablePrefix"), "剧本 Collection 前缀"));
         localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("LocalizationCollectionName"), "共享 Collection 名称（已弃用）"));
-        localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("FallbackToCsvWhenMissing"), "缺失时回退 CSV/继承缓存"));
+        localizationFoldout.Add(new PropertyField(serializedObject.FindProperty("FallbackToCsvWhenMissing"), "缺失翻译时回退本行 CSV"));
         root.Add(localizationFoldout);
 
         // 6. AES 加密设置 (高级逻辑)
@@ -134,7 +134,7 @@ public class VNProjectConfigEditor : Editor
             CheckLength(keyProp.stringValue, 32, keyError);
             CheckLength(ivProp.stringValue, 16, ivError);
         })
-        { text = "🎲 生成随机密钥", style = { marginTop = 5 } };
+        { text = "随机生成密钥", style = { marginTop = 5 } };
 
         aesDetails.Add(keyField);
         aesDetails.Add(keyError);

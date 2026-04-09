@@ -17,7 +17,7 @@ public class UIEditorWindow : EditorWindow
 
     private UIType currentType = UIType.Gameplay;
 
-    [MenuItem("VNovelizer/🎨 UI预制体管理器 (UIPrefabs Manager)",false,24)]
+    [MenuItem("VNovelizer/UI预制体管理器 (UIPrefabs Manager)", false, 24)]
     public static void ShowWindow()
     {
         var wnd = GetWindow<UIEditorWindow>();
@@ -123,7 +123,7 @@ public class UIEditorWindow : EditorWindow
 
         var editBtn = new Button(() => OpenPrefab(fullPath))
         {
-            text = "✏️ 进入编辑模式",
+            text = "进入编辑模式",
             style = {
                 width = 200, height = 50, fontSize = 16,
                 backgroundColor = new Color(0.2f, 0.5f, 0.8f),

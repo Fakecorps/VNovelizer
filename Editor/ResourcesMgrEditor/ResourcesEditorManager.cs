@@ -18,7 +18,7 @@ public class ResourceManagerWindow : EditorWindow
     private ResType currentType = ResType.Background;
     private string searchKeyword = "";
 
-    [MenuItem("VNovelizer/🗂️ 资源管理器 (Resource Manager)",false,23)]
+    [MenuItem("VNovelizer/资源管理器 (Resource Manager)", false, 23)]
     public static void ShowWindow()
     {
         var wnd = GetWindow<ResourceManagerWindow>();
@@ -76,7 +76,7 @@ public class ResourceManagerWindow : EditorWindow
         toolbar.style.marginBottom = 10;
 
         // 【新增】导入按钮
-        var importBtn = new Button(ImportFile) { text = "➕ 导入文件...", style = { height = 20, backgroundColor = new Color(0.2f, 0.6f, 0.2f), color = Color.white } };
+        var importBtn = new Button(ImportFile) { text = "导入文件...", style = { height = 20, backgroundColor = new Color(0.2f, 0.6f, 0.2f), color = Color.white } };
 
         searchField = new TextField() { style = { flexGrow = 1, marginLeft = 10 } };
         // searchField.placeholder = "搜索..."; // 旧版Unity注释掉这行
@@ -263,7 +263,7 @@ public class ResourceManagerWindow : EditorWindow
         label.style.fontSize = 11;
 
         // --- 删除按钮 (悬浮在右上角) ---
-        var delBtn = new Button(() => DeleteAsset(fullPath)) { text = "×" };
+        var delBtn = new Button(() => DeleteAsset(fullPath)) { text = "X" };
         delBtn.style.position = Position.Absolute;
         delBtn.style.top = 0;
         delBtn.style.right = 0;
@@ -294,11 +294,11 @@ public class ResourceManagerWindow : EditorWindow
     {
         switch (type)
         {
-            case ResType.Background: return "🖼️ 背景 (Backgrounds)";
-            case ResType.BGM: return "🎵 背景音乐 (BGM)";
-            case ResType.SFX: return "🔊 音效 (SFX)";
-            case ResType.Voice: return "🎙️ 语音 (Voice)";
-            case ResType.Video: return "🎬 视频 (Videos)";
+            case ResType.Background: return "背景 (Backgrounds)";
+            case ResType.BGM: return "背景音乐 (BGM)";
+            case ResType.SFX: return "音效 (SFX)";
+            case ResType.Voice: return "语音 (Voice)";
+            case ResType.Video: return "视频 (Videos)";
             default: return type.ToString();
         }
     }

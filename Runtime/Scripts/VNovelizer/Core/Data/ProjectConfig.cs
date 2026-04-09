@@ -160,7 +160,7 @@ public class VNProjectConfig : ScriptableObject
     [Tooltip("一剧本一表方案使用的 Collection 前缀，例如 VNScript_ + 剧本名。")]
     public string ScriptTablePrefix = "VNScript_";
 
-    [Tooltip("当当前语言缺失翻译时，是否回退到 CSV/继承缓存。")]
+    [Tooltip("当当前语言缺失翻译（无 entry 或 value 为空）时，是否回退显示本行 CSV 的 Speaker/Text。")]
     public bool FallbackToCsvWhenMissing = true;
 
     [Header("=== AES存档加密设置 ===")]
