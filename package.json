@@ -1,6 +1,6 @@
 {
   "name": "com.fakecorps.vnovelizer",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "displayName": "VNovelizer - Visual Novel Framework",
   "description": "A lightweight, Excel-driven Visual Novel framework for Unity. Features command-based direction, UI panels, save/load, gallery, and per-script localization via Unity Localization (one StringTableCollection per script). Requires TextMeshPro, Input System, and Unity Localization.",
   "unity": "2022.3",
