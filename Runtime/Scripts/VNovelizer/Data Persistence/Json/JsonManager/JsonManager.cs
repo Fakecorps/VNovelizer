@@ -2,7 +2,6 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using LitJson;
-using UnityEditor;
 using System.IO;
 
 /// <summary>
@@ -66,7 +65,7 @@ public class JsonManager :BaseManager<JsonManager>
                 break;
         }
 
-        return default(T);
+        return data;
     }
 }
 

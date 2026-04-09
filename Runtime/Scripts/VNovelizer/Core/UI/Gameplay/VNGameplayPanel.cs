@@ -9,7 +9,8 @@ using UnityEngine.InputSystem.UI;
 using UnityEngine.EventSystems;
 using VNovelizer.Core.API;
 using PrimeTween;
-using System.Transactions;
+using VNovelizer.Core;
+using VNovelizer.Core.Diagnostics;
 
 public class VNGameplayPanel : BasePanel
 {
@@ -75,7 +76,7 @@ public class VNGameplayPanel : BasePanel
     private float currentBaseSpeed;
     private float autoSpeed;
     private bool useNewInputSystem = true; // 默认使用新系统
-    private bool isClickOnUI = false;
+    private float _lastSkipAdvanceUnscaledTime;
 
     //Notification
     [Header("Prompt System")]
@@ -196,11 +197,11 @@ public class VNGameplayPanel : BasePanel
         }
 
         // 注册事件
-        EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>("UpdateDialogue", OnUpdateDialogue);
-        EventCenter.GetInstance().AddEventListener<string>("ChangeBackground", OnChangeBackground);
-        EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>("ShowCharacter", OnShowCharacter);
-        EventCenter.GetInstance().AddEventListener<string>("HideCharacter", OnHideCharacter);
-        EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>("UpdateHeadProfile", OnUpdateHeadProfile);
+        EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.UpdateDialogue, OnUpdateDialogue);
+        EventCenter.GetInstance().AddEventListener<string>(VNGameEvents.ChangeBackground, OnChangeBackground);
+        EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.ShowCharacter, OnShowCharacter);
+        EventCenter.GetInstance().AddEventListener<string>(VNGameEvents.HideCharacter, OnHideCharacter);
+        EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.UpdateHeadProfile, OnUpdateHeadProfile);
         EventCenter.GetInstance().AddEventListener("TextSpeedChanged", OnTextSpeedChanged);
         EventCenter.GetInstance().AddEventListener("AutoSpeedChanged", OnAutoSpeedChanged);
 
@@ -253,14 +254,14 @@ public class VNGameplayPanel : BasePanel
             if (!inputActions.VNControls.enabled)
             {
                 inputActions.VNControls.Enable();
-                Debug.Log("[VNGameplayPanel] ShowMe: Input Actions 已启用");
+                VNDebug.LogVerbose("[VNGameplayPanel] ShowMe: Input Actions 已启用");
             }
             
             // 确保事件已绑定（防止重复绑定）
             inputActions.VNControls.Confirm.performed -= OnConfirm;
             inputActions.VNControls.Confirm.performed += OnConfirm;
             
-            Debug.Log("[VNGameplayPanel] ShowMe: 确保 Input Actions 已启用并绑定");
+            VNDebug.LogVerbose("[VNGameplayPanel] ShowMe: 确保 Input Actions 已启用并绑定");
         }
         else
         {
@@ -293,25 +294,33 @@ public class VNGameplayPanel : BasePanel
                     UpdateSkipButtonState();
                     return;
                 }
-                
+
+                // 限制快进时 NextLine 调用频率，降低 TimeScale>1 时的 CPU 压力
+                float now = Time.unscaledTime;
+                if (now - _lastSkipAdvanceUnscaledTime < 0.02f)
+                    return;
+                _lastSkipAdvanceUnscaledTime = now;
+
                 VNManager.GetInstance().NextLine();
             }
         }
 
-        // 只有在明确不使用新系统时才调用旧逻辑
         if (!useNewInputSystem)
-        {
             UpdateInputFallback();
-        }
+    }
 
-        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
-        {
-            isClickOnUI = true;
-        }
-        else
-        {
-            isClickOnUI = false;
-        }
+    /// <summary>在触发确认时检测指针是否在 UI 上；触屏使用 primaryTouch 的 pointerId，鼠标使用 -1。</summary>
+    private static bool IsPointerOverGameObjectNow()
+    {
+        var es = EventSystem.current;
+        if (es == null) return false;
+        int pointerId = -1;
+#if ENABLE_INPUT_SYSTEM
+        var ts = Touchscreen.current;
+        if (ts != null && ts.primaryTouch.press.isPressed)
+            pointerId = ts.primaryTouch.touchId.ReadValue();
+#endif
+        return es.IsPointerOverGameObject(pointerId);
     }
 
     #region 新版InputSystem方案 (重写部分)
@@ -328,7 +337,7 @@ public class VNGameplayPanel : BasePanel
 
         // 标记使用新系统，防止 Update 里跑旧逻辑
         useNewInputSystem = true;
-        Debug.Log("[VNGameplayPanel] Input System Initialized via C# Class");
+        VNDebug.LogVerbose("[VNGameplayPanel] Input System Initialized via C# Class");
     }
 
     // 启用并绑定事件
@@ -336,7 +345,7 @@ public class VNGameplayPanel : BasePanel
     {
         base.OnEnable(); // 如果基类有逻辑，需要保留
 
-        Debug.Log($"[VNGameplayPanel] OnEnable 被调用 - inputActions: {inputActions != null}");
+        VNDebug.LogVerbose($"[VNGameplayPanel] OnEnable 被调用 - inputActions: {inputActions != null}");
         
         // 确保 Input Actions 已初始化
         if (inputActions == null)
@@ -370,7 +379,7 @@ public class VNGameplayPanel : BasePanel
             inputActions.VNControls.Save.performed += OnSave;
             inputActions.VNControls.Settings.performed += OnPause;
 
-            Debug.Log("[VNGameplayPanel] Input Actions Enabled & Bound");
+            VNDebug.LogVerbose("[VNGameplayPanel] Input Actions Enabled & Bound");
         }
         else
         {
@@ -400,7 +409,7 @@ public class VNGameplayPanel : BasePanel
             // 2. 禁用 Action Map
             inputActions.VNControls.Disable();
 
-            Debug.Log("[VNGameplayPanel] Input Actions Disabled");
+            VNDebug.LogVerbose("[VNGameplayPanel] Input Actions Disabled");
         }
 
         HideContinueIcon();
@@ -412,17 +421,14 @@ public class VNGameplayPanel : BasePanel
     // Confirm事件 - 下一句
     public void OnConfirm(InputAction.CallbackContext context)
     {
-        Debug.Log($"[VNGameplayPanel] OnConfirm 被调用 - 状态: {GameStateManager.GetInstance().CurrentState}, isClickOnUI: {isClickOnUI}, isAutoPlaying: {isAutoPlaying}, isUIHidden: {isUIHidden}, isTextTyping: {isTextTyping}");
-        
-        // 先判断当前游戏状态
+        VNDebug.LogVerbose($"[VNGameplayPanel] OnConfirm 被调用 - 状态: {GameStateManager.GetInstance().CurrentState}, isAutoPlaying: {isAutoPlaying}, isUIHidden: {isUIHidden}, isTextTyping: {isTextTyping}");
+
         if (!GameStateManager.GetInstance().CanInteractGameplay())
-        {
             return;
-        }
-        //看看是不是点在了UI上
-        if (isClickOnUI)
+
+        if (IsPointerOverGameObjectNow())
         {
-            Debug.Log("[VNGameplayPanel] 点击在UI上，忽略");
+            VNDebug.LogVerbose("[VNGameplayPanel] 点击在UI上，忽略");
             return;
         }
 
@@ -434,8 +440,7 @@ public class VNGameplayPanel : BasePanel
             }
             else
             {
-                // 继续下一行
-                Debug.Log("[VNGameplayPanel] 执行 NextLine");
+                VNDebug.LogVerbose("[VNGameplayPanel] 执行 NextLine");
                 VNManager.GetInstance().NextLine();
             }
         }
@@ -462,7 +467,7 @@ public class VNGameplayPanel : BasePanel
             return;
         }
         
-        Debug.Log("快进模式开启");
+        VNDebug.LogVerbose("快进模式开启");
         isSkipping = true;
         UpdateSkipButtonState();
         // 设置TimeScale实现快进效果
@@ -628,6 +633,10 @@ public class VNGameplayPanel : BasePanel
 
     private void OnConfirmFallback()
     {
+        if (!GameStateManager.GetInstance().CanInteractGameplay())
+            return;
+        if (IsPointerOverGameObjectNow())
+            return;
         if (!isAutoPlaying && !isUIHidden)
         {
             if (isTextTyping) CompleteTextTyping();
@@ -796,7 +805,7 @@ public class VNGameplayPanel : BasePanel
 
         ShowContinueIcon();
 
-        EventCenter.GetInstance().EventTrigger("TypingFinished");
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.TypingFinished);
     }
 
 
@@ -901,7 +910,7 @@ public class VNGameplayPanel : BasePanel
                 if (!baseCharPositions.ContainsKey(posCode))
                 {
                     baseCharPositions[posCode] = charRect.anchoredPosition;
-                    Debug.Log($"[VNGameplayPanel] 保存位置 {position}({posCode}) 的基准位置: {baseCharPositions[posCode]}");
+                    VNDebug.LogVerbose($"[VNGameplayPanel] 保存位置 {position}({posCode}) 的基准位置: {baseCharPositions[posCode]}");
                 }
                 
                 // 基于保存的基准位置应用offset，而不是基于当前位置（避免累加）
@@ -920,7 +929,7 @@ public class VNGameplayPanel : BasePanel
                 }
                 charRect.localScale = scale;
                 
-                Debug.Log($"[VNGameplayPanel] 应用位置 {position}({posCode}) - Scale: {profileScale}, Offset: {profile.offset}, Flip: {savedScaleX}, BasePos: {basePosition}, FinalPos: {charRect.anchoredPosition}");
+                VNDebug.LogVerbose($"[VNGameplayPanel] 应用位置 {position}({posCode}) - Scale: {profileScale}, Offset: {profile.offset}, Flip: {savedScaleX}, BasePos: {basePosition}, FinalPos: {charRect.anchoredPosition}");
             }
         }
     }
@@ -951,7 +960,7 @@ public class VNGameplayPanel : BasePanel
             if (headProfileTransform != null)
             {
                 headProfileTransform.gameObject.SetActive(false);
-                Debug.Log($"[VNGameplayPanel] HeadProfile 已隐藏 (值: {headProfileValue})");
+                VNDebug.LogVerbose($"[VNGameplayPanel] HeadProfile 已隐藏 (值: {headProfileValue})");
             }
             return;
         }
@@ -1061,7 +1070,7 @@ public class VNGameplayPanel : BasePanel
 
         isTextTyping = false;
         //currentTypingCoroutine = null;
-        EventCenter.GetInstance().EventTrigger("TypingFinished");
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.TypingFinished);
     }
 
     // 立即完成打字
@@ -1228,11 +1237,11 @@ public class VNGameplayPanel : BasePanel
         IsInitialized = false;
         OnInitialized = null;
         // 移除事件监听
-        EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>("UpdateDialogue", OnUpdateDialogue);
-        EventCenter.GetInstance().RemoveEventListener<string>("ChangeBackground", OnChangeBackground);
-        EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>("ShowCharacter", OnShowCharacter);
-        EventCenter.GetInstance().RemoveEventListener<string>("HideCharacter", OnHideCharacter);
-        EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>("UpdateHeadProfile", OnUpdateHeadProfile);
+        EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>(VNGameEvents.UpdateDialogue, OnUpdateDialogue);
+        EventCenter.GetInstance().RemoveEventListener<string>(VNGameEvents.ChangeBackground, OnChangeBackground);
+        EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>(VNGameEvents.ShowCharacter, OnShowCharacter);
+        EventCenter.GetInstance().RemoveEventListener<string>(VNGameEvents.HideCharacter, OnHideCharacter);
+        EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>(VNGameEvents.UpdateHeadProfile, OnUpdateHeadProfile);
         EventCenter.GetInstance().RemoveEventListener("TextSpeedChanged", OnTextSpeedChanged);
         EventCenter.GetInstance().RemoveEventListener("AutoSpeedChanged", OnAutoSpeedChanged);
 
@@ -1411,6 +1420,9 @@ public class VNGameplayPanel : BasePanel
     {
         return isTextTyping;
     }
+
+    /// <summary>立即完成当前台词的打字机效果。</summary>
+    public void CompleteDialogueTyping() => CompleteTextTyping();
     
     /// <summary>
     /// 保存指定位置的默认 Transform（在第一次修改时调用）
@@ -1425,7 +1437,7 @@ public class VNGameplayPanel : BasePanel
             {
                 defaultCharPositions[normalizedPos] = rect.anchoredPosition;
                 defaultCharScales[normalizedPos] = rect.localScale.y; // 使用 y 值作为缩放（通常 x 和 y 相同）
-                Debug.Log($"[VNGameplayPanel] 保存位置 {posCode}({normalizedPos}) 的默认 Transform: 位置={rect.anchoredPosition}, 缩放={rect.localScale.y}");
+                VNDebug.LogVerbose($"[VNGameplayPanel] 保存位置 {posCode}({normalizedPos}) 的默认 Transform: 位置={rect.anchoredPosition}, 缩放={rect.localScale.y}");
             }
             // 标记该位置已被修改
             modifiedCharTransforms.Add(normalizedPos);
@@ -1452,7 +1464,7 @@ public class VNGameplayPanel : BasePanel
                 float scaleX = Mathf.Sign(currentScale.x) * Mathf.Abs(defaultScale);
                 rect.localScale = new Vector3(scaleX, defaultScale, 1f);
                 
-                Debug.Log($"[VNGameplayPanel] 恢复位置 {posCode} 的默认 Transform: 位置={defaultCharPositions[posCode]}, 缩放={defaultScale}");
+                VNDebug.LogVerbose($"[VNGameplayPanel] 恢复位置 {posCode} 的默认 Transform: 位置={defaultCharPositions[posCode]}, 缩放={defaultScale}");
             }
         }
         

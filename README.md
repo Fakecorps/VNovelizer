@@ -153,6 +153,7 @@ VNovelizer 使用 `ScriptableObject` 管理角色资源，实现了逻辑 ID 与
 #### 多语言（Unity Localization）
 
 *   在 `VNProjectConfig` 中可开启剧情本地化；详细 Collection 命名、`text.{lineID}` / `speaker.{lineID}`、`choice(@loc:...)` 与回退策略见仓库内 **`Docs/VNLocalizationGuide.md`**。
+*   运行时对外静态入口 **`VNAPI`**（界面引用、Flag、指令、流程、本地化等）见 **`Docs/VNAPIReference.md`**。
 *   开启本地化后，**每一行独立解析**翻译条目，**不在行与行之间继承译文**；某语言缺失时可按 `FallbackToCsvWhenMissing` 回退到**本行 CSV** 的 Speaker/Text。
 
 #### 从旧版「空槽 / 空说话人沿用」迁移

@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.Localization;
+using VNovelizer.Core.Diagnostics;
 
 namespace VNovelizer.Core.Commands
 {
@@ -36,8 +37,7 @@ namespace VNovelizer.Core.Commands
                 }
             }
 
-            // 调试：看看解析对不对
-            Debug.Log($"[ChoiceCommand] 解析选项 -> Text: {text}, Cmd: {cmd}");
+            VNDebug.LogVerbose($"[ChoiceCommand] 解析选项 -> Text: {text}, Cmd: {cmd}");
 
             // 3. 获取或打开面板
             var panel = UIManager.GetInstance().GetPanel<ChoicePanel>("ChoicePanel");

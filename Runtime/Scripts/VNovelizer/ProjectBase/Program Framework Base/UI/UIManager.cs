@@ -5,6 +5,7 @@ using UnityEngine.Events;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
+using VNovelizer.Core.Diagnostics;
 
 
 public enum E_UI_Layer
@@ -51,7 +52,7 @@ public class UIManager : BaseManager<UIManager>
     {
         //测试，查看UIManager的创建问题
         _instanceId = ++_instanceCounter;
-        Debug.Log($"[UIManager] ctor, instanceId = {_instanceId}");
+        VNDebug.LogVerbose($"[UIManager] ctor, instanceId = {_instanceId}");
         
         // 构造函数不再初始化Canvas，留待Init方法调用
         
@@ -102,7 +103,7 @@ public class UIManager : BaseManager<UIManager>
             // 预加载阶段直接隐藏
             _persistentLoadingPanelGO.SetActive(false);
 
-            Debug.Log("[UIManager] 复用现有 LoadingProgressPanel，并设为常驻隐藏对象");
+            VNDebug.LogVerbose("[UIManager] 复用现有 LoadingProgressPanel，并设为常驻隐藏对象");
             return;
         }
 
@@ -142,7 +143,7 @@ public class UIManager : BaseManager<UIManager>
         // 预加载阶段直接隐藏，不调用 HideMe，避免初始逻辑被扰动
         _persistentLoadingPanelGO.SetActive(false);
 
-        Debug.Log("[UIManager] 已预创建常驻 LoadingProgressPanel（隐藏）");
+        VNDebug.LogVerbose("[UIManager] 已预创建常驻 LoadingProgressPanel（隐藏）");
     }
         
     
@@ -157,12 +158,12 @@ public class UIManager : BaseManager<UIManager>
         // 如果是主菜单场景，先销毁动态创建的Canvas和EventSystem
         if (sceneName == "VNMainMenu" || sceneName == "VNMainMenuScene")
         {
-            Debug.Log($"[UIManager] 检测到主菜单场景: {sceneName}，清理动态创建的UI对象...");
+            VNDebug.LogVerbose($"[UIManager] 检测到主菜单场景: {sceneName}，清理动态创建的UI对象...");
             
             // 销毁动态创建的Canvas
             if (_isCanvasDynamicallyCreated && _canvasGameObject != null)
             {
-                Debug.Log("[UIManager] 销毁动态创建的Canvas");
+                VNDebug.LogVerbose("[UIManager] 销毁动态创建的Canvas");
                 GameObject.Destroy(_canvasGameObject);
                 _canvasGameObject = null;
                 canvas = null;
@@ -172,7 +173,7 @@ public class UIManager : BaseManager<UIManager>
             // 销毁动态创建的EventSystem
             if (_isEventSystemDynamicallyCreated && _eventSystemGameObject != null)
             {
-                Debug.Log("[UIManager] 销毁动态创建的EventSystem");
+                VNDebug.LogVerbose("[UIManager] 销毁动态创建的EventSystem");
                 GameObject.Destroy(_eventSystemGameObject);
                 _eventSystemGameObject = null;
                 _isEventSystemDynamicallyCreated = false;
@@ -183,7 +184,7 @@ public class UIManager : BaseManager<UIManager>
             // 清空面板字典
             panelDic.Clear();
             
-            Debug.Log($"[UIManager] 主菜单场景初始化...");
+            VNDebug.LogVerbose($"[UIManager] 主菜单场景初始化...");
             
             // 初始化UI系统（会检测场景中已存在的Canvas）
             Init();
@@ -222,7 +223,7 @@ public class UIManager : BaseManager<UIManager>
             _canvasGameObject = null;
         }
 
-        Debug.Log("[UIManager] 非主菜单场景，重新初始化 UIManager...");
+        VNDebug.LogVerbose("[UIManager] 非主菜单场景，重新初始化 UIManager...");
         Init();
         SetupCanvasCamera();
     }
@@ -248,7 +249,7 @@ public class UIManager : BaseManager<UIManager>
         MainMenuPanel existingPanel = Object.FindFirstObjectByType<MainMenuPanel>();
         if (existingPanel != null)
         {
-            Debug.Log("[UIManager] 场景中已存在MainMenuPanel，直接显示");
+            VNDebug.LogVerbose("[UIManager] 场景中已存在MainMenuPanel，直接显示");
             existingPanel.ShowMe();
             
             // 如果面板不在字典中，添加到字典
@@ -272,7 +273,7 @@ public class UIManager : BaseManager<UIManager>
     /// </summary>
     public void Init()
     {
-        Debug.Log("[UIManager] 尝试创建UIManager");
+        VNDebug.LogVerbose("[UIManager] 尝试创建UIManager");
 
         //检查是否已经创建，防止重复
         if (canvas != null && _canvasGameObject != null)
@@ -289,13 +290,13 @@ public class UIManager : BaseManager<UIManager>
         Canvas existingCanvas = FindUsableSceneCanvas();
         // if (existingCanvas != null)
         // {
-        //     Debug.Log($"[UIManager] Init 找到的 existingCanvas = {existingCanvas.name}, root = {existingCanvas.transform.root.name}");
+        //     VNDebug.LogVerbose($"[UIManager] Init 找到的 existingCanvas = {existingCanvas.name}, root = {existingCanvas.transform.root.name}");
         //     
         // }
         
         if (existingCanvas != null)
         {
-            Debug.Log("[UIManager] 检测到场景中已存在Canvas，使用场景中的Canvas");
+            VNDebug.LogVerbose("[UIManager] 检测到场景中已存在Canvas，使用场景中的Canvas");
             _canvasGameObject = existingCanvas.gameObject;
             canvas = existingCanvas.transform as RectTransform;
             _isCanvasDynamicallyCreated = false; // 场景中的Canvas不是动态创建的
@@ -316,7 +317,7 @@ public class UIManager : BaseManager<UIManager>
         else
         {
             // 场景中不存在Canvas，动态创建
-            Debug.Log("[UIManager] 场景中不存在Canvas，动态创建...");
+            VNDebug.LogVerbose("[UIManager] 场景中不存在Canvas，动态创建...");
             _canvasGameObject = ResourcesManager.GetInstance().Load<GameObject>("VNovelizerRes/VNPrefabs/UI/VNGamePlayCanvas");
             if (_canvasGameObject == null)
             {
@@ -341,7 +342,7 @@ public class UIManager : BaseManager<UIManager>
             EventSystem existingEventSystem = Object.FindFirstObjectByType<EventSystem>();
             if (existingEventSystem != null)
             {
-                Debug.Log("[UIManager] 检测到场景中已存在EventSystem，使用场景中的EventSystem");
+                VNDebug.LogVerbose("[UIManager] 检测到场景中已存在EventSystem，使用场景中的EventSystem");
                 _eventSystemGameObject = existingEventSystem.gameObject;
                 _isEventSystemDynamicallyCreated = false; // 场景中的EventSystem不是动态创建的
             }
@@ -379,7 +380,7 @@ public class UIManager : BaseManager<UIManager>
             {
                 if (c.gameObject == _persistentLoadingPanelGO || c.transform.IsChildOf(_persistentLoadingPanelGO.transform))
                 {
-                    Debug.Log($"[UIManager] 跳过 LoadingProgressPanel Canvas: {c.name}");
+                    VNDebug.LogVerbose($"[UIManager] 跳过 LoadingProgressPanel Canvas: {c.name}");
                     continue;
                 }
             }
@@ -387,7 +388,7 @@ public class UIManager : BaseManager<UIManager>
             // 2) 跳过黑幕过场的 Canvas_FadeOverlay
             if (c.name == "Canvas_FadeOverlay")
             {
-                Debug.Log($"[UIManager] 跳过 FadeOverlay Canvas: {c.name}");
+                VNDebug.LogVerbose($"[UIManager] 跳过 FadeOverlay Canvas: {c.name}");
                 continue;
             }
 
@@ -428,7 +429,7 @@ public class UIManager : BaseManager<UIManager>
         System = canvas.Find("System");
         
         // 输出层级状态
-        Debug.Log($"[UIManager] 层级状态 - Bottom: {Bottom != null}, Top: {Top != null}, Left: {Left != null}, " +
+        VNDebug.LogVerbose($"[UIManager] 层级状态 - Bottom: {Bottom != null}, Top: {Top != null}, Left: {Left != null}, " +
                   $"Middle: {Middle != null}, Right: {Right != null}, System: {System != null}");
     }
     
@@ -463,7 +464,7 @@ public class UIManager : BaseManager<UIManager>
         rect.anchorMax = Vector2.one;
         rect.offsetMin = Vector2.zero;
         rect.offsetMax = Vector2.zero;
-        Debug.Log($"[UIManager] 已创建缺失的层级: {layerName}");
+        VNDebug.LogVerbose($"[UIManager] 已创建缺失的层级: {layerName}");
     }
     
     /// <summary>
@@ -493,19 +494,19 @@ public class UIManager : BaseManager<UIManager>
             Camera mainCamera = Camera.main;
             if (mainCamera == null)
             {
-                Debug.Log("[UIManager] Camera.main 为 null，尝试查找场景中的第一个Camera");
+                VNDebug.LogVerbose("[UIManager] Camera.main 为 null，尝试查找场景中的第一个Camera");
                 // 如果MainCamera标签不存在，尝试查找第一个Camera
                 Camera[] cameras = Object.FindObjectsByType<Camera>(FindObjectsSortMode.None);
-                Debug.Log($"[UIManager] 找到 {cameras.Length} 个Camera");
+                VNDebug.LogVerbose($"[UIManager] 找到 {cameras.Length} 个Camera");
                 if (cameras.Length > 0)
                 {
                     mainCamera = cameras[0];
-                    Debug.Log($"[UIManager] 使用第一个Camera: {mainCamera.name}");
+                    VNDebug.LogVerbose($"[UIManager] 使用第一个Camera: {mainCamera.name}");
                 }
             }
             else
             {
-                Debug.Log($"[UIManager] 找到 Camera.main: {mainCamera.name}");
+                VNDebug.LogVerbose($"[UIManager] 找到 Camera.main: {mainCamera.name}");
             }
             
             if (mainCamera != null)
@@ -515,7 +516,7 @@ public class UIManager : BaseManager<UIManager>
         }
         else
         {
-            Debug.Log($"[UIManager] Canvas renderMode 不是 ScreenSpaceCamera，当前模式: {canvasComponent.renderMode}");
+            VNDebug.LogVerbose($"[UIManager] Canvas renderMode 不是 ScreenSpaceCamera，当前模式: {canvasComponent.renderMode}");
         }
     } 
     
@@ -557,7 +558,7 @@ public class UIManager : BaseManager<UIManager>
 //
 //     _persistentSystemLayer = systemLayer.transform;
 //
-//     Debug.Log("[UIManager] 已创建全局常驻UI根节点 VNGlobalPersistentCanvas");
+//     VNDebug.LogVerbose("[UIManager] 已创建全局常驻UI根节点 VNGlobalPersistentCanvas");
 // }
 
 /// <summary>
@@ -619,7 +620,7 @@ public class UIManager : BaseManager<UIManager>
 //
 //     _hasPreloadedGlobalLoadingPanel = true;
 //
-//     Debug.Log("[UIManager] 已预创建全局 LoadingProgressPanel（隐藏，DontDestroyOnLoad）");
+//     VNDebug.LogVerbose("[UIManager] 已预创建全局 LoadingProgressPanel（隐藏，DontDestroyOnLoad）");
 // }
 
 /// <summary>
@@ -740,7 +741,7 @@ public class UIManager : BaseManager<UIManager>
 
             panelDic[panelName].ShowMe();
 
-            Debug.Log($"[UIManager] 复用已有面板: {panelName}");
+            VNDebug.LogVerbose($"[UIManager] 复用已有面板: {panelName}");
 
             if (callBack != null)
             {
@@ -887,7 +888,7 @@ public class UIManager : BaseManager<UIManager>
                 //显示面板（调用ShowMe，让面板执行初始化逻辑，如订阅事件等）
                 panel.ShowMe();
                 
-                Debug.Log($"[UIManager] ShowPanel 成功: {panelName}, 父节点 = {father.name}, Canvas = {canvas.name}");
+                VNDebug.LogVerbose($"[UIManager] ShowPanel 成功: {panelName}, 父节点 = {father.name}, Canvas = {canvas.name}");
                 
                 //处理面板创建后的逻辑（在ShowMe之后调用，确保面板已完全初始化）
                 if (callBack != null)
@@ -943,10 +944,10 @@ public class UIManager : BaseManager<UIManager>
     // public T GetPanel<T>(string panelName) where T : BasePanel
     // {
     //     //Testhere
-    //     Debug.Log("[UIManager] current Panel List:");
+    //     VNDebug.LogVerbose("[UIManager] current Panel List:");
     //     foreach (var pair in panelDic)
     //     {
-    //         Debug.Log($"[UIManager]key = {pair.Key}, value = {pair.Value}");
+    //         VNDebug.LogVerbose($"[UIManager]key = {pair.Key}, value = {pair.Value}");
     //     }
     //     
     //     if (panelDic.ContainsKey(panelName))

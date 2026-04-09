@@ -2,6 +2,8 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using VNovelizer.Core.Commands;
+using VNovelizer.Core.Diagnostics;
+using VNovelizer.Core.Localization;
 using System;
 using System.Collections;
 
@@ -22,6 +24,16 @@ namespace VNovelizer.Core.API
             }
             return panel;
         }
+
+        /// <summary>尝试获取当前游戏主界面面板（无则返回 false）。</summary>
+        public static bool TryGetGameplayPanel(out VNGameplayPanel panel)
+        {
+            panel = GetPanel();
+            return panel != null;
+        }
+
+        /// <summary>当前是否存在可用的 VNGameplayPanel（含场景兜底查找）。</summary>
+        public static bool HasGameplayPanel() => GetPanel() != null;
 
         /// <summary>
         /// 获取前背景图 (用于正常显示)
@@ -122,6 +134,48 @@ namespace VNovelizer.Core.API
         {
             var panel = GetPanel();
             return panel != null ? panel.GetEffectLayer() : null;
+        }
+
+        /// <summary>对话框区域 RectTransform（如震屏等）。</summary>
+        public static RectTransform GetDialogueBoxRect()
+        {
+            var panel = GetPanel();
+            return panel != null ? panel.GetDialogueBoxRect() : null;
+        }
+
+        /// <summary>设置对话正文颜色（会先缓存默认属性）。</summary>
+        public static void SetDialogueTextColor(Color color)
+        {
+            var panel = GetPanel();
+            panel?.SetDialogueTextColor(color);
+        }
+
+        /// <summary>设置对话正文字号。</summary>
+        public static void SetDialogueTextSize(float size)
+        {
+            var panel = GetPanel();
+            panel?.SetDialogueTextSize(size);
+        }
+
+        /// <summary>恢复对话正文默认颜色与字号。</summary>
+        public static void RestoreDefaultDialogueTextProperties()
+        {
+            var panel = GetPanel();
+            panel?.RestoreDefaultTextProperties();
+        }
+
+        /// <summary>是否正在打字机播放台词。</summary>
+        public static bool IsDialogueTyping()
+        {
+            var panel = GetPanel();
+            return panel != null && panel.IsTextTyping();
+        }
+
+        /// <summary>立即完成当前台词的打字机效果。</summary>
+        public static void CompleteDialogueTyping()
+        {
+            var panel = GetPanel();
+            panel?.CompleteDialogueTyping();
         }
 
         /// <summary>
@@ -226,8 +280,15 @@ namespace VNovelizer.Core.API
         
         #endregion
 
+        /// <summary>
+        /// 清空特效层子物体，并同步注销 <see cref="VNManager"/> 内登记的特效名，避免与存档/流程状态不一致。
+        /// </summary>
         public static void ClearAllEffects()
         {
+            var vm = VNManager.GetInstance();
+            foreach (var name in vm.GetActiveEffects())
+                vm.UnregisterEffect(name);
+
             Transform effectLayer = GetEffectLayer();
             if (effectLayer == null) return;
 
@@ -244,13 +305,21 @@ namespace VNovelizer.Core.API
             Transform parent = UIManager.GetInstance().GetLayerFather(E_UI_Layer.System);
             if (parent == null)
             {
-                Debug.Log("[VNAPI] 找不到系统层父物体");
+                VNDebug.LogVerbose("[VNAPI] 找不到系统层父物体");
                 onComplete?.Invoke();
                 return;
             }
 
             // 2. 加载预制体
-            string path = VNProjectConfig.Instance.VideoObjPath;
+            var config = VNProjectConfig.Instance;
+            if (config == null || string.IsNullOrEmpty(config.VideoObjPath))
+            {
+                VNDebug.LogVerboseWarning("[VNAPI] VNProjectConfig 无效或未配置 VideoObjPath");
+                onComplete?.Invoke();
+                return;
+            }
+
+            string path = config.VideoObjPath;
             GameObject prefab = ResourcesManager.GetInstance().Load<GameObject>(path);
 
             if (prefab == null)
@@ -280,6 +349,40 @@ namespace VNovelizer.Core.API
         }
         #region Game Flow Control
 
+        /// <summary>当前加载的剧本文件名（无则为空字符串）。</summary>
+        public static string GetCurrentScriptName() => VNManager.GetInstance().GetCurrentScriptName();
+
+        /// <summary>当前剧本行索引（0-based）；无有效剧本时为 -1。</summary>
+        public static int GetCurrentLineIndex() => VNManager.GetInstance().CurrentLineIndex;
+
+        /// <summary>当前行的行 ID（Excel 中的 ID 列）；无效索引时返回 false。</summary>
+        public static bool TryGetCurrentLineId(out string lineId)
+        {
+            lineId = null;
+            var m = VNManager.GetInstance();
+            var lines = m.StoryLines;
+            int idx = m.CurrentLineIndex;
+            if (lines == null || idx < 0 || idx >= lines.Count)
+                return false;
+            var line = lines[idx];
+            if (line == null)
+                return false;
+            lineId = line.ID;
+            return true;
+        }
+
+        /// <summary>推进到下一句（与玩家点击下一句类似）。</summary>
+        public static void NextLine() => VNManager.GetInstance().NextLine();
+
+        /// <summary>无动画推进到下一句。</summary>
+        public static void NextLineWithoutAnimation() => VNManager.GetInstance().NextLineWithoutAnimation();
+
+        /// <summary>当前游戏状态（面板打开、自动播放等）。</summary>
+        public static GameState GetGameState() => GameStateManager.GetInstance().CurrentState;
+
+        /// <summary>是否允许进行主流程交互（如点击下一句）。</summary>
+        public static bool CanInteractGameplay() => GameStateManager.GetInstance().CanInteractGameplay();
+
         /// <summary>
         /// 切换背景数据 (不刷新UI，仅更新内部状态)
         /// </summary>
@@ -305,6 +408,29 @@ namespace VNovelizer.Core.API
         { 
             VNManager.GetInstance().UnregisterEffect(name);
         }
+
+        /// <summary>当前在 VNManager 中登记的特效名称列表（副本）。</summary>
+        public static System.Collections.Generic.List<string> GetActiveEffectNames() =>
+            VNManager.GetInstance().GetActiveEffects();
+        #endregion
+
+        #region Localization
+
+        /// <summary>是否在项目配置中开启了剧情本地化。</summary>
+        public static bool IsLocalizationEnabled() => VNLocalizationService.IsEnabled();
+
+        /// <summary>按当前剧本与行 ID 读取本地化正文（键为 text.{lineId}）。</summary>
+        public static bool TryGetLocalizedText(string lineId, out string localized) =>
+            VNLocalizationService.TryGetText(GetCurrentScriptName(), lineId, out localized);
+
+        /// <summary>按当前剧本与行 ID 读取本地化说话人（键为 speaker.{lineId}）。</summary>
+        public static bool TryGetLocalizedSpeaker(string lineId, out string localized) =>
+            VNLocalizationService.TryGetSpeaker(GetCurrentScriptName(), lineId, out localized);
+
+        /// <summary>使用完整 entry key 读取当前剧本表中的条目（见本地化文档）。</summary>
+        public static bool TryGetLocalizedByFullKey(string fullKey, out string localized) =>
+            VNLocalizationService.TryGetByFullKey(GetCurrentScriptName(), fullKey, out localized);
+
         #endregion
         #region Coroutine Control (协程控制)
 
