@@ -59,14 +59,14 @@ public class VNovelizerSetup : EditorWindow
         CreateDir(assetsRoot, "StreamingAssets/VNovelizerRes/Videos");
         CreateDir(assetsRoot, "Scenes");
 
-        // 3. 创建 Resources 根目录
+        // 3. 创建 Resources 根目录（运行时 Resources.Load 只解析 Assets 下 Resources；包内默认资源在 Runtime/PackageDefault，避免与 Assets 重复键冲突）
         CreateDir(assetsRoot, "Resources/VNovelizerRes");
         string resRootDest = Path.Combine(assetsRoot, "Resources/VNovelizerRes");
 
         // 4. 精细化复制资源
         if (!string.IsNullOrEmpty(packagePath))
         {
-            string resRootSource = Path.Combine(packagePath, "Runtime/Resources/VNovelizerRes");
+            string resRootSource = Path.Combine(packagePath, "Runtime/PackageDefault/VNovelizerRes");
 
             if (Directory.Exists(resRootSource))
             {

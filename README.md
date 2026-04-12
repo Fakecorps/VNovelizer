@@ -70,7 +70,7 @@
 **VNovelizer -> 一键初始化 (Setup Wizard)**
 
 点击 **"🚀 一键初始化项目"**。向导将自动：
-*   构建标准目录结构 (`Assets/VNovelizerRes/...`)
+*   从包内 `Runtime/PackageDefault/VNovelizerRes` 复制默认资源到 **`Assets/Resources/VNovelizerRes`**（包内该目录**不在**名为 `Resources` 的文件夹下，避免与 Assets 产生重复 `Resources.Load` 键；运行时剧本/UI 等只从 **Assets 的 Resources** 加载）。
 *   生成全局配置文件 `VNProjectConfig`
 *   导入核心 UI 预制体与示例场景
 

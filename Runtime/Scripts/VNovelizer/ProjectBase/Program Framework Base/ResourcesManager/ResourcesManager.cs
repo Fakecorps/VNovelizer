@@ -4,6 +4,9 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 
+/// <summary>
+/// 通过 Unity Resources 加载；VNovelizer 约定所有剧情/UI 等资源路径仅存在于 <b>Assets/Resources</b>（包内默认内容在 Runtime/PackageDefault，由初始化向导复制，避免包内 Resources 与 Assets 键冲突）。
+/// </summary>
 public class ResourcesManager : BaseManager<ResourcesManager>
 {
     //同步加载资源

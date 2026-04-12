@@ -57,8 +57,8 @@ public class VNProjectConfig : ScriptableObject
 
 
 
-    [Header("=== 运行时加载路径 (Resources relative) ===")]
-    [Tooltip("CSV文件在Resources下的相对路径 (例如: VNScripts)")]
+    [Header("=== 运行时加载路径 (仅 Assets/Resources 下相对路径) ===")]
+    [Tooltip("CSV 在 Resources 下的相对路径；须位于 Assets/Resources（初始化向导会复制到该处，勿依赖包内 Resources）")]
     public string VNScriptResPath = "VNovelizerRes/VNScripts";
 
     [Tooltip("背景图片在Resources下的相对路径 (例如: Backgrounds)")]
