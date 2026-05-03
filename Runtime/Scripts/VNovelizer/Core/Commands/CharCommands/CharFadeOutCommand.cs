@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.API;
 using PrimeTween;
@@ -14,9 +15,15 @@ namespace VNovelizer.Core.Commands
 
         private float defaultDuration = 0.5f;
 
-        // --- 运行时状态 ---
-        private CanvasGroup _targetCG;
-        private Tween _fadeTween;
+        private struct ActiveFade
+        {
+            public int Token;
+            public CanvasGroup CanvasGroup;
+            public Tween Tween;
+        }
+
+        private readonly List<ActiveFade> _activeFades = new List<ActiveFade>();
+        private int _nextFadeToken;
 
         public override bool Execute(string args)
         {
@@ -27,96 +34,74 @@ namespace VNovelizer.Core.Commands
         {
             if (string.IsNullOrEmpty(args)) yield break;
 
-            // 1. 解析参数
             string[] parts = args.Split(',');
             string posCode = parts[0].Trim();
             float duration = defaultDuration;
             if (parts.Length > 1) float.TryParse(parts[1].Trim(), out duration);
 
-            // 2. 获取目标
             RectTransform targetRect = VNAPI.GetCharRect(posCode);
             if (targetRect == null || !targetRect.gameObject.activeSelf)
-            {
-                // 如果本来就是隐藏的，直接结束
                 yield break;
-            }
 
-            // 3. 获取组件
-            _targetCG = targetRect.GetComponent<CanvasGroup>();
-            if (_targetCG == null) _targetCG = targetRect.gameObject.AddComponent<CanvasGroup>();
+            CanvasGroup targetCG = targetRect.GetComponent<CanvasGroup>();
+            if (targetCG == null) targetCG = targetRect.gameObject.AddComponent<CanvasGroup>();
 
-            // 4. 【核心】使用 PrimeTween
-
-            _fadeTween = Tween.Alpha(_targetCG, startValue: _targetCG.alpha, endValue: 0f, duration: duration)
+            Tween fadeTween = Tween.Alpha(targetCG, startValue: targetCG.alpha, endValue: 0f, duration: duration)
                 .OnComplete(() =>
                 {
-                    Finish();
+                    if (targetCG != null && targetCG.gameObject != null)
+                    {
+                        targetCG.gameObject.SetActive(false);
+                        targetCG.alpha = 1f;
+                    }
                 });
 
-            // 5. 等待完成
-            yield return _fadeTween.ToYieldInstruction();
+            int token = ++_nextFadeToken;
+            _activeFades.Add(new ActiveFade { Token = token, CanvasGroup = targetCG, Tween = fadeTween });
 
-            // 【Bug修复】检查对象是否仍然有效
-            if (_targetCG != null && _targetCG.gameObject != null)
+            try
             {
-                // 对象仍然有效，正常清理
-            }
-            else
-            {
-                Debug.LogWarning("[CharFadeOut] CanvasGroup 在动画过程中被销毁");
-            }
+                yield return fadeTween.ToYieldInstruction();
 
-            // 6. 清理
-            _fadeTween = default;
-            _targetCG = null;
+                if (targetCG != null && targetCG.gameObject != null)
+                {
+                }
+                else
+                {
+                    Debug.LogWarning("[CharFadeOut] CanvasGroup 在动画过程中被销毁");
+                }
+            }
+            finally
+            {
+                UnregisterFade(token);
+            }
         }
 
-        public void Finish()
+        private void UnregisterFade(int token)
         {
-            // 【Bug修复】检查对象是否仍然有效
-            if (_targetCG != null)
+            for (int i = _activeFades.Count - 1; i >= 0; i--)
             {
-                try
-                {
-                    if (_targetCG.gameObject != null)
-                    {
-                        _targetCG.gameObject.SetActive(false);
-                        _targetCG.alpha = 1f; // 恢复 Alpha
-                    }
-                }
-                catch (MissingReferenceException)
-                {
-                    Debug.LogWarning("[CharFadeOut] 尝试完成动画时发现 CanvasGroup 已被销毁");
-                }
+                if (_activeFades[i].Token == token)
+                    _activeFades.RemoveAt(i);
             }
         }
 
-        // 中断逻辑
         public override void Interrupt()
         {
-            if (_fadeTween.isAlive)
+            var snapshot = new List<ActiveFade>(_activeFades);
+            bool anyCompleted = false;
+            foreach (var af in snapshot)
             {
-                _fadeTween.Complete(); // 这会触发 OnComplete 里的隐藏逻辑
+                if (af.Tween.isAlive)
+                {
+                    af.Tween.Complete();
+                    anyCompleted = true;
+                }
+            }
+            if (anyCompleted)
                 Debug.Log("[CharFadeOut] 动画被中断，已瞬间隐藏。");
-            }
 
-            // 【Bug修复】检查对象是否仍然有效
-            if (_targetCG != null)
-            {
-                try
-                {
-                    if (_targetCG.gameObject != null)
-                    {
-                        // 对象仍然有效
-                    }
-                }
-                catch (MissingReferenceException)
-                {
-                    Debug.LogWarning("[CharFadeOut] 尝试中断时发现 CanvasGroup 已被销毁");
-                }
-            }
-            
-            _targetCG = null;
+            _activeFades.Clear();
         }
     }
 }
