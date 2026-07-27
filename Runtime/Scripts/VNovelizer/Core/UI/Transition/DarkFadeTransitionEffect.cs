@@ -2,7 +2,7 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
-using PrimeTween;
+using VNovelizer.Core.Compat;
 
 public class DarkFadeTransitionEffect : TransitionEffectBase
 {
@@ -26,7 +26,7 @@ public class DarkFadeTransitionEffect : TransitionEffectBase
 
     private Canvas fadeCanvas;
     private Image fadeImage;
-    private Tween fadeTween;
+    private CompatTween fadeTween;
     private Coroutine transitionCoroutine;
     private bool isPlaying;
 
@@ -192,7 +192,7 @@ public class DarkFadeTransitionEffect : TransitionEffectBase
 
         bool tweenDone = false;
 
-        fadeTween = Tween.Alpha(
+        fadeTween = AnimationCompat.Alpha(
             fadeImage,
             endValue: targetAlpha,
             duration: duration,

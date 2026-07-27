@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
-using PrimeTween;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Compat;
 
 /// <summary>
 /// 暂停面板
@@ -250,7 +250,7 @@ public class PausePanel : BasePanel
             GameStateManager.GetInstance().CurrentState == GameState.Pause)
         {
             GameStateManager.GetInstance().RestoreState();
-            PrimeTween.Tween.StopAll();
+            AnimationCompat.StopAll();
             VNAPI.ClearAllEffects();
             PoolManager.GetInstance().Clear();
         }

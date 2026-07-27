@@ -6,10 +6,10 @@
         "Unity.TextMeshPro",
         "Unity.UGUI",
         "Coffee.UIParticle",
-        "PrimeTween.Runtime",
         "LitJson",
         "Unity.Localization",
-        "Unity.ResourceManager"
+        "Unity.ResourceManager",
+        "PrimeTween.Runtime"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -19,6 +19,11 @@
     "autoReferenced": true,
     "defineConstraints": [],
     "versionDefines": [
+        {
+            "name": "com.kyrylokuzyk.primetween",
+            "expression": "0.0.0",
+            "define": "PRIME_TWEEN_INSTALLED"
+        },
         {
             "name": "com.unity.localization",
             "expression": "[0.0.0,9999.9999]",

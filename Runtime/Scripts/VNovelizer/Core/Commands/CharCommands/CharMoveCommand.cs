@@ -1,7 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using VNovelizer.Core.API;
-using PrimeTween;
+using VNovelizer.Core.Compat;
 
 namespace VNovelizer.Core.Commands
 {
@@ -19,7 +19,7 @@ namespace VNovelizer.Core.Commands
 
         // --- 运行时状态 ---
         private RectTransform _targetRect;
-        private Tween _moveTween; // 保存 Tween 结构体
+        private CompatTween _moveTween; // 保存 Tween 结构体
 
         public override bool Execute(string args)
         {
@@ -73,7 +73,7 @@ namespace VNovelizer.Core.Commands
             Vector2 targetPos = new Vector2(targetX, targetY);
 
             // 5. 使用 PrimeTween 的 Custom 方法实现平滑移动
-            _moveTween = Tween.Custom(startPos, targetPos, duration, 
+            _moveTween = AnimationCompat.CustomVector2(startPos, targetPos, duration, 
                 onValueChange: (Vector2 newPos) => 
                 {
                     if (_targetRect != null && _targetRect.gameObject != null)

@@ -3,6 +3,7 @@ using UnityEngine;
 using System.IO;
 using System.Reflection;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 public class VNovelizerSetup : EditorWindow
 {
@@ -31,7 +32,7 @@ public class VNovelizerSetup : EditorWindow
 
         GUILayout.Label("欢迎使用 VNovelizer！", EditorStyles.boldLabel);
         GUILayout.Space(10);
-        GUILayout.Label("此工具将帮助您初始化项目结构并导入必要资源。\n(字体文件将保持引用，不进行复制)", EditorStyles.wordWrappedLabel);
+        GUILayout.Label("此工具将帮助您初始化项目结构、安装依赖并导入必要资源。\n(首次运行将跳过已存在的文件，保留用户定制内容)", EditorStyles.wordWrappedLabel);
         GUILayout.Space(20);
 
         if (GUILayout.Button("一键初始化项目", GUILayout.Height(40)))
@@ -59,7 +60,7 @@ public class VNovelizerSetup : EditorWindow
         CreateDir(assetsRoot, "StreamingAssets/VNovelizerRes/Videos");
         CreateDir(assetsRoot, "Scenes");
 
-        // 3. 创建 Resources 根目录（运行时 Resources.Load 只解析 Assets 下 Resources；包内默认资源在 Runtime/PackageDefault，避免与 Assets 重复键冲突）
+        // 3. 创建 Resources 根目录
         CreateDir(assetsRoot, "Resources/VNovelizerRes");
         string resRootDest = Path.Combine(assetsRoot, "Resources/VNovelizerRes");
 
@@ -70,7 +71,6 @@ public class VNovelizerSetup : EditorWindow
 
             if (Directory.Exists(resRootSource))
             {
-                // 定义需要复制的文件夹列表
                 string[] foldersToCopy = new string[]
                 {
                     "Audio",
@@ -106,42 +106,62 @@ public class VNovelizerSetup : EditorWindow
                 if (Directory.Exists(sceneSource))
                 {
                     CopyDirectory(sceneSource, sceneDest);
+                    AddSceneToBuildSettings("Assets/Scenes/VNMainMenu.unity");
                     AddSceneToBuildSettings("Assets/Scenes/VNGamePlay.unity");
-                    AddSceneToBuildSettings("Assets/Scenes/DebugScene.unity");
+                    AddSceneToBuildSettings("Assets/Scenes/VNDebugScene.unity");
                 }
             }
         }
 
-        // 创建数据容器 (不复制旧文件，而是新建)
-        // 创建 GalleryContent 文件夹结构
+        // 5. 创建数据容器和 Config
         CreateDir(assetsRoot, "Resources/VNovelizerRes/GalleryContent");
         CreateDir(assetsRoot, "Resources/VNovelizerRes/GalleryContent/CG");
         CreateDir(assetsRoot, "Resources/VNovelizerRes/GalleryContent/Music");
         CreateDir(assetsRoot, "Resources/VNovelizerRes/GalleryContent/Scene");
 
-        // 新建 SO
         CreateDataContainer<CGDataContainer>("Assets/Resources/VNovelizerRes/GalleryContent/CG/CGDataContainer.asset");
         CreateDataContainer<MusicDataContainer>("Assets/Resources/VNovelizerRes/GalleryContent/Music/MusicDataContainer.asset");
         CreateDataContainer<SceneDataContainer>("Assets/Resources/VNovelizerRes/GalleryContent/Scene/SceneDataContainer.asset");
 
-        // 创建 Config 文件 (不复制旧文件，而是新建)
         string configPath = "Assets/Resources/VNProjectConfig.asset";
         if (!Directory.Exists(assetsRoot + "/Resources")) Directory.CreateDirectory(assetsRoot + "/Resources");
 
         if (!File.Exists(assetsRoot + "/Resources/VNProjectConfig.asset"))
         {
             var config = ScriptableObject.CreateInstance<VNProjectConfig>();
-            config.ExcelSourceFolder = null; // 留空让用户自己拖
+            config.ExcelSourceFolder = null;
             AssetDatabase.CreateAsset(config, configPath);
             Debug.Log("[VNovelizer Setup] 已创建默认配置文件: " + configPath);
         }
+
+        // 6. 确保包依赖（PrimeTween scoped registry + Package）
+        EnsureManifestDependencies();
+
+        // 7. 导入 TMP Essential Resources
+        ImportTMPEssentialResources();
+
+        // 8. 配置 Input System 为 Both 模式
+        bool needRestart = ConfigureInputSystemBoth();
 
         AssetDatabase.Refresh();
 
         var configObj = AssetDatabase.LoadAssetAtPath<Object>(configPath);
         if (configObj != null) Selection.activeObject = configObj;
 
-        EditorUtility.DisplayDialog("完成", "初始化成功！\n\n1. 核心资源已导入 (不含字体)\n2. 数据容器已新建\n3. 场景已配置", "好的");
+        string completeMsg = "初始化成功！\n\n" +
+            "1. 核心资源已导入 (含字体 SDF)\n" +
+            "2. 数据容器已新建\n" +
+            "3. 场景已配置\n" +
+            "4. 包依赖已写入 manifest.json\n" +
+            "5. TMP Essential Resources 已导入\n" +
+            "6. Input System 已设为 Both 模式";
+
+        if (needRestart)
+        {
+            completeMsg += "\n\n请重启 Unity Editor 以使 Input System 配置生效。";
+        }
+
+        EditorUtility.DisplayDialog("完成", completeMsg, "好的");
     }
 
     private static void CreateDir(string root, string subPath)
@@ -171,10 +191,10 @@ public class VNovelizerSetup : EditorWindow
         {
             if (file.Extension == ".meta") continue;
 
-            // 【过滤】排除字体文件
+            // 排除原始字体文件
             if (file.Extension == ".ttf" || file.Extension == ".otf") continue;
 
-            // 【过滤】排除 .asset 文件（仅排除 DataContainer 和 Config 文件，TMP SDF 字体等正常复制）
+            // 排除 .asset 文件（仅排除 DataContainer 和 Config，TMP SDF 字体正常复制）
             if (file.Extension == ".asset")
             {
                 string fileName = Path.GetFileNameWithoutExtension(file.Name);
@@ -210,6 +230,167 @@ public class VNovelizerSetup : EditorWindow
         newSettings[newSettings.Length - 1] = new EditorBuildSettingsScene(scenePath, true);
         EditorBuildSettings.scenes = newSettings;
     }
+
+    // ===== 6. 初始化包依赖（manifest.json） =====
+    private static void EnsureManifestDependencies()
+    {
+        string manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            Debug.LogError("[Setup] 找不到 Packages/manifest.json，跳过包依赖配置");
+            return;
+        }
+
+        // 先读取，统一换行符，避免 \r\n 干扰
+        string content = File.ReadAllText(manifestPath).Replace("\r\n", "\n").Replace("\r", "\n");
+
+        bool needRegistry   = !content.Contains("\"com.kyrylokuzyk\"");
+        bool needPrimeTween = !content.Contains("\"com.kyrylokuzyk.primetween\"");
+
+        if (!needRegistry && !needPrimeTween)
+        {
+            Debug.Log("[Setup] 包依赖已就绪，无需修改");
+            return;
+        }
+
+        if (needRegistry)
+        {
+            // manifest.json 固定结构：
+            //   { "dependencies": { ... } }  ← 无 scopedRegistries
+            // 或 { "dependencies": { ... }, "scopedRegistries": [...] }
+            //
+            // 目标：在根对象最末的 } 前插入 scopedRegistries
+            // 方法：找到最后一个 \n} 并替换为 ,\n  "scopedRegistries":[...]\n}
+            string registryJson =
+                ",\n" +
+                "  \"scopedRegistries\": [\n" +
+                "    {\n" +
+                "      \"name\": \"npm\",\n" +
+                "      \"url\": \"https://registry.npmjs.org\",\n" +
+                "      \"scopes\": [\n" +
+                "        \"com.kyrylokuzyk\"\n" +
+                "      ]\n" +
+                "    }\n" +
+                "  ]\n" +
+                "}";
+
+            // 找最后一个 } 的位置（root 对象结尾）
+            int lastIdx = content.LastIndexOf('}');
+            if (lastIdx >= 0)
+            {
+                // 找倒数第二个 }（dependencies 块的闭合括号）的位置
+                int depCloseIdx = content.LastIndexOf('}', lastIdx - 1);
+                if (depCloseIdx >= 0)
+                {
+                    // 在 dependencies } 后插入逗号，然后插入 scopedRegistries，然后接 root }
+                    string before   = content.Substring(0, depCloseIdx + 1); // 包含 dependencies 的 }
+                    string regJson  =
+                        ",\n" +
+                        "  \"scopedRegistries\": [\n" +
+                        "    {\n" +
+                        "      \"name\": \"npm\",\n" +
+                        "      \"url\": \"https://registry.npmjs.org\",\n" +
+                        "      \"scopes\": [\n" +
+                        "        \"com.kyrylokuzyk\"\n" +
+                        "      ]\n" +
+                        "    }\n" +
+                        "  ]\n" +
+                        "}";
+                    content = before + regJson;
+                    File.WriteAllText(manifestPath, content);
+                    Debug.Log("[Setup] 已添加 scoped registry: npm (com.kyrylokuzyk)");
+                }
+                else
+                {
+                    Debug.LogError("[Setup] manifest.json 格式异常，找不到 dependencies 闭合括号");
+                }
+            }
+            else
+            {
+                Debug.LogError("[Setup] manifest.json 格式异常，无法写入 scopedRegistries");
+                return;
+            }
+        }
+
+        if (needPrimeTween)
+        {
+            try
+            {
+                UnityEditor.PackageManager.Client.Add("com.kyrylokuzyk.primetween");
+                Debug.Log("[Setup] 已发起 PrimeTween 安装请求，Unity 将在后台解析版本并安装");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[Setup] PrimeTween 安装请求失败: " + e.Message);
+            }
+        }
+    }
+
+    // ===== 7. 导入 TMP Essential Resources =====
+    private static void ImportTMPEssentialResources()
+    {
+        var tmpSettings = AssetDatabase.LoadAssetAtPath<Object>("Assets/Resources/TMP Settings.asset");
+        if (tmpSettings == null)
+        {
+            tmpSettings = Resources.Load<Object>("TMP Settings");
+        }
+        if (tmpSettings != null)
+        {
+            Debug.Log("[Setup] TMP Essential Resources 已存在，跳过导入");
+            return;
+        }
+
+        try
+        {
+            EditorApplication.ExecuteMenuItem("Window/TextMeshPro/Import TMP Essential Resources");
+            Debug.Log("[Setup] 已触发 TMP Essential Resources 导入");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[Setup] TMP Essential Resources 导入失败: " + e.Message);
+        }
+    }
+
+    // ===== 8. 配置 Input System 为 Both 模式 =====
+    /// <summary>
+    /// 切换 Active Input Handling 为 "Both"，需重启 Editor 生效。
+    /// </summary>
+    /// <returns>true 表示做了修改（需要重启）</returns>
+    private static bool ConfigureInputSystemBoth()
+    {
+        string projectSettingsPath = Path.Combine(Application.dataPath, "..", "ProjectSettings", "ProjectSettings.asset");
+        if (!File.Exists(projectSettingsPath))
+        {
+            Debug.LogWarning("[Setup] 找不到 ProjectSettings.asset");
+            return false;
+        }
+
+        string content = File.ReadAllText(projectSettingsPath);
+
+        if (content.Contains("activeInputHandler: 2"))
+        {
+            Debug.Log("[Setup] Input System 已为 Both 模式，无需修改");
+            return false;
+        }
+
+        if (content.Contains("activeInputHandler: 0"))
+        {
+            content = content.Replace("activeInputHandler: 0", "activeInputHandler: 2");
+        }
+        else if (content.Contains("activeInputHandler: 1"))
+        {
+            content = content.Replace("activeInputHandler: 1", "activeInputHandler: 2");
+        }
+        else
+        {
+            Debug.LogWarning("[Setup] ProjectSettings.asset 中未找到 activeInputHandler");
+            return false;
+        }
+
+        File.WriteAllText(projectSettingsPath, content);
+        Debug.Log("[Setup] Input System 已切换为 Both 模式（需重启 Editor 生效）");
+        return true;
+    }
 }
 
 [InitializeOnLoad]
@@ -219,7 +400,8 @@ public class AutoOpenWizard
     {
         if (!EditorPrefs.GetBool("VNovelizer_Setup_Shown", false))
         {
-            EditorApplication.delayCall += () => {
+            EditorApplication.delayCall += () =>
+            {
                 VNovelizerSetup.ShowWindow();
                 EditorPrefs.SetBool("VNovelizer_Setup_Shown", true);
             };

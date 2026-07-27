@@ -8,7 +8,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.EventSystems;
 using VNovelizer.Core.API;
-using PrimeTween;
+using VNovelizer.Core.Compat;
 using VNovelizer.Core;
 using VNovelizer.Core.Diagnostics;
 
@@ -58,7 +58,7 @@ public class VNGameplayPanel : BasePanel
 
     [Header("UI Components")]
     [SerializeField] private Image continueIcon;
-    private Sequence _iconSequence;
+    private CompatSequence _iconSequence;
     // 功能按钮
     [SerializeField] private Button autoButton;
     [SerializeField] private Button skipButton;
@@ -85,7 +85,7 @@ public class VNGameplayPanel : BasePanel
 
     private Coroutine autoPlayCoroutine;
 
-    private Tween _typewriterTween;
+    private CompatTween _typewriterTween;
 
     // UI根节点
     [SerializeField] private Transform uiRoot;
@@ -790,11 +790,19 @@ public class VNGameplayPanel : BasePanel
         //隐藏继续图标
         HideContinueIcon();
 
+        // duration <= 0 时直接显示全部文字（速度最快档 / 空文本）
+        if (duration <= 0f)
+        {
+            dialogueText.maxVisibleCharacters = 99999;
+            OnTypewriterComplete();
+            return;
+        }
+
         // 2. 启动打字机 (使用 Linear 匀速)
-        _typewriterTween = Tween.Custom(0, text.Length, duration, onValueChange: (val) =>
+        _typewriterTween = AnimationCompat.CustomFloat(0f, (float)text.Length, duration, onValueChange: (val) =>
         {
             dialogueText.maxVisibleCharacters = Mathf.FloorToInt(val);
-        }, ease: Ease.Linear)
+        })
         .OnComplete(OnTypewriterComplete);
     }
 
@@ -1263,13 +1271,13 @@ public class VNGameplayPanel : BasePanel
         // 使用 PrimeTween 创建循环动画
         // cycles: -1 (无限循环)
         // cycleMode: Yoyo (像悠悠球一样往复运动)
-        _iconSequence = Sequence.Create(cycles: -1, cycleMode: Sequence.SequenceCycleMode.Yoyo)
+        _iconSequence = AnimationCompat.CreateSequence(cycles: -1, cycleMode: SequenceCycleMode.Yoyo)
             // 1. 上下浮动 (修改 AnchoredPosition Y)
             // endValue: -10 (向下移动10像素), duration: 0.8秒
-            .Group(Tween.UIAnchoredPositionY(continueIcon.rectTransform, endValue: -10f, duration: 0.8f, ease: Ease.InOutSine))
+            .Group(AnimationCompat.AnchoredPositionY(continueIcon.rectTransform, endValue: -10f, duration: 0.8f, ease: Ease.InOutSine))
             // 2. 透明度闪烁
             // endValue: 0.2 (变淡), duration: 0.8秒
-            .Group(Tween.Alpha(continueIcon, endValue: 0.2f, duration: 0.8f, ease: Ease.InOutSine));
+            .Group(AnimationCompat.Alpha(continueIcon, endValue: 0.2f, duration: 0.8f, ease: Ease.InOutSine));
     }
 
     private void HideContinueIcon()
@@ -1310,12 +1318,12 @@ public class VNGameplayPanel : BasePanel
         rect.anchoredPosition = new Vector2(-width, rect.anchoredPosition.y);
 
         // 3. 进场动画 (移入 + 淡入)
-        Sequence.Create()
-            .Group(Tween.Alpha(cg, 1, 0.5f, Ease.OutQuad))
-            .Group(Tween.UIAnchoredPositionX(rect, 0, 0.5f, Ease.OutBack)) // 带点回弹
+        AnimationCompat.CreateSequence()
+            .Group(AnimationCompat.Alpha(cg, 1, 0.5f, Ease.OutQuad))
+            .Group(AnimationCompat.AnchoredPositionX(rect, 0, 0.5f, Ease.OutBack)) // 带点回弹
             .ChainDelay(duration) // 停留时间
-            .Chain(Tween.Alpha(cg, 0, 0.5f, Ease.InQuad)) // 淡出
-            .Group(Tween.UIAnchoredPositionX(rect, -width, 0.5f, Ease.InQuad)) // 移出
+            .Chain(AnimationCompat.Alpha(cg, 0, 0.5f, Ease.InQuad)) // 淡出
+            .Group(AnimationCompat.AnchoredPositionX(rect, -width, 0.5f, Ease.InQuad)) // 移出
             .OnComplete(() => Destroy(go)); // 销毁
     }
     #endregion

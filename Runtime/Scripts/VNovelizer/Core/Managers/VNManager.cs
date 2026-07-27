@@ -9,6 +9,7 @@ using VNovelizer.Core.API; // 引用 API 以便调用 ClearAllEffects
 using VNovelizer.Core.Localization;
 using VNovelizer.Core;
 using VNovelizer.Core.Diagnostics;
+using VNovelizer.Core.Compat;
 
 /// <summary>
 /// 视觉小说核心管理器 (终极预演版)
@@ -2074,7 +2075,7 @@ public class VNManager : BaseManager<VNManager>
         isReplayMode = false;
         replayEndLineID = "";
 
-        PrimeTween.Tween.StopAll();
+        AnimationCompat.StopAll();
         VNAPI.ClearAllEffects();
         PoolManager.GetInstance().Clear();
 

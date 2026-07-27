@@ -2,7 +2,7 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 using VNovelizer.Core.API;
-using PrimeTween;
+using VNovelizer.Core.Compat;
 
 namespace VNovelizer.Core.Commands
 {
@@ -19,7 +19,7 @@ namespace VNovelizer.Core.Commands
         private Image _back;
         private Sprite _newSprite;
         private bool isRunning = false; 
-        private Tween _fadeTween; 
+        private CompatTween _fadeTween; 
 
 
         public override bool Execute(string args)
@@ -99,7 +99,7 @@ namespace VNovelizer.Core.Commands
             bool animationCompleted = false;
             if (_front != null)
             {
-                _fadeTween = Tween.Alpha(_front, startValue: 1f, endValue: 0f, duration: duration)
+                _fadeTween = AnimationCompat.Alpha(_front, startValue: 1f, endValue: 0f, duration: duration)
                     .OnComplete(() =>
                     {
                         animationCompleted = true;

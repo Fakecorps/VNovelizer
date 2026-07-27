@@ -2,7 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.API;
-using PrimeTween;
+using VNovelizer.Core.Compat;
 
 namespace VNovelizer.Core.Commands
 {
@@ -19,7 +19,7 @@ namespace VNovelizer.Core.Commands
         {
             public int Token;
             public CanvasGroup CanvasGroup;
-            public Tween Tween;
+            public CompatTween Tween;
         }
 
         private readonly List<ActiveFade> _activeFades = new List<ActiveFade>();
@@ -46,7 +46,7 @@ namespace VNovelizer.Core.Commands
             CanvasGroup targetCG = targetRect.GetComponent<CanvasGroup>();
             if (targetCG == null) targetCG = targetRect.gameObject.AddComponent<CanvasGroup>();
 
-            Tween fadeTween = Tween.Alpha(targetCG, startValue: targetCG.alpha, endValue: 0f, duration: duration)
+            CompatTween fadeTween = AnimationCompat.Alpha(targetCG, startValue: targetCG.alpha, endValue: 0f, duration: duration)
                 .OnComplete(() =>
                 {
                     if (targetCG != null && targetCG.gameObject != null)

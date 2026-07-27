@@ -41,9 +41,11 @@ namespace VNovelizer.Core.Commands
 
             currentTarget = panel.GetCharRect(posCode);
 
-            // 【Bug修复】使用更可靠的检查方式，确保对象有效且激活
-            if (currentTarget != null && currentTarget.gameObject != null && currentTarget.gameObject.activeSelf)
+            if (currentTarget != null && currentTarget.gameObject != null)
             {
+                // 确保对象激活（即使角色当前不可见，跳跃时也应能操作）
+                if (!currentTarget.gameObject.activeInHierarchy)
+                    currentTarget.gameObject.SetActive(true);
                 // 保存协程引用，以便中断
                 runningCoroutine = MonoManager.GetInstance().StartCoroutine(JumpCoroutine(currentTarget, duration, times, height));
                 // 等待协程结束

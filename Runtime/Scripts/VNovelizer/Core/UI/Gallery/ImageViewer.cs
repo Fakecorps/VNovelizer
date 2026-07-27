@@ -4,7 +4,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
-using PrimeTween;
+using VNovelizer.Core.Compat;
 
 /// <summary>
 /// 图片查看器（大图预览）
@@ -24,8 +24,8 @@ public class ImageViewer : MonoBehaviour
     private bool isShowing = false;
     
     // 淡化切换相关（使用 PrimeTween）
-    private Tween fadeTweenFront; // 顶层图片的补间
-    private Tween fadeTweenBack; // 底层图片的补间
+    private CompatTween fadeTweenFront; // 顶层图片的补间
+    private CompatTween fadeTweenBack; // 底层图片的补间
     private float fadeDuration = 0.3f;
     private Coroutine fadeCoroutine; // 用于管理淡化协程
     
@@ -208,9 +208,9 @@ public class ImageViewer : MonoBehaviour
         
         // 2. 同时进行淡入和淡出
         // 顶层（当前图片）淡出：Alpha 1 -> 0
-        fadeTweenFront = Tween.Alpha(image, startValue: 1f, endValue: 0f, duration: fadeDuration);
+        fadeTweenFront = AnimationCompat.Alpha(image, startValue: 1f, endValue: 0f, duration: fadeDuration);
         // 底层（下一张图片）淡入：Alpha 0 -> 1
-        fadeTweenBack = Tween.Alpha(imageBack, startValue: 0f, endValue: 1f, duration: fadeDuration);
+        fadeTweenBack = AnimationCompat.Alpha(imageBack, startValue: 0f, endValue: 1f, duration: fadeDuration);
         
         // 等待动画完成（两个动画同时进行，持续时间相同，只需等待一个即可）
         yield return fadeTweenFront.ToYieldInstruction();

@@ -2,6 +2,7 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Compat;
 
 namespace VNovelizer.Core.Commands
 {
@@ -21,7 +22,7 @@ namespace VNovelizer.Core.Commands
                 GameStateManager.GetInstance().CurrentState == GameState.Pause)
             {
                 GameStateManager.GetInstance().RestoreState();
-                PrimeTween.Tween.StopAll();
+                AnimationCompat.StopAll();
                 VNAPI.ClearAllEffects();
                 PoolManager.GetInstance().Clear();
             }
