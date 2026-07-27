@@ -77,6 +77,7 @@ public class VNovelizerSetup : EditorWindow
                     "Backgrounds",
                     "Characters",
                     "ExcelVNScripts",
+                    "Fonts",
                     "VNScripts",
                     "Materials",
                     "VFX",
@@ -173,8 +174,13 @@ public class VNovelizerSetup : EditorWindow
             // 【过滤】排除字体文件
             if (file.Extension == ".ttf" || file.Extension == ".otf") continue;
 
-            // 【过滤】排除 .asset 文件 (DataContainer 和 Config)
-            if (file.Extension == ".asset") continue;
+            // 【过滤】排除 .asset 文件（仅排除 DataContainer 和 Config 文件，TMP SDF 字体等正常复制）
+            if (file.Extension == ".asset")
+            {
+                string fileName = Path.GetFileNameWithoutExtension(file.Name);
+                if (fileName.Contains("DataContainer") || fileName == "VNProjectConfig")
+                    continue;
+            }
 
             string tempPath = Path.Combine(destDir, file.Name);
             if (!File.Exists(tempPath))

@@ -59,6 +59,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 90695d03141719b4e8d1b6582ae29dc7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: VNovelizer.Runtime::PausePanel
+  backBtn: {fileID: 0}
   saveBtn: {fileID: 6206053155448048929}
   loadBtn: {fileID: 5214856247120523139}
   settingsBtn: {fileID: 2662121479668172852}
@@ -372,8 +373,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: "\u4FDD\u5B58"
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
-  m_sharedMaterial: {fileID: -5726200937258273782, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: fed1be8ab5aa24741ae2367b57dd4753, type: 2}
+  m_sharedMaterial: {fileID: -4627823312624107808, guid: fed1be8ab5aa24741ae2367b57dd4753, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -408,23 +409,20 @@ MonoBehaviour:
   m_VerticalAlignment: 512
   m_textAlignment: 65535
   m_characterSpacing: 0
-  m_characterHorizontalScale: 1
   m_wordSpacing: 0
   m_lineSpacing: 0
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_TextWrappingMode: 1
+  m_enableWordWrapping: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 0
-  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
-  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -696,8 +694,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: "\u52A0\u8F7D"
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
-  m_sharedMaterial: {fileID: -5726200937258273782, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: fed1be8ab5aa24741ae2367b57dd4753, type: 2}
+  m_sharedMaterial: {fileID: -4627823312624107808, guid: fed1be8ab5aa24741ae2367b57dd4753, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -732,23 +730,20 @@ MonoBehaviour:
   m_VerticalAlignment: 512
   m_textAlignment: 65535
   m_characterSpacing: 0
-  m_characterHorizontalScale: 1
   m_wordSpacing: 0
   m_lineSpacing: 0
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_TextWrappingMode: 1
+  m_enableWordWrapping: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 0
-  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
-  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -833,8 +828,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: "\u8FD4\u56DE\u6807\u9898\u753B\u9762"
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
-  m_sharedMaterial: {fileID: -5726200937258273782, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: fed1be8ab5aa24741ae2367b57dd4753, type: 2}
+  m_sharedMaterial: {fileID: -4627823312624107808, guid: fed1be8ab5aa24741ae2367b57dd4753, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -869,23 +864,20 @@ MonoBehaviour:
   m_VerticalAlignment: 512
   m_textAlignment: 65535
   m_characterSpacing: 0
-  m_characterHorizontalScale: 1
   m_wordSpacing: 0
   m_lineSpacing: 0
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_TextWrappingMode: 1
+  m_enableWordWrapping: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 0
-  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
-  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
@@ -1091,8 +1083,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: "\u8BBE\u7F6E"
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
-  m_sharedMaterial: {fileID: -5726200937258273782, guid: caaa4a597dc7cf64c8285655b7615f1e, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: fed1be8ab5aa24741ae2367b57dd4753, type: 2}
+  m_sharedMaterial: {fileID: -4627823312624107808, guid: fed1be8ab5aa24741ae2367b57dd4753, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -1127,23 +1119,20 @@ MonoBehaviour:
   m_VerticalAlignment: 512
   m_textAlignment: 65535
   m_characterSpacing: 0
-  m_characterHorizontalScale: 1
   m_wordSpacing: 0
   m_lineSpacing: 0
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_TextWrappingMode: 1
+  m_enableWordWrapping: 0
   m_wordWrappingRatios: 0.4
   m_overflowMode: 0
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 0
-  m_ActiveFontFeatures: 6e72656b
   m_enableExtraPadding: 0
   checkPaddingRequired: 0
   m_isRichText: 1
-  m_EmojiFallbackSupport: 1
   m_parseCtrlCharacters: 1
   m_isOrthographic: 1
   m_isCullingEnabled: 0
