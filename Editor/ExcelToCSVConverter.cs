@@ -83,7 +83,7 @@ public class ExcelToCsvConverter : EditorWindow
     /// <param name="filePath">Excel源文件绝对路径</param>
     /// <param name="targetFolder">CSV输出文件夹绝对路径</param>
     /// <returns>是否覆盖了旧文件</returns>
-    private static bool ConvertFile(string filePath, string targetFolder)
+    public static bool ConvertFile(string filePath, string targetFolder)
     {
         using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
         {

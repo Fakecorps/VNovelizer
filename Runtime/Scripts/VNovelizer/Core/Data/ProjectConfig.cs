@@ -55,6 +55,9 @@ public class VNProjectConfig : ScriptableObject
     [Tooltip("CSV生成的目标文件夹 (拖拽文件夹到这里)")]
     public Object CsvOutputFolder;
 
+    [Tooltip("启用后，每次从 Excel 切回 Unity Editor 时自动检测并转换被修改的 Excel 文件")]
+    public bool AutoConvertExcel = true;
+
 
 
     [Header("=== 运行时加载路径 (仅 Assets/Resources 下相对路径) ===")]

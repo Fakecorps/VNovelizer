@@ -16,6 +16,8 @@ This is a Unity UPM package without traditional CLI build/lint/test commands. Al
 
 - **Assembly definitions**: The project has three assemblies. `VNovelizer.Runtime` (runtime core, references PrimeTween.Runtime + LitJson + Unity.InputSystem + TextMeshPro + Localization + Coffee.UIParticle). `VNovelizer.Editor` (editor-only tools, references Runtime + ExcelDataReader + Unity.Localization.Editor). `LitJson` (third-party JSON, no references).
 
+- **Dev test project**: The dedicated Unity project for testing and adjusting the plugin is located at `D:\Unity\Unity项目\Vnovelizer_Dev`. It references VNovelizer as a local file dependency (`"com.fakecorps.vnovelizer": "file:D:/VNovelizer"` in its `Packages/manifest.json`). After modifying prefabs, fonts, or other resources in the Dev project, copy the modified files back to `Runtime/PackageDefault/` in the package to sync changes. When syncing prefabs, only copy the `.prefab` file itself, NOT the `.prefab.meta` (to preserve the package's own GUIDs).
+
 ## Architecture
 
 ### Package Structure

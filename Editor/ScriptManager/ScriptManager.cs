@@ -392,6 +392,8 @@ public class ScriptManagerWindow : EditorWindow
     {
         statusLabel.text = "正在转换...";
         ExcelToCsvConverter.ConvertAllExcelFiles();
+        // 同步时间戳，避免切回 Unity 时重复触发自动转换
+        AutoExcelConverter.RefreshAllFileTimestamps();
         statusLabel.text = "转换完成！";
         RefreshList();
     }
