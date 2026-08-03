@@ -14,7 +14,7 @@ This is a Unity UPM package without traditional CLI build/lint/test commands. Al
 
 - **Localization workflow**: Enable `VNProjectConfig.EnableLocalization`, then use **VNovelizer → Localization → 剧情本地化管理器** to generate `StringTableCollection` per script and sync keys from CSV. The `VN_LOCALIZATION` scripting define is automatically set when Unity Localization is installed (via `versionDefines` in the `.asmdef`).
 
-- **Assembly definitions**: The project has three assemblies. `VNovelizer.Runtime` (runtime core, references PrimeTween.Runtime + LitJson + Unity.InputSystem + TextMeshPro + Localization + Coffee.UIParticle). `VNovelizer.Editor` (editor-only tools, references Runtime + ExcelDataReader + Unity.Localization.Editor). `LitJson` (third-party JSON, no references).
+- **Assembly definitions**: The project has five assemblies. `VNovelizer.Runtime` (runtime core, references PrimeTween.Runtime + LitJson + Unity.InputSystem + TextMeshPro + Localization + Coffee.UIParticle). `VNovelizer.Editor` (editor-only tools, references Runtime + ExcelDataReader + Unity.Localization.Editor + Alchemy.Editor). `LitJson` (third-party JSON, no references). `Alchemy` (bundled Inspector attribute definitions, references Unity built-in modules). `Alchemy.Editor` (bundled Inspector/Hierarchy/EditorWindow drawing, editor-only, references Alchemy).
 
 - **Dev test project**: The dedicated Unity project for testing and adjusting the plugin is located at `D:\Unity\Unity项目\Vnovelizer_Dev`. It references VNovelizer as a local file dependency (`"com.fakecorps.vnovelizer": "file:D:/VNovelizer"` in its `Packages/manifest.json`). After modifying prefabs, fonts, or other resources in the Dev project, copy the modified files back to `Runtime/PackageDefault/` in the package to sync changes. When syncing prefabs, only copy the `.prefab` file itself, NOT the `.prefab.meta` (to preserve the package's own GUIDs).
 
@@ -31,8 +31,9 @@ VNovelizer/
 │   ├── ProjectBase/.../            ← Generic foundation (Singleton, EventCenter, ObjectPool, etc.)
 │   └── Data Persistence/Json/      ← JSON serialization support
 ├── Runtime/PackageDefault/...Res/  ← Default resources copied to user's Assets on setup
-├── Runtime/3rdParty/               ← LitJson + UIParticle (bundled)
+├── Runtime/3rdParty/               ← LitJson + UIParticle + Alchemy (bundled)
 ├── Editor/                         ← Custom editors, importers, setup wizard, script manager
+│   └── 3rdParty/Alchemy/           ← Alchemy.Editor (Inspector/Hierarchy drawing)
 ├── Docs/                           ← VNAPIReference.md + VNLocalizationGuide.md
 └── package.json                    ← Unity 2022.3+, dependencies on TMPro, InputSystem, Localization
 ```
@@ -182,3 +183,4 @@ Localization is optional and toggled via `VNProjectConfig.EnableLocalization`. W
 - **ExcelDataReader** (bundled in `Editor/Plugins/`): Reads `.xlsx`/`.xls` files for the Excel → CSV conversion pipeline (editor only).
 - **LitJson** (bundled in `Runtime/3rdParty/`): JSON serialization used for save data and configuration.
 - **Coffee.UIParticle** (bundled): UI particle effects.
+- **Alchemy** (bundled in `Runtime/3rdParty/Alchemy/` and `Editor/3rdParty/Alchemy/`, MIT licensed, originally by Annulus Games): Inspector and EditorWindow enhancement library providing rich C# attributes for grouping, conditional display, buttons, validation, and Hierarchy decoration. The `Alchemy` assembly (runtime) contains all attribute definitions; the `Alchemy.Editor` assembly (editor-only) handles UI Toolkit rendering. The optional serialization module (HashSet/Dictionary/Tuple support via SourceGenerator) is gated behind the `ALCHEMY_SUPPORT_SERIALIZATION` define, which auto-activates when `com.unity.serialization` is installed.

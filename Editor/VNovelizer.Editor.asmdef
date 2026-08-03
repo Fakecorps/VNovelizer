@@ -6,7 +6,8 @@
         "ExcelDataReader",
         "Unity.Localization.Editor",
         "Unity.Localization",
-        "Unity.ResourceManager"
+        "Unity.ResourceManager",
+        "Alchemy.Editor"
     ],
     "includePlatforms": [
         "Editor"

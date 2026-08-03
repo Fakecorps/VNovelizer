@@ -58,7 +58,7 @@
 >
 > 👉 **[下载 PrimeTween (Asset Store)](https://assetstore.unity.com/packages/tools/animation/primetween-high-performance-animations-252960)**
 
-*(ExcelDataReader, LitJson, UIParticle 等其他依赖已内置)*
+*(ExcelDataReader, LitJson, UIParticle, Alchemy 等其他依赖已内置)*
 
 ### 3. 安装 VNovelizer
 通过 Unity Package Manager 安装：
@@ -280,6 +280,7 @@ Resources/VNovelizerRes/
 *   📦 **Icons**: [Prinbles](https://prinbles.itch.io/)
 *   🏙️ **Backgrounds**: [Noraneko Games](https://itch.io/profile/noranekogames)
 *   🎨 **Frames**: [K-ramstack](https://k-ramstack.itch.io/)
+*   🛠️ **Alchemy**: [Annulus Games](https://github.com/annulusgames) (MIT licensed, bundled)
 
 ---
 
@@ -287,6 +288,8 @@ Resources/VNovelizerRes/
 
 本项目采用 **MIT LICENSE** 开源协议。
 这意味着您可以免费将其用于任何 **开源** 或 **商业闭源** 项目，只需保留版权声明。
+
+本框架内置了以下 MIT 协议的第三方库：**LitJson**、**Coffee.UIParticle**、**Alchemy** (© Annulus Games)。各库的完整许可信息见源码目录内对应文件。
 
 虽然协议不限制，但如果您使用本框架制作了游戏，**请不要直接将本框架源码作为资产包进行二次售卖**。
 如果您觉得好用，欢迎在 GitHub 点亮 ⭐ Star，这对我们非常重要！
