@@ -9,7 +9,8 @@
         "LitJson",
         "Unity.Localization",
         "Unity.ResourceManager",
-        "PrimeTween.Runtime"
+        "PrimeTween.Runtime",
+        "Alchemy"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
