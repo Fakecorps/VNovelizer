@@ -11,6 +11,7 @@ public class DebugManager : MonoBehaviour
     // 定义 Key，防止手写出错
     private const string PREF_KEY_SCRIPT = "Debug_LastScriptName";
     private const string PREF_KEY_LINEID = "Debug_LastLineID";
+    private const string PREF_KEY_AUTO_PLAY = "Debug_Mode";
 
     void Start()
     {
@@ -25,6 +26,26 @@ public class DebugManager : MonoBehaviour
         if (startBtn != null)
             startBtn.onClick.AddListener(OnStartDebug);
         Debug.Log(Application.persistentDataPath);
+
+        // 2. 自动启动模式（由剧本管理器"试玩"按钮触发）
+        if (PlayerPrefs.GetInt(PREF_KEY_AUTO_PLAY, 0) == 1)
+        {
+            // 立即清除标记，避免下次手动打开 VNDebugScene 时也自动启动
+            PlayerPrefs.DeleteKey(PREF_KEY_AUTO_PLAY);
+            PlayerPrefs.Save();
+
+            string scriptName = PlayerPrefs.GetString(PREF_KEY_SCRIPT, "");
+            if (!string.IsNullOrEmpty(scriptName))
+            {
+                Debug.Log($"[DebugManager] 自动启动试玩模式，剧本: {scriptName}");
+                // 直接启动游戏（VNGamePlay 场景加载后会自动销毁 DebugPanel）
+                VNManager.GetInstance().StartGame(scriptName, "");
+            }
+            else
+            {
+                Debug.LogWarning("[DebugManager] 自动启动模式已触发，但未找到剧本名，请手动输入后点击 Start");
+            }
+        }
     }
 
     private void OnStartDebug()

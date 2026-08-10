@@ -402,8 +402,8 @@ public class ScriptManagerWindow : EditorWindow
     {
         string scriptName = Path.GetFileNameWithoutExtension(file.Name);
 
-        PlayerPrefs.SetString("Debug_ScriptName", scriptName);
-        PlayerPrefs.SetString("Debug_LineID", "");
+        PlayerPrefs.SetString("Debug_LastScriptName", scriptName);
+        PlayerPrefs.SetString("Debug_LastLineID", "");
         PlayerPrefs.SetInt("Debug_Mode", 1);
         PlayerPrefs.Save();
 

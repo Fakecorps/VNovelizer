@@ -47,6 +47,17 @@ public class MusicManager : BaseManager<MusicManager>
             return;
         }
 
+        // 【修复】先检查 BGM AudioSource 是否有效（场景切换后可能已被销毁）
+        // 必须在 currentPlayingBGM 重复检查之前执行，否则已销毁的 AudioSource 会导致 BGM 永远无法重新播放
+        if (BGM == null)
+        {
+            // AudioSource 已失效（如场景切换销毁了 BGM_Player GameObject），
+            // 重置 currentPlayingBGM 以便后续重复播放检查能正确判定
+            currentPlayingBGM = null;
+            GameObject obj = new GameObject("BGM_Player");
+            BGM = obj.AddComponent<AudioSource>();
+        }
+
         // 【修复】如果新 BGM 和当前正在播放的 BGM 相同，则跳过播放，避免重复播放导致不连贯
         if (!string.IsNullOrEmpty(name) && name == currentPlayingBGM)
         {
@@ -54,11 +65,6 @@ public class MusicManager : BaseManager<MusicManager>
             return;
         }
 
-        if (BGM == null)
-        {
-            GameObject obj = new GameObject("BGM_Player");
-            BGM = obj.AddComponent<AudioSource>();
-        }
         string loadPath = VNProjectConfig.Instance.BgmResPath;
         ResourcesManager.GetInstance().LoadAsync<AudioClip>(loadPath +"/" + name, (clip) =>
         {

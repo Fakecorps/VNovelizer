@@ -415,6 +415,9 @@ public class VNManager : BaseManager<VNManager>
     {
         currentBG = "";
         currentBGM = "";
+        // 【修复】同步通知 MusicManager 停止播放并清除 currentPlayingBGM，
+        // 避免 VNManager 状态与 MusicManager 状态不一致导致后续 PlayBGM 被重复检查挡住
+        MusicManager.GetInstance().StopBGM();
         currentCharacters.Clear();
         activeEffects.Clear();
         VNAPI.ClearAllEffects(); // 物理清空特效
