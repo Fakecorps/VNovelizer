@@ -467,6 +467,9 @@ public class VNGameplayPanel : BasePanel
             return;
         }
         
+        // 互斥：开启快进前，先关闭自动播放
+        StopAutoPlay();
+        
         VNDebug.LogVerbose("快进模式开启");
         isSkipping = true;
         UpdateSkipButtonState();
@@ -486,7 +489,15 @@ public class VNGameplayPanel : BasePanel
     // Auto事件 - 激活自动播放
     public void OnAuto(InputAction.CallbackContext context)
     {
+        // 互斥：开启自动播放前，先关闭快进
+        if (!VNManager.GetInstance().IsAutoPlaying())
+        {
+            StopSkip();
+        }
         VNManager.GetInstance().ToggleAutoPlay();
+        // 同步 UI 状态（修复：原代码不同步按钮文字）
+        isAutoPlaying = VNManager.GetInstance().IsAutoPlaying();
+        UpdateAutoButtonState();
     }
 
     // Hide事件 - 隐藏/显示UI
@@ -648,6 +659,8 @@ public class VNGameplayPanel : BasePanel
     {
         if (!isSkipping)
         {
+            // 互斥：开启快进前，先关闭自动播放
+            StopAutoPlay();
             isSkipping = true;
             UpdateSkipButtonState();
             Time.timeScale = 10f;
@@ -666,6 +679,11 @@ public class VNGameplayPanel : BasePanel
 
     private void OnAutoFallback()
     {
+        // 互斥：开启自动播放前，先关闭快进
+        if (!isAutoPlaying)
+        {
+            StopSkip();
+        }
         isAutoPlaying = !isAutoPlaying;
         UpdateAutoButtonState();
     }
@@ -1098,9 +1116,16 @@ public class VNGameplayPanel : BasePanel
     // 按钮点击事件
     private void OnAutoButtonClick()
     {
-        if (GameStateManager.GetInstance().CanInteractGameplay())
-            VNManager.GetInstance().ToggleAutoPlay();
+        if (!GameStateManager.GetInstance().CanInteractGameplay())
+            return;
 
+        // 互斥：开启自动播放前，先关闭快进
+        if (!isAutoPlaying)
+        {
+            StopSkip();
+        }
+
+        VNManager.GetInstance().ToggleAutoPlay();
         isAutoPlaying = !isAutoPlaying;
         UpdateAutoButtonState();
     }
@@ -1121,12 +1146,18 @@ public class VNGameplayPanel : BasePanel
             return;
         }
         
+        // 互斥：开启快进前，先关闭自动播放
+        if (!isSkipping)
+        {
+            StopAutoPlay();
+        }
+        
         // 切换快进状态
         isSkipping = !isSkipping;
         UpdateSkipButtonState();
         
         // 如果激活快进且当前没有打字效果，立即触发一次快进（和按住Ctrl一样的效果）
-        if (isSkipping && !isTextTyping && !isAutoPlaying && !isUIHidden)
+        if (isSkipping && !isTextTyping && !isUIHidden)
         {
             VNManager.GetInstance().NextLine();
         }
@@ -1210,6 +1241,38 @@ public class VNGameplayPanel : BasePanel
         {
             buttonText.text = isSkipping ? "Skip (On)" : "Skip (Off)";
         }
+    }
+
+    /// <summary>
+    /// 停止快进模式（恢复 TimeScale + 更新按钮状态）
+    /// 用于互斥切换：开启 AutoPlay 时先调用此方法关闭 Skip
+    /// </summary>
+    private void StopSkip()
+    {
+        if (!isSkipping) return;
+        isSkipping = false;
+        UpdateSkipButtonState();
+        Time.timeScale = 1f;
+        // 同步 VNManager 内部状态
+        if (VNManager.GetInstance().IsSkipping())
+        {
+            VNManager.GetInstance().ToggleSkip();
+        }
+    }
+
+    /// <summary>
+    /// 停止自动播放（同步 VNManager + 更新按钮状态）
+    /// 用于互斥切换：开启 Skip 时先调用此方法关闭 AutoPlay
+    /// </summary>
+    private void StopAutoPlay()
+    {
+        if (!isAutoPlaying && !VNManager.GetInstance().IsAutoPlaying()) return;
+        if (VNManager.GetInstance().IsAutoPlaying())
+        {
+            VNManager.GetInstance().ToggleAutoPlay();
+        }
+        isAutoPlaying = false;
+        UpdateAutoButtonState();
     }
 
     // 切换UI显示
