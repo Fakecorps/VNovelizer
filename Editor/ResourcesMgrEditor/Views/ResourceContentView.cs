@@ -286,9 +286,9 @@ public class ResourceContentView
         header.style.flexDirection = FlexDirection.Row;
         header.style.alignItems = Align.Center;
         header.style.height = 28;
-        header.style.backgroundColor = new Color(0.24f, 0.24f, 0.24f);
+        header.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgCard);
         header.style.borderBottomWidth = 1;
-        header.style.borderBottomColor = ResourceStyles.CardBorder;
+        header.style.borderBottomColor = GalleryTheme.Hex(GalleryTheme.Border);
         header.style.paddingLeft = 12;
         header.style.paddingRight = 12;
         header.style.width = Length.Percent(100);
@@ -316,7 +316,7 @@ public class ResourceContentView
     private void CreateListRow(ResourceItem item, bool isEven)
     {
         bool isSelected = _selected.Contains(item.AssetPath);
-        Color baseColor = isEven ? new Color(0.21f, 0.21f, 0.21f) : new Color(0.24f, 0.24f, 0.24f);
+        Color baseColor = isEven ? GalleryTheme.Hex(GalleryTheme.BgPrimary) : GalleryTheme.Hex(GalleryTheme.BgCard);
 
         var row = new VisualElement();
         row.style.flexDirection = FlexDirection.Row;

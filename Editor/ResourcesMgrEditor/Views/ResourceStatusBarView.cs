@@ -20,24 +20,24 @@ public class ResourceStatusBarView
         var bar = new VisualElement();
         bar.style.flexDirection = FlexDirection.Row;
         bar.style.alignItems = Align.Center;
-        bar.style.backgroundColor = ResourceStyles.StatusBar;
+        bar.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgPrimary);
         bar.style.paddingTop = 4;
         bar.style.paddingBottom = 4;
         bar.style.paddingLeft = 12;
         bar.style.paddingRight = 12;
         bar.style.borderTopWidth = 1;
-        bar.style.borderTopColor = ResourceStyles.CardBorder;
+        bar.style.borderTopColor = GalleryTheme.Hex(GalleryTheme.Border);
         bar.style.minHeight = ResourceStyles.StatusBarHeight;
 
         _statusLabel = new Label();
-        _statusLabel.style.color = ResourceStyles.TextSecondary;
+        _statusLabel.style.color = GalleryTheme.Hex(GalleryTheme.TextSecondary);
         _statusLabel.style.fontSize = 11;
         _statusLabel.style.flexGrow = 1;
         bar.Add(_statusLabel);
 
         _pathLabel = new Label();
         _pathLabel.name = "pathHint";
-        _pathLabel.style.color = ResourceStyles.TextSecondary;
+        _pathLabel.style.color = GalleryTheme.Hex(GalleryTheme.TextMuted);
         _pathLabel.style.fontSize = 10;
         bar.Add(_pathLabel);
 

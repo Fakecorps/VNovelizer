@@ -3,27 +3,27 @@ using UnityEngine.UIElements;
 
 /// <summary>
 /// 资源管理器全局样式常量（颜色、间距、尺寸等）。
-/// 集中管理便于统一调整视觉风格。
+/// 颜色体系已统一使用 GalleryTheme 以保证各编辑器 UI 风格一致。
 /// </summary>
 public static class ResourceStyles
 {
-    // ===================== 颜色 =====================
-    public static readonly Color Bg = new(0.18f, 0.18f, 0.18f);
-    public static readonly Color Sidebar = new(0.16f, 0.16f, 0.16f);
-    public static readonly Color Toolbar = new(0.22f, 0.22f, 0.22f);
-    public static readonly Color Card = new(0.27f, 0.27f, 0.27f);
-    public static readonly Color CardHover = new(0.34f, 0.34f, 0.34f);
-    public static readonly Color CardSelected = new(0.20f, 0.40f, 0.65f);
-    public static readonly Color CardBorder = new(0.10f, 0.10f, 0.10f);
-    public static readonly Color TextPrimary = new(0.86f, 0.86f, 0.86f);
-    public static readonly Color TextSecondary = new(0.62f, 0.62f, 0.62f);
-    public static readonly Color Accent = new(0.20f, 0.55f, 0.85f);
-    public static readonly Color AccentSuccess = new(0.25f, 0.60f, 0.30f);
-    public static readonly Color StatusBar = new(0.14f, 0.14f, 0.14f);
-    public static readonly Color ActiveItem = new(0.24f, 0.42f, 0.62f);
-    public static readonly Color DangerNormal = new(0.55f, 0.20f, 0.20f);
-    public static readonly Color DangerHover = new(0.75f, 0.25f, 0.25f);
-    public static readonly Color TransparentBlack = new(0, 0, 0, 0);
+    // ===================== 颜色（统一使用 GalleryTheme） =====================
+    public static Color Bg => GalleryTheme.Hex(GalleryTheme.BgPrimary);
+    public static Color Sidebar => GalleryTheme.Hex(GalleryTheme.BgSecondary);
+    public static Color Toolbar => GalleryTheme.Hex(GalleryTheme.BgSecondary);
+    public static Color Card => GalleryTheme.Hex(GalleryTheme.BgCard);
+    public static Color CardHover => GalleryTheme.Hex(GalleryTheme.BgHover);
+    public static Color CardSelected => GalleryTheme.Hex(GalleryTheme.AccentDim);
+    public static Color CardBorder => GalleryTheme.Hex(GalleryTheme.Border);
+    public static Color TextPrimary => GalleryTheme.Hex(GalleryTheme.TextPrimary);
+    public static Color TextSecondary => GalleryTheme.Hex(GalleryTheme.TextSecondary);
+    public static Color Accent => GalleryTheme.Hex(GalleryTheme.Accent);
+    public static Color AccentSuccess => GalleryTheme.Hex(GalleryTheme.Success);
+    public static Color StatusBar => GalleryTheme.Hex(GalleryTheme.BgPrimary);
+    public static Color ActiveItem => GalleryTheme.Hex(GalleryTheme.AccentDim);
+    public static Color DangerNormal => GalleryTheme.Hex(GalleryTheme.Danger);
+    public static Color DangerHover => new Color(0.85f, 0.30f, 0.30f);
+    public static Color TransparentBlack => GalleryTheme.Transparent_Color;
 
     // ===================== 尺寸 =====================
     public const float DefaultCardSize = 120f;

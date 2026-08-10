@@ -13,7 +13,6 @@ public class ResourceToolbarView
     public TextField SearchField { get; private set; }
     public Button GridBtn { get; private set; }
     public Button ListBtn { get; private set; }
-    public Button RefreshBtn { get; private set; }
 
     public event Action OnImportFile;
     public event Action OnImportFolder;
@@ -22,7 +21,6 @@ public class ResourceToolbarView
     public event Action OnViewList;
     public event Action OnSortClicked;
     public event Action OnSettingsClicked;
-    public event Action OnRefreshClicked;
 
     public ResourceToolbarView()
     {
@@ -34,27 +32,21 @@ public class ResourceToolbarView
     {
         Root.style.flexDirection = FlexDirection.Row;
         Root.style.alignItems = Align.Center;
-        Root.style.backgroundColor = ResourceStyles.Toolbar;
-        Root.style.paddingTop = 6;
-        Root.style.paddingBottom = 6;
+        Root.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgSecondary);
+        Root.style.paddingTop = 5;
+        Root.style.paddingBottom = 5;
         Root.style.paddingLeft = 10;
         Root.style.paddingRight = 10;
         Root.style.borderBottomWidth = 1;
-        Root.style.borderBottomColor = ResourceStyles.CardBorder;
-        Root.style.height = ResourceStyles.ToolbarHeight + 4;
-
-        // 标题
-        var title = new Label("资源管理器");
-        title.style.fontSize = 14;
-        title.style.unityFontStyleAndWeight = FontStyle.Bold;
-        title.style.color = ResourceStyles.TextPrimary;
-        title.style.marginRight = 16;
-        Root.Add(title);
+        Root.style.borderBottomColor = GalleryTheme.Hex(GalleryTheme.Border);
+        Root.style.height = 34;
 
         // 导入文件
         var importFileBtn = UIElementBuilder.MakeIconButton(
             UIElementBuilder.GetIcon("Import", "d_Import"), "导入文件...");
-        ResourceStyles.StylePrimary(importFileBtn, ResourceStyles.AccentSuccess);
+        GalleryStyles.ApplyButton(importFileBtn, GalleryTheme.Success, true);
+        importFileBtn.style.fontSize = 11;
+        importFileBtn.style.height = 24;
         importFileBtn.tooltip = "导入单个文件";
         importFileBtn.clicked += () => OnImportFile?.Invoke();
         Root.Add(importFileBtn);
@@ -62,7 +54,9 @@ public class ResourceToolbarView
         // 导入文件夹
         var importFolderBtn = UIElementBuilder.MakeIconButton(
             UIElementBuilder.GetIcon("FolderOpened Icon", "FolderOpened", "d_FolderOpened"), "导入文件夹...");
-        ResourceStyles.StyleNormal(importFolderBtn);
+        GalleryStyles.ApplyButton(importFolderBtn, GalleryTheme.BgCard, false);
+        importFolderBtn.style.fontSize = 11;
+        importFolderBtn.style.height = 24;
         importFolderBtn.tooltip = "递归导入整个文件夹";
         importFolderBtn.clicked += () => OnImportFolder?.Invoke();
         importFolderBtn.style.marginLeft = 6;
@@ -143,7 +137,9 @@ public class ResourceToolbarView
 
         // 排序
         var sortBtn = new Button(() => OnSortClicked?.Invoke()) { text = "排序" };
-        ResourceStyles.StyleNormal(sortBtn);
+        GalleryStyles.ApplyButton(sortBtn, GalleryTheme.BgCard, false);
+        sortBtn.style.fontSize = 11;
+        sortBtn.style.height = 24;
         sortBtn.tooltip = "排序方式";
         sortBtn.style.marginLeft = 6;
         Root.Add(sortBtn);
@@ -159,21 +155,6 @@ public class ResourceToolbarView
         settingsBtn.tooltip = "设置";
         settingsBtn.style.marginLeft = 6;
         Root.Add(settingsBtn);
-
-        // 刷新
-        RefreshBtn = new Button(() => OnRefreshClicked?.Invoke());
-        var refreshIcon = new Image();
-        refreshIcon.image = UIElementBuilder.GetIcon("Refresh", "d_Refresh");
-        refreshIcon.style.width = 14;
-        refreshIcon.style.height = 14;
-        RefreshBtn.Add(refreshIcon);
-        var refreshLabel = new Label("刷新");
-        refreshLabel.style.marginLeft = 4;
-        RefreshBtn.Add(refreshLabel);
-        ResourceStyles.StyleNormal(RefreshBtn);
-        RefreshBtn.tooltip = "刷新当前分类";
-        RefreshBtn.style.marginLeft = 6;
-        Root.Add(RefreshBtn);
     }
 
     public void SetSearchValue(string value) => SearchField.value = value;

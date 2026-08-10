@@ -49,7 +49,6 @@ public class ResourceManagerPresenter
         _toolbar.OnViewList += () => SetViewMode(ViewMode.List);
         _toolbar.OnSortClicked += ShowSortMenu;
         _toolbar.OnSettingsClicked += ShowSettingsMenu;
-        _toolbar.OnRefreshClicked += () => RefreshContent();
 
         _sidebar.OnCategorySelected += SetCategory;
 

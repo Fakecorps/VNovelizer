@@ -46,7 +46,7 @@ public class ResourcesEditorManager : AlchemyEditorWindow
 
         var root = rootVisualElement;
         root.Clear();
-        root.style.backgroundColor = ResourceStyles.Bg;
+        root.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgPrimary);
         root.style.flexDirection = FlexDirection.Column;
 
         // 2. 创建所有视图
@@ -55,6 +55,9 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         var content = new ResourceContentView();
         var statusBar = new ResourceStatusBarView();
         var audioPlayer = new AudioPlayerView();
+
+        // 2.5 标题栏（统一 Gallery Editor 风格）
+        BuildTitleBar(root, toolbar);
 
         // 3. 组装布局
         var splitView = new TwoPaneSplitView(0, ResourceStyles.SidebarMinWidth, TwoPaneSplitViewOrientation.Horizontal);
@@ -96,6 +99,66 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         rootVisualElement.RegisterCallback<KeyUpEvent>(OnKeyUp);
         rootVisualElement.focusable = true;
         rootVisualElement.Focus();
+    }
+
+    private void BuildTitleBar(VisualElement root, ResourceToolbarView toolbar)
+    {
+        var titleBar = new VisualElement();
+        titleBar.style.flexDirection = FlexDirection.Row;
+        titleBar.style.height = 48;
+        titleBar.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgSecondary);
+        titleBar.style.alignItems = Align.Center;
+        titleBar.style.paddingLeft = 16;
+        titleBar.style.paddingRight = 12;
+        titleBar.style.borderBottomWidth = 1;
+        titleBar.style.borderBottomColor = GalleryTheme.Hex(GalleryTheme.Border);
+        root.Add(titleBar);
+
+        var icon = new Label("\u25A0")
+        {
+            style =
+            {
+                fontSize = 16,
+                color = GalleryTheme.Hex(GalleryTheme.Accent),
+                marginRight = 8
+            }
+        };
+        titleBar.Add(icon);
+
+        var title = new Label("资源管理器")
+        {
+            style =
+            {
+                fontSize = 16,
+                unityFontStyleAndWeight = FontStyle.Bold,
+                color = GalleryTheme.Hex(GalleryTheme.TextPrimary),
+                marginRight = 24
+            }
+        };
+        titleBar.Add(title);
+
+        var subtitle = new Label("Resource Manager")
+        {
+            style =
+            {
+                fontSize = 11,
+                color = GalleryTheme.Hex(GalleryTheme.TextMuted)
+            }
+        };
+        titleBar.Add(subtitle);
+
+        titleBar.Add(new VisualElement { style = { flexGrow = 1 } });
+
+        // 刷新按钮
+        var refreshBtn = new Button(() =>
+        {
+            _presenter?.RefreshContent();
+        })
+        { text = "\u21BB 刷新" };
+        GalleryStyles.ApplyButton(refreshBtn, GalleryTheme.BgCard, false);
+        refreshBtn.style.height = 30;
+        refreshBtn.style.marginRight = 8;
+        titleBar.Add(refreshBtn);
     }
 
     private void OnKeyDown(KeyDownEvent evt)

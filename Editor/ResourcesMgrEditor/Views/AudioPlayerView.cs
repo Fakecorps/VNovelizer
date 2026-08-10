@@ -32,10 +32,10 @@ public class AudioPlayerView
 
     private const float Height = 60f;
 
-    private static readonly Color BgColor = new(0.16f, 0.16f, 0.16f);
-    private static readonly Color TrackColor = new(0.10f, 0.10f, 0.10f);
-    private static readonly Color FillColor = new(0.20f, 0.55f, 0.85f);
-    private static readonly Color FillColorHover = new(0.30f, 0.65f, 0.95f);
+    private static Color BgColor => GalleryTheme.Hex(GalleryTheme.BgSecondary);
+    private static Color TrackColor => GalleryTheme.Hex(GalleryTheme.BgPrimary);
+    private static Color FillColor => GalleryTheme.Hex(GalleryTheme.Accent);
+    private static Color FillColorHover => new Color(0.37f, 0.68f, 1.0f);
 
     public AudioPlayerView()
     {
@@ -61,7 +61,7 @@ public class AudioPlayerView
         root.style.height = Height;
         root.style.backgroundColor = BgColor;
         root.style.borderTopWidth = 1;
-        root.style.borderTopColor = ResourceStyles.CardBorder;
+        root.style.borderTopColor = GalleryTheme.Hex(GalleryTheme.Border);
         root.style.paddingLeft = 12;
         root.style.paddingRight = 12;
         root.style.paddingTop = 6;
@@ -77,7 +77,7 @@ public class AudioPlayerView
 
         _titleLabel = new Label("未选择音频");
         _titleLabel.style.flexGrow = 1;
-        _titleLabel.style.color = ResourceStyles.TextPrimary;
+        _titleLabel.style.color = GalleryTheme.Hex(GalleryTheme.TextPrimary);
         _titleLabel.style.fontSize = 11;
         _titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
         _titleLabel.style.overflow = Overflow.Hidden;
@@ -85,7 +85,7 @@ public class AudioPlayerView
         topRow.Add(_titleLabel);
 
         _timeLabel = new Label("00:00 / 00:00");
-        _timeLabel.style.color = ResourceStyles.TextSecondary;
+        _timeLabel.style.color = GalleryTheme.Hex(GalleryTheme.TextSecondary);
         _timeLabel.style.fontSize = 10;
         topRow.Add(_timeLabel);
 
@@ -101,7 +101,7 @@ public class AudioPlayerView
         _playBtn = new Button(OnPlayClicked) { text = "" };
         _playBtn.style.width = 30;
         _playBtn.style.height = 26;
-        _playBtn.style.backgroundColor = ResourceStyles.Accent;
+        _playBtn.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.Accent);
         _playBtn.style.marginRight = 4;
         _playIcon = new Image();
         _playIcon.image = UIElementBuilder.GetIcon("PlayButton", "Play", "d_PlayButton");
@@ -122,7 +122,7 @@ public class AudioPlayerView
         _loopIcon.image = UIElementBuilder.GetIcon("RotateTool", "Refresh", "d_RotateTool", "d_Refresh");
         _loopIcon.style.width = 14;
         _loopIcon.style.height = 14;
-        _loopIcon.tintColor = ResourceStyles.TextSecondary;
+        _loopIcon.tintColor = GalleryTheme.Hex(GalleryTheme.TextSecondary);
         _loopBtn.Add(_loopIcon);
         _loopBtn.tooltip = "循环播放";
         UpdateLoopButton();
@@ -215,15 +215,15 @@ public class AudioPlayerView
     {
         if (AudioPreviewService.Loop)
         {
-            // 激活时使用更明显的蓝色（与 ResourceStyles.Accent 一致）
-            _loopBtn.style.backgroundColor = ResourceStyles.Accent;
+            // 激活时使用 Accent 蓝
+            _loopBtn.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.Accent);
             _loopIcon.tintColor = Color.white;
             _loopBtn.tooltip = "循环播放: 开启 (点击关闭)";
         }
         else
         {
-            _loopBtn.style.backgroundColor = new Color(0.25f, 0.25f, 0.25f);
-            _loopIcon.tintColor = ResourceStyles.TextSecondary;
+            _loopBtn.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgCard);
+            _loopIcon.tintColor = GalleryTheme.Hex(GalleryTheme.TextSecondary);
             _loopBtn.tooltip = "循环播放: 关闭 (点击开启)";
         }
     }

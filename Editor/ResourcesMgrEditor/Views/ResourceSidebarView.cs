@@ -33,16 +33,16 @@ public class ResourceSidebarView
 
     private void Build()
     {
-        Root.style.backgroundColor = ResourceStyles.Sidebar;
+        Root.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgSecondary);
         Root.style.paddingTop = 10;
         Root.style.borderRightWidth = 1;
-        Root.style.borderRightColor = ResourceStyles.CardBorder;
+        Root.style.borderRightColor = GalleryTheme.Hex(GalleryTheme.Border);
 
         // 标题
         var title = new Label("资源分类");
         title.style.fontSize = 13;
         title.style.unityFontStyleAndWeight = FontStyle.Bold;
-        title.style.color = ResourceStyles.TextPrimary;
+        title.style.color = GalleryTheme.Hex(GalleryTheme.TextPrimary);
         title.style.marginLeft = 12;
         title.style.marginBottom = 8;
         Root.Add(title);
@@ -62,8 +62,8 @@ public class ResourceSidebarView
         Root.Add(CategoryList);
 
         // 提示
-        var tip = new Label("提示\n• 双击卡片打开资源\n• Delete 键删除选中\n• Ctrl/Shift 多选\n• 拖入文件直接导入");
-        tip.style.color = ResourceStyles.TextSecondary;
+        var tip = new Label("提示\n\u2022 双击卡片打开资源\n\u2022 Delete 键删除选中\n\u2022 Ctrl/Shift 多选\n\u2022 拖入文件直接导入");
+        tip.style.color = GalleryTheme.Hex(GalleryTheme.TextMuted);
         tip.style.fontSize = 10;
         tip.style.whiteSpace = WhiteSpace.Normal;
         tip.style.marginLeft = 12;
@@ -73,7 +73,7 @@ public class ResourceSidebarView
         tip.style.paddingBottom = 8;
         tip.style.paddingLeft = 8;
         tip.style.paddingRight = 8;
-        tip.style.backgroundColor = new Color(0.10f, 0.10f, 0.10f);
+        tip.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgPrimary);
         ResourceStyles.SetRadius(tip, ResourceStyles.ButtonRadius);
         Root.Add(tip);
     }
@@ -95,12 +95,12 @@ public class ResourceSidebarView
 
         var name = new Label { name = "name" };
         name.style.flexGrow = 1;
-        name.style.color = ResourceStyles.TextPrimary;
+        name.style.color = GalleryTheme.Hex(GalleryTheme.TextPrimary);
         name.style.fontSize = 12;
         item.Add(name);
 
         var count = new Label { name = "count" };
-        count.style.color = ResourceStyles.TextSecondary;
+        count.style.color = GalleryTheme.Hex(GalleryTheme.TextMuted);
         count.style.fontSize = 11;
         count.style.paddingLeft = 4;
         count.style.paddingRight = 4;
