@@ -32,7 +32,16 @@ namespace VNovelizer.Core.Commands
         {
             if (string.IsNullOrEmpty(args)) yield break;
 
-            isRunning = true; 
+            // 重入保护：若上一次淡入淡出仍在进行（如命令链并行写了两个 bgfade，
+            // 或快速连续调用），先强制完成旧的，避免实例字段（_front/_back/_fadeTween）
+            // 被第二次调用覆盖导致两个协程状态错乱
+            if (isRunning)
+            {
+                Debug.LogWarning("[BgFade] 检测到上一次背景切换尚未完成，已强制瞬间完成（建议避免并行执行多个 bgfade）");
+                Interrupt();
+            }
+
+            isRunning = true;
 
             //解析参数
             string[] parts = args.Split(',');

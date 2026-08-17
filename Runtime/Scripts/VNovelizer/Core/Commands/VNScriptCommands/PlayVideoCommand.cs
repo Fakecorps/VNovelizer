@@ -67,5 +67,15 @@ namespace VNovelizer.Core.Commands
 
             }
         }
+
+        /// <summary>
+        /// 中断视频播放（玩家点击跳过）：
+        /// 停止 VideoModel 并销毁，不触发"结束后的命令"（外部中断不视为自然播完）
+        /// </summary>
+        public override void Interrupt()
+        {
+            VNAPI.StopVideo();
+            isFinished = true; // 让可能仍在等待的 ExecuteAsync 循环（如同步入口路径）退出
+        }
     }
 }

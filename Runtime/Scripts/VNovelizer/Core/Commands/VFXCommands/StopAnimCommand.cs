@@ -22,7 +22,11 @@ namespace VNovelizer.Core.Commands
                 Transform target = parent.Find("VNAnim_" + animName);
                 if (target != null)
                 {
-                    string resPath = VNProjectConfig.Instance.ParticalEffectPath + "/Animation/" + animName;
+                    // 【修复】回收路径必须与 PlayAnimCommand 的加载路径一致
+                    // （AnimationPath，如 "VNovelizerRes/VFX/Animation"），
+                    // 旧代码误用 ParticalEffectPath + "/Animation"，会把对象推进错误的池：
+                    // 下次 playanim 按正确路径取不到（重复实例化），错误池对象永久闲置。
+                    string resPath = VNProjectConfig.Instance.AnimationPath + "/" + animName;
                     PoolManager.GetInstance().PushObj(resPath, target.gameObject);
                 }
             }

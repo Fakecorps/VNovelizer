@@ -33,6 +33,21 @@ public class VideoModel : MonoBehaviour
         };
     }
 
+    /// <summary>
+    /// 外部停止视频（如玩家点击跳过）：不触发 onComplete 回调，直接停止并销毁
+    /// </summary>
+    public void Stop()
+    {
+        onComplete = null; // 外部中断不算"自然播完"，不触发后续命令
+        try
+        {
+            if (videoPlayer != null && videoPlayer.isPlaying)
+                videoPlayer.Stop();
+        }
+        catch (MissingReferenceException) { /* 对象已销毁 */ }
+        Destroy(gameObject);
+    }
+
     public void Play(string videoName, Action callback)
     {
         this.onComplete = callback;

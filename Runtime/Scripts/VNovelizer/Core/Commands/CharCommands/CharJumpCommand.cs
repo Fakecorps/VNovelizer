@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace VNovelizer.Core.Commands
@@ -11,10 +12,20 @@ namespace VNovelizer.Core.Commands
         private int defaultTimes = 1;
         private float defaultHeight = 30f;
 
-        // --- 用于中断的数据 ---
-        private RectTransform currentTarget;
-        private Vector2 startPos;
-        private Coroutine runningCoroutine; // 记录当前运行的协程
+        // --- 多实例并行支持（token 列表模式） ---
+        // 旧实现用单组实例字段（currentTarget/startPos/runningCoroutine），
+        // 命令链 [charjump(L) & charjump(M)] 时第二个调用覆盖字段：
+        // 第一个动画的归位基准被篡改（L 会被拉到 M 的起始位置），
+        // 且 Interrupt 只能中断最后一个。改为列表登记全部活动跳跃。
+        private struct ActiveJump
+        {
+            public int Token;
+            public RectTransform Rect;
+            public Vector2 StartPos;
+        }
+
+        private readonly List<ActiveJump> _activeJumps = new List<ActiveJump>();
+        private int _nextJumpToken;
 
         public override bool Execute(string args)
         {
@@ -39,47 +50,44 @@ namespace VNovelizer.Core.Commands
             var panel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
             if (panel == null) yield break;
 
-            currentTarget = panel.GetCharRect(posCode);
+            // 局部变量捕获（并行实例互不干扰）
+            RectTransform targetRect = panel.GetCharRect(posCode);
+            if (targetRect == null || targetRect.gameObject == null) yield break;
 
-            if (currentTarget != null && currentTarget.gameObject != null)
+            // 确保对象激活（即使角色当前不可见，跳跃时也应能操作）
+            if (!targetRect.gameObject.activeInHierarchy)
+                targetRect.gameObject.SetActive(true);
+
+            Vector2 startPos = targetRect.anchoredPosition;
+
+            // 登记（token 管理）
+            int token = ++_nextJumpToken;
+            _activeJumps.Add(new ActiveJump { Token = token, Rect = targetRect, StartPos = startPos });
+
+            try
             {
-                // 确保对象激活（即使角色当前不可见，跳跃时也应能操作）
-                if (!currentTarget.gameObject.activeInHierarchy)
-                    currentTarget.gameObject.SetActive(true);
-                // 保存协程引用，以便中断
-                runningCoroutine = MonoManager.GetInstance().StartCoroutine(JumpCoroutine(currentTarget, duration, times, height));
-                // 等待协程结束
-                yield return runningCoroutine;
+                yield return JumpCoroutine(targetRect, startPos, duration, times, height);
             }
-            else
+            finally
             {
-                // 如果对象无效，清理引用
-                currentTarget = null;
+                UnregisterJump(token);
             }
         }
 
-        private IEnumerator JumpCoroutine(RectTransform rect, float durationPerJump, int times, float height)
+        private void UnregisterJump(int token)
         {
-            // 【Bug修复】检查对象是否有效（使用更可靠的检查方式）
+            for (int i = _activeJumps.Count - 1; i >= 0; i--)
+            {
+                if (_activeJumps[i].Token == token)
+                    _activeJumps.RemoveAt(i);
+            }
+        }
+
+        private IEnumerator JumpCoroutine(RectTransform rect, Vector2 startPos, float durationPerJump, int times, float height)
+        {
             if (rect == null || rect.gameObject == null)
             {
                 Debug.LogWarning("[CharJumpCommand] RectTransform 为 null，无法执行跳跃动画");
-                runningCoroutine = null;
-                currentTarget = null;
-                yield break;
-            }
-            
-            // 记录原始位置，用于 Interrupt 恢复
-            // 【Bug修复】使用 try-catch 保护，因为对象可能在检查后被销毁
-            try
-            {
-                startPos = rect.anchoredPosition;
-            }
-            catch (MissingReferenceException)
-            {
-                Debug.LogWarning("[CharJumpCommand] RectTransform 在记录位置时已被销毁");
-                runningCoroutine = null;
-                currentTarget = null;
                 yield break;
             }
 
@@ -88,20 +96,16 @@ namespace VNovelizer.Core.Commands
                 float elapsed = 0f;
                 while (elapsed < durationPerJump)
                 {
-                    // 【Bug修复】每次循环都检查对象是否有效（使用更可靠的检查方式）
                     if (rect == null || rect.gameObject == null)
                     {
                         Debug.LogWarning("[CharJumpCommand] RectTransform 在动画过程中被销毁，中断跳跃动画");
-                        runningCoroutine = null;
-                        currentTarget = null;
                         yield break;
                     }
-                    
+
                     elapsed += Time.deltaTime;
                     float t = elapsed / durationPerJump;
                     float yOffset = Mathf.Sin(t * Mathf.PI) * height;
-                    
-                    // 【Bug修复】使用 try-catch 捕获可能的异常
+
                     try
                     {
                         rect.anchoredPosition = new Vector2(startPos.x, startPos.y + yOffset);
@@ -109,23 +113,18 @@ namespace VNovelizer.Core.Commands
                     catch (MissingReferenceException)
                     {
                         Debug.LogWarning("[CharJumpCommand] RectTransform 已被销毁，中断跳跃动画");
-                        runningCoroutine = null;
-                        currentTarget = null;
                         yield break;
                     }
-                    
+
                     yield return null;
                 }
-                
-                // 【Bug修复】在重置位置前也检查对象是否有效（使用更可靠的检查方式）
+
                 if (rect == null || rect.gameObject == null)
                 {
                     Debug.LogWarning("[CharJumpCommand] RectTransform 在动画过程中被销毁，中断跳跃动画");
-                    runningCoroutine = null;
-                    currentTarget = null;
                     yield break;
                 }
-                
+
                 try
                 {
                     rect.anchoredPosition = startPos;
@@ -133,42 +132,36 @@ namespace VNovelizer.Core.Commands
                 catch (MissingReferenceException)
                 {
                     Debug.LogWarning("[CharJumpCommand] RectTransform 已被销毁，中断跳跃动画");
-                    runningCoroutine = null;
-                    currentTarget = null;
                     yield break;
                 }
             }
-
-            // 执行完毕，清理引用
-            runningCoroutine = null;
-            currentTarget = null;
         }
 
-        // === 核心：实现中断逻辑 ===
+        /// <summary>
+        /// 中断全部跳跃：把空中的角色按回起始位置（中断全部并行实例）
+        /// </summary>
         public override void Interrupt()
         {
-            // 1. 停止动画协程
-            if (runningCoroutine != null)
+            if (_activeJumps.Count == 0) return;
+
+            var snapshot = new List<ActiveJump>(_activeJumps);
+            foreach (var aj in snapshot)
             {
-                MonoManager.GetInstance().StopCoroutine(runningCoroutine);
-                runningCoroutine = null;
+                if (aj.Rect != null && aj.Rect.gameObject != null)
+                {
+                    try
+                    {
+                        aj.Rect.anchoredPosition = aj.StartPos;
+                    }
+                    catch (MissingReferenceException)
+                    {
+                        Debug.LogWarning("[CharJumpCommand] 尝试中断时发现 RectTransform 已被销毁");
+                    }
+                }
             }
 
-            // 2. 强制复位角色位置 (把还在空中的角色按下来)
-            // 【Bug修复】检查对象是否有效（使用更可靠的检查方式）
-            if (currentTarget != null && currentTarget.gameObject != null)
-            {
-                try
-                {
-                    currentTarget.anchoredPosition = startPos;
-                }
-                catch (MissingReferenceException)
-                {
-                    // 对象已被销毁，忽略
-                    Debug.LogWarning("[CharJumpCommand] 尝试中断时发现 RectTransform 已被销毁");
-                }
-            }
-            currentTarget = null;
+            Debug.Log($"[CharJumpCommand] {snapshot.Count} 个跳跃动画被玩家中断，已全部归位。");
+            _activeJumps.Clear();
         }
     }
 }

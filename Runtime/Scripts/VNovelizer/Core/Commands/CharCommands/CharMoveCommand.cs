@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.API;
 using VNovelizer.Core.Compat;
@@ -10,6 +11,10 @@ namespace VNovelizer.Core.Commands
     /// 格式：charmove(位置, 目标位置X, 目标位置Y, 移动时间)
     /// 示例：charmove(M, 100, 200, 1.0) -> 将中间位置的角色在1秒内移动到 (100, 200)
     /// 注意：此命令不继承，执行下一行时会自动恢复到默认位置
+    ///
+    /// 并发安全：支持同一命令多实例并行（命令链 [charmove(L,...) & charmove(M,...)] 场景）。
+    /// 采用 token 列表管理活动动画，闭包捕获局部变量而非实例字段，
+    /// 避免并行实例互相覆盖目标引用（旧实现的确定性 Bug）。
     /// </summary>
     public class CharMoveCommand : VNCommand
     {
@@ -17,9 +22,16 @@ namespace VNovelizer.Core.Commands
 
         private float defaultDuration = 0.5f;
 
-        // --- 运行时状态 ---
-        private RectTransform _targetRect;
-        private CompatTween _moveTween; // 保存 Tween 结构体
+        // --- 多实例并行支持（仿 CharFadeIn 的 token 模式） ---
+        private struct ActiveMove
+        {
+            public int Token;
+            public RectTransform Rect;
+            public CompatTween Tween;
+        }
+
+        private readonly List<ActiveMove> _activeMoves = new List<ActiveMove>();
+        private int _nextMoveToken;
 
         public override bool Execute(string args)
         {
@@ -52,9 +64,9 @@ namespace VNovelizer.Core.Commands
             float duration = defaultDuration;
             if (parts.Length >= 4) float.TryParse(parts[3].Trim(), out duration);
 
-            // 2. 获取目标 RectTransform
-            _targetRect = VNAPI.GetCharRect(posCode);
-            if (_targetRect == null)
+            // 2. 获取目标 RectTransform（局部变量：闭包捕获局部，并行实例互不干扰）
+            RectTransform targetRect = VNAPI.GetCharRect(posCode);
+            if (targetRect == null)
             {
                 Debug.LogError($"[CharMove] 找不到位置 {posCode} 的角色");
                 yield break;
@@ -69,45 +81,63 @@ namespace VNovelizer.Core.Commands
             }
 
             // 4. 记录起始位置和目标位置
-            Vector2 startPos = _targetRect.anchoredPosition;
+            Vector2 startPos = targetRect.anchoredPosition;
             Vector2 targetPos = new Vector2(targetX, targetY);
 
             // 5. 使用 PrimeTween 的 Custom 方法实现平滑移动
-            _moveTween = AnimationCompat.CustomVector2(startPos, targetPos, duration, 
-                onValueChange: (Vector2 newPos) => 
+            CompatTween moveTween = AnimationCompat.CustomVector2(startPos, targetPos, duration,
+                onValueChange: (Vector2 newPos) =>
                 {
-                    if (_targetRect != null && _targetRect.gameObject != null)
+                    if (targetRect != null && targetRect.gameObject != null)
                     {
-                        _targetRect.anchoredPosition = newPos;
+                        targetRect.anchoredPosition = newPos;
                     }
-                }, 
+                },
                 ease: Ease.OutQuad);
 
-            // 6. 等待动画完成
-            yield return _moveTween.ToYieldInstruction();
+            // 6. 登记活动动画（token 管理，支持并行实例）
+            int token = ++_nextMoveToken;
+            _activeMoves.Add(new ActiveMove { Token = token, Rect = targetRect, Tween = moveTween });
 
-            // 7. 清理引用
-            _targetRect = null;
-            _moveTween = default;
+            // 7. 等待动画完成
+            try
+            {
+                yield return moveTween.ToYieldInstruction();
+            }
+            finally
+            {
+                UnregisterMove(token);
+            }
 
             Debug.Log($"[CharMove] 角色 {posCode} 已移动到位置: ({targetX}, {targetY})");
         }
 
-        // 中断逻辑：玩家点击屏幕跳过动画
+        private void UnregisterMove(int token)
+        {
+            for (int i = _activeMoves.Count - 1; i >= 0; i--)
+            {
+                if (_activeMoves[i].Token == token)
+                    _activeMoves.RemoveAt(i);
+            }
+        }
+
+        // 中断逻辑：玩家点击屏幕跳过动画（中断全部并行实例）
         public override void Interrupt()
         {
-            // 检查 Tween 是否还在运行
-            if (_moveTween.isAlive)
+            var snapshot = new List<ActiveMove>(_activeMoves);
+            foreach (var am in snapshot)
             {
-                // 瞬间完成动画并停止
-                _moveTween.Complete();
-
-                Debug.Log("[CharMove] 动画被玩家中断，已瞬间完成。");
+                if (am.Tween.isAlive)
+                {
+                    // 瞬间完成动画并停止（角色直接到达目标位置）
+                    am.Tween.Complete();
+                }
             }
 
-            // 清理引用
-            _targetRect = null;
-            _moveTween = default;
+            if (snapshot.Count > 0)
+                Debug.Log($"[CharMove] {snapshot.Count} 个移动动画被玩家中断，已瞬间完成。");
+
+            _activeMoves.Clear();
         }
 
         public override void Simulate(string args)
@@ -119,7 +149,7 @@ namespace VNovelizer.Core.Commands
             if (parts.Length < 3) return;
 
             string posCode = parts[0].Trim();
-            
+
             // 检查角色是否存在
             string charData = VNManager.GetInstance().GetCharacterData(posCode);
             if (string.IsNullOrEmpty(charData) || charData == "hide")
@@ -140,4 +170,3 @@ namespace VNovelizer.Core.Commands
         }
     }
 }
-

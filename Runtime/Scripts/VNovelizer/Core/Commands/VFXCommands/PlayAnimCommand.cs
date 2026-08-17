@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using VNovelizer.Core.API;
@@ -9,20 +10,43 @@ namespace VNovelizer.Core.Commands
     {
         public override string CommandName { get { return "playanim"; } }
 
-        // 【修复】保存当前动画对象的引用，以便在中断时清理
-        private GameObject currentAnimObj = null;
-        private string currentResPath = null;
-        private string currentAnimName = null; // 保存动画名称，用于取消注册
-        private bool isCurrentAnimLoop = false; // 标记当前动画是否为循环
-        private Coroutine currentCoroutine = null;
+        // --- 多实例并行支持（活动列表） ---
+        // 旧实现用单组实例字段，命令链 [playanim(a,L) & playanim(b,R)] 时第二个调用覆盖字段：
+        // 第一个动画自然结束时不回收（引用比对失败 → 泄漏），Interrupt 只回收最后一个。
+        // 改为列表登记全部活动动画。
+        private class ActiveAnim
+        {
+            public GameObject Obj;
+            public string ResPath;
+            public string AnimName;
+            public bool IsLoop;
+            public Coroutine Co;
+        }
+
+        private readonly List<ActiveAnim> _activeAnims = new List<ActiveAnim>();
 
         public override bool Execute(string args)
         {
-            currentCoroutine = MonoManager.GetInstance().StartCoroutine(ExecuteAsync(args));
+            MonoManager.GetInstance().StartCoroutine(ExecuteAsync(args));
             return true;
         }
 
+        // 主入口（链式执行器与同步入口共用）：创建独立 entry 并登记
         public override IEnumerator ExecuteAsync(string args)
+        {
+            var entry = new ActiveAnim();
+            _activeAnims.Add(entry);
+            try
+            {
+                yield return ExecuteAsyncCore(args, entry);
+            }
+            finally
+            {
+                _activeAnims.Remove(entry);
+            }
+        }
+
+        private IEnumerator ExecuteAsyncCore(string args, ActiveAnim entry)
         {
             if (string.IsNullOrEmpty(args)) yield break;
 
@@ -59,11 +83,11 @@ namespace VNovelizer.Core.Commands
 
             while (animObj == null) yield return null;
 
-            // 【修复】保存引用，以便在中断时清理
-            currentAnimObj = animObj;
-            currentResPath = resPath;
-            currentAnimName = animName;
-            isCurrentAnimLoop = isLoop;
+            // 保存引用（每实例独立，支持并行）
+            entry.Obj = animObj;
+            entry.ResPath = resPath;
+            entry.AnimName = animName;
+            entry.IsLoop = isLoop;
 
             // 初始化
             Transform parent = VNAPI.GetEffectLayer();
@@ -89,16 +113,12 @@ namespace VNovelizer.Core.Commands
                     if (length <= 0) length = 1.0f;
 
                     yield return new WaitForSeconds(length);
-                    
-                    // 【修复】检查对象是否仍然有效（可能已被中断）
-                    if (currentAnimObj != null && currentAnimObj == animObj)
+
+                    // 检查对象是否仍然有效（可能已被中断：Interrupt 会回收并置空 entry.Obj）
+                    if (entry.Obj != null && entry.Obj == animObj)
                     {
                         PoolManager.GetInstance().PushObj(resPath, animObj);
-                        // 清理引用
-                        currentAnimObj = null;
-                        currentResPath = null;
-                        currentAnimName = null;
-                        isCurrentAnimLoop = false;
+                        entry.Obj = null;
                     }
                 }
                 else
@@ -114,16 +134,11 @@ namespace VNovelizer.Core.Commands
                 if (!isLoop)
                 {
                     yield return new WaitForSeconds(1.0f);
-                    
-                    // 【修复】检查对象是否仍然有效（可能已被中断）
-                    if (currentAnimObj != null && currentAnimObj == animObj)
+
+                    if (entry.Obj != null && entry.Obj == animObj)
                     {
                         PoolManager.GetInstance().PushObj(resPath, animObj);
-                        // 清理引用
-                        currentAnimObj = null;
-                        currentResPath = null;
-                        currentAnimName = null;
-                        isCurrentAnimLoop = false;
+                        entry.Obj = null;
                     }
                 }
                 else
@@ -132,9 +147,6 @@ namespace VNovelizer.Core.Commands
                     VNManager.GetInstance().RegisterEffect("VNAnim_" + animName);
                 }
             }
-            
-            // 【修复】协程结束时清理引用
-            currentCoroutine = null;
         }
 
         // --- 核心：位置解析器 ---
@@ -202,47 +214,40 @@ namespace VNovelizer.Core.Commands
         }
 
         /// <summary>
-        /// 【修复】中断命令：当玩家进入下一行时，立即回收动画对象
+        /// 【修复】中断命令：当玩家进入下一行时，立即回收全部活动动画对象（含并行实例）
         /// </summary>
         public override void Interrupt()
         {
-            if (currentAnimObj != null)
+            if (_activeAnims.Count == 0) return;
+
+            var snapshot = new List<ActiveAnim>(_activeAnims);
+            foreach (var entry in snapshot)
             {
-                Debug.Log($"[PlayAnimCommand] 动画被中断，立即回收: {currentAnimObj.name} (循环: {isCurrentAnimLoop})");
-                
-                // 停止协程（如果还在运行）
-                if (currentCoroutine != null)
+                if (entry.Obj == null) continue;
+
+                Debug.Log($"[PlayAnimCommand] 动画被中断，立即回收: {entry.Obj.name} (循环: {entry.IsLoop})");
+
+                // 循环动画需要取消注册
+                if (entry.IsLoop && !string.IsNullOrEmpty(entry.AnimName))
                 {
-                    MonoManager.GetInstance().StopCoroutine(currentCoroutine);
-                    currentCoroutine = null;
+                    VNManager.GetInstance().UnregisterEffect("VNAnim_" + entry.AnimName);
                 }
-                
-                // 【修复】如果是循环动画，需要取消注册
-                if (isCurrentAnimLoop && !string.IsNullOrEmpty(currentAnimName))
-                {
-                    VNManager.GetInstance().UnregisterEffect("VNAnim_" + currentAnimName);
-                }
-                
+
                 // 回收动画对象
-                if (!string.IsNullOrEmpty(currentResPath))
+                if (!string.IsNullOrEmpty(entry.ResPath))
                 {
-                    PoolManager.GetInstance().PushObj(currentResPath, currentAnimObj);
+                    PoolManager.GetInstance().PushObj(entry.ResPath, entry.Obj);
                 }
                 else
                 {
-                    // 如果没有资源路径，直接销毁对象
-                    if (currentAnimObj != null)
-                    {
-                        GameObject.Destroy(currentAnimObj);
-                    }
+                    GameObject.Destroy(entry.Obj);
                 }
-                
-                // 清理引用
-                currentAnimObj = null;
-                currentResPath = null;
-                currentAnimName = null;
-                isCurrentAnimLoop = false;
+
+                // 置空引用（核心协程的比对检查会发现对象已被回收）
+                entry.Obj = null;
             }
+
+            _activeAnims.Clear();
         }
 
         public override void Simulate(string args)

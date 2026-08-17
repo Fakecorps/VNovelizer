@@ -567,37 +567,27 @@ public class VNManager : BaseManager<VNManager>
     private string ExtractNonChoiceCommands(string commandString)
     {
         if (string.IsNullOrEmpty(commandString)) return "";
-        
-        // 分割命令（使用 & 分隔符）
-        string[] commands = commandString.Split('&');
-        System.Collections.Generic.List<string> nonChoiceCommands = new System.Collections.Generic.List<string>();
-        
-        foreach (string cmd in commands)
+
+        // 使用链式词法器切分（引号/括号感知），同时兼容旧 & 语法与链式语法（-> / []）
+        // 注意：过滤后用 & 重连——该结果仅用于 Simulate（预演不关心时序，只关心最终状态）
+        var tokens = VNovelizer.Core.Commands.Chain.ChainLexer.Tokenize(commandString, null);
+        var nonChoiceCommands = new System.Collections.Generic.List<string>();
+
+        foreach (var token in tokens)
         {
-            string trimmedCmd = cmd.Trim();
-            if (string.IsNullOrEmpty(trimmedCmd)) continue;
-            
-            // 检查是否是 choice 命令
-            int startIndex = trimmedCmd.IndexOf('(');
-            if (startIndex > 0)
-            {
-                string cmdName = trimmedCmd.Substring(0, startIndex).Trim().ToLower();
-                if (cmdName != "choice")
-                {
-                    nonChoiceCommands.Add(trimmedCmd);
-                }
-            }
-            else
-            {
-                // 没有括号的命令也保留
-                if (!trimmedCmd.ToLower().StartsWith("choice"))
-                {
-                    nonChoiceCommands.Add(trimmedCmd);
-                }
-            }
+            if (token.Type != VNovelizer.Core.Commands.Chain.ChainTokenType.Command)
+                continue; // 跳过 & -> [ ] 等操作符
+
+            string text = token.Text;
+            int startIndex = text.IndexOf('(');
+            string cmdName = (startIndex > 0
+                ? text.Substring(0, startIndex)
+                : text).Trim().ToLower();
+
+            if (cmdName != "choice")
+                nonChoiceCommands.Add(text);
         }
-        
-        // 重新组合命令字符串
+
         return string.Join("&", nonChoiceCommands);
     }
 
@@ -1349,8 +1339,20 @@ public class VNManager : BaseManager<VNManager>
 
     public void ExecuteChoiceCommand(string command)
     {
+        // 【并发防护】用户已做出选择，当前行的残余演出必须终止。
+        // 场景：choice 与异步命令并行（如 [choice(...) & wait(3)]——choice 不在链尾的写法），
+        // 用户在 wait 结束前点了选项 → 本方法启动新协程；若旧 _flowCoroutine 不停，
+        // 它稍后结束时会检测 CurrentLineIndex != preIndex 再次触发 PlayCurrentLine，
+        // 与新协程双重演出 / 行索引二次推进。
+        if (_flowCoroutine != null)
+        {
+            MonoManager.GetInstance().StopCoroutine(_flowCoroutine);
+            _flowCoroutine = null;
+            CommandManager.GetInstance().InterruptAll();
+        }
+
         if (!string.IsNullOrEmpty(command))
-            MonoManager.GetInstance().StartCoroutine(ExecuteActionsAndContinue(command));
+            _flowCoroutine = MonoManager.GetInstance().StartCoroutine(ExecuteActionsAndContinue(command));
         else
             PlayCurrentLine();
     }

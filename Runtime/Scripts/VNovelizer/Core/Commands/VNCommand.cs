@@ -4,6 +4,7 @@ using UnityEngine;
 using System.Linq;
 using System.Reflection;
 using System;
+using VNovelizer.Core.Commands.Chain;
 
 namespace VNovelizer.Core.Commands
 {
@@ -50,6 +51,10 @@ namespace VNovelizer.Core.Commands
 
         // 正在运行的异步命令（同一命令类型可能并行多条，用引用计数）
         private Dictionary<VNCommand, int> _runningCommandRefCount = new Dictionary<VNCommand, int>();
+
+        // 当前活跃的命令链运行上下文（链式语法路径）
+        // 用于点击跳过时整树中断：先杀并行分支协程，再 Interrupt 命令动画
+        private ChainRunContext _activeChainContext;
 
         public bool IsRunning => _runningCommandRefCount.Count > 0;
 
@@ -166,6 +171,23 @@ namespace VNovelizer.Core.Commands
         {
             if (string.IsNullOrEmpty(commandString)) return;
 
+            // 链式语法：按深度优先串行序展开后逐个 Simulate
+            // （预演不关心时序，只关心最终状态：背景/BGM/立绘/标志）
+            var chainResult = ChainParser.Parse(commandString);
+            if (chainResult.UsesChainSyntax && chainResult.Root != null)
+            {
+                var collected = new List<CommandNode>();
+                ChainExecutor.CollectCommands(chainResult.Root, collected);
+                foreach (var cmd in collected)
+                {
+                    string cmdName = cmd.Name.ToLower();
+                    if (_commandMap.ContainsKey(cmdName))
+                        _commandMap[cmdName].Simulate(cmd.Args);
+                }
+                return;
+            }
+
+            // 旧逻辑（兼容模式）：按 & 切分逐个 Simulate
             string[] actions = commandString.Split('&');
             foreach (string action in actions)
             {
@@ -269,6 +291,22 @@ namespace VNovelizer.Core.Commands
         public void ExecuteCommands(string commandString)
         {
             if (string.IsNullOrEmpty(commandString)) return;
+
+            // 链式语法：同步模式无法表达时序，按展开顺序执行并提示
+            var chainResult = ChainParser.Parse(commandString);
+            if (chainResult.UsesChainSyntax && chainResult.Root != null)
+            {
+                Debug.LogWarning(
+                    "[CommandManager] 检测到链式语法（-> / [），同步执行模式下将忽略并行/串行时序，按顺序执行。建议通过异步入口 ExecuteCommandsAsync 执行以获得正确时序。");
+
+                var collected = new List<CommandNode>();
+                ChainExecutor.CollectCommands(chainResult.Root, collected);
+                foreach (var cmd in collected)
+                    ExecuteSingleCommand(cmd.Name, cmd.Args);
+                return;
+            }
+
+            // 旧逻辑（兼容模式）
             string[] actions = commandString.Split('&');
             foreach (string action in actions)
             {
@@ -281,6 +319,42 @@ namespace VNovelizer.Core.Commands
         {
             if (string.IsNullOrEmpty(commandString)) yield break;
 
+            // ===== 双轨切换 =====
+            // 命令串中含 "->" 或 "[" 时启用链式解析器：
+            //   &  = 严格并行（同时启动，全部完成才继续）
+            //   -> = 严格串行（上一条完成才执行下一条）
+            //   [] = 分组（内部视为整体）
+            // 不含新符号时走旧逻辑（顺序执行 + CharFade 批处理并行），旧剧本 100% 行为不变。
+            var chainResult = ChainParser.Parse(commandString);
+            if (chainResult.UsesChainSyntax)
+            {
+                if (chainResult.Root != null)
+                {
+                    // 解析错误报告（不阻断，容错继续执行可执行部分）
+                    foreach (var err in chainResult.Errors)
+                        Debug.LogError($"[CommandChain] 命令链解析错误（{err}）");
+
+                    // 语义警告报告（流程命令位置等，不阻断）
+                    foreach (var warn in chainResult.Warnings)
+                        Debug.LogWarning($"[CommandChain] 语法警告（{warn}）");
+
+                    // 创建运行上下文并登记，支持点击跳过时整树中断
+                    var ctx = new ChainRunContext();
+                    _activeChainContext = ctx;
+                    yield return ChainExecutor.Execute(chainResult.Root, ctx);
+
+                    // 正常完成（或整树中断退出）后清理上下文
+                    if (_activeChainContext == ctx)
+                        _activeChainContext = null;
+                    yield break;
+                }
+
+                // 无树根（致命错误）：报告全部错误后回退旧逻辑容错
+                foreach (var err in chainResult.Errors)
+                    Debug.LogError($"[CommandChain] 命令链解析失败（{err}），回退兼容模式执行");
+            }
+
+            // ===== 旧逻辑（兼容模式，保持原有行为） =====
             string[] actions = commandString.Split('&');
             var parsed = new List<(string cmd, string args)>();
             foreach (string action in actions)
@@ -327,6 +401,17 @@ namespace VNovelizer.Core.Commands
         // [新增] 中断所有命令
         public void InterruptAll()
         {
+            // 1. 链式语法：先整树中断
+            //    （标记 Aborted 防止分支继续执行后续命令 + StopCoroutine 杀死分支内
+            //     wait 等待与串行后续命令——Unity 的 StopCoroutine 不级联杀子协程，
+            //     必须显式停止，否则残留分支会污染下一行演出）
+            if (_activeChainContext != null)
+            {
+                ChainExecutor.Abort(_activeChainContext);
+                _activeChainContext = null;
+            }
+
+            // 2. 中断当前运行中的命令动画（快进到最终态，避免画面停在中间状态）
             if (_runningCommandRefCount.Count == 0) return;
 
             var commands = new List<VNCommand>(_runningCommandRefCount.Keys);

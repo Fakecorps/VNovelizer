@@ -20,6 +20,11 @@ namespace VNovelizer.Core.Commands
         private float defaultDuration = 0.5f;
         private float defaultIntensity = 10f; // UI像素偏移量
 
+        // --- 活动震动协程跟踪（支持多实例并行 + 点击跳过时正确中断） ---
+        // 记录 (协程句柄, 目标 rect, 原始位置)，中断时全部停止并强制归位
+        private readonly List<(Coroutine co, RectTransform rect, Vector2 originalPos)> _activeShakes
+            = new List<(Coroutine, RectTransform, Vector2)>();
+
         public override bool Execute(string args)
         {
             if (string.IsNullOrEmpty(args))
@@ -99,13 +104,47 @@ namespace VNovelizer.Core.Commands
 
             if (targetTransform != null)
             {
-                // 启动震动协程
-                MonoManager.GetInstance().StartCoroutine(ShakeUICoroutine(targetTransform, duration, intensity));
+                // 先记录原始位置（StartCoroutine 会同步执行到第一个 yield，
+                // 届时 anchoredPosition 已被首个偏移改变，必须提前捕获）
+                var rect = targetTransform.GetComponent<RectTransform>();
+                Vector2 originalPos = rect != null ? rect.anchoredPosition : Vector2.zero;
+
+                // 启动震动协程（登记句柄，支持并行实例与中断归位）
+                var co = MonoManager.GetInstance().StartCoroutine(ShakeUICoroutine(targetTransform, duration, intensity));
+                if (rect != null)
+                    _activeShakes.Add((co, rect, originalPos));
                 Debug.Log($"[ShakeCommand] 开始震动: 目标={arg}, 持续时间={duration}, 强度={intensity}");
                 return true;
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// 中断全部震动：停止协程并强制归位，防止跳过后 UI 元素持续震动/偏移残留
+        /// </summary>
+        public override void Interrupt()
+        {
+            if (_activeShakes.Count == 0) return;
+
+            var mono = MonoManager.GetInstance();
+            foreach (var entry in _activeShakes)
+            {
+                mono.StopCoroutine(entry.co);
+                if (entry.rect != null && entry.rect.gameObject != null)
+                {
+                    try
+                    {
+                        entry.rect.anchoredPosition = entry.originalPos;
+                    }
+                    catch (MissingReferenceException)
+                    {
+                        // 对象已销毁，无需归位
+                    }
+                }
+            }
+            _activeShakes.Clear();
+            Debug.Log("[ShakeCommand] 震动被玩家中断，已全部归位。");
         }
 
         /// <summary>
@@ -127,7 +166,7 @@ namespace VNovelizer.Core.Commands
         private IEnumerator ShakeUICoroutine(Transform targetTransform, float duration, float intensity)
         {
             if (targetTransform == null) yield break;
-            
+
             // 获取 RectTransform 以便操作 UI 坐标
             RectTransform rect = targetTransform.GetComponent<RectTransform>();
             if (rect == null) yield break;
@@ -135,6 +174,8 @@ namespace VNovelizer.Core.Commands
             // 记录原始坐标 (AnchoredPosition 是相对于父物体的坐标)
             Vector2 originalPos = rect.anchoredPosition;
 
+            try
+            {
             float elapsedTime = 0f;
 
             while (elapsedTime < duration)
@@ -145,7 +186,7 @@ namespace VNovelizer.Core.Commands
                     Debug.LogWarning("[ShakeCommand] RectTransform 在震动过程中被销毁，中断震动");
                     yield break;
                 }
-                
+
                 // 生成随机偏移 (UI 坐标系)
                 float offsetX = Random.Range(-intensity, intensity);
                 float offsetY = Random.Range(-intensity, intensity);
@@ -166,6 +207,13 @@ namespace VNovelizer.Core.Commands
 
                 elapsedTime += Time.deltaTime;
                 yield return null;
+            }
+            }
+            finally
+            {
+                // 自然结束（或被外部 StopCoroutine）时从活动列表移除
+                int idx = _activeShakes.FindIndex(e => e.rect == rect);
+                if (idx >= 0) _activeShakes.RemoveAt(idx);
             }
 
             // 震动结束，强制归位，防止偏移累积

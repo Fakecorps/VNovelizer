@@ -338,9 +338,26 @@ namespace VNovelizer.Core.API
             rect.offsetMax = Vector2.zero;
             rect.localScale = Vector3.one;
 
-            // 启动
+            // 启动（登记活动实例，供 StopVideo 中断跳过）
             var player = go.GetComponent<VideoModel>();
+            _activeVideo = player;
             player.Play(videoName, onComplete);
+        }
+
+        /// <summary>当前正在播放的 VideoModel 实例（播放完自毁时由 Stop 逻辑清空引用）</summary>
+        private static VideoModel _activeVideo;
+
+        /// <summary>
+        /// 停止当前正在播放的视频（玩家点击跳过等场景）。
+        /// 不触发视频播完后的回调（外部中断不视为自然播完）。
+        /// </summary>
+        public static void StopVideo()
+        {
+            if (_activeVideo != null)
+            {
+                _activeVideo.Stop();
+                _activeVideo = null;
+            }
         }
         public static void ShowPrompt(string text, float duration)
         {
