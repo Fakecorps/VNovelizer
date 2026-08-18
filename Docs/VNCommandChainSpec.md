@@ -367,7 +367,7 @@ shake(screen, 0.3) -> wait(0.5) -> showprompt("注意！")
 
 ```
 // Amy 的移动+换表情 与 震屏+对话 同时进行
-[charmove(Amy, 100, 0, 0.5) -> setexpression(Amy, happy)]
+[charmove(Amy, 100, 0, 0.5) -> setexpression(Amy, uniform, happy)]
 &
 [shake(screen, 0.3) -> wait(0.2)]
 ```
@@ -385,13 +385,13 @@ shake(screen, 0.3) -> wait(0.5) -> showprompt("注意！")
 // Excel Command 列内容：
 [
   bgfade(Beach, 1.5) &
-  charfadein(L, Amy_Normal, 1) &
-  charfadein(M, Jack_Angry, 1)
+  charfadein(L, 1) &
+  charfadein(ML, 1)
 ] -> wait(0.5) -> playBGM(BGM01) -> shake(screen, 0.3, 5)
 ```
 
 语义：
-1. 背景淡入、Amy 淡入、Jack 淡入**同时开始**
+1. 背景淡入、左槽立绘淡入、中左槽立绘淡入**同时开始**（立绘内容由该行 CSV 槽位列决定，格式 `角色ID#分组#表情`）
 2. 三者**全部完成**后，等待 0.5 秒
 3. 播放 BGM01
 4. 震屏

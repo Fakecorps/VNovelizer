@@ -23,8 +23,8 @@
 | `TryGetGameplayPanel(out VNGameplayPanel panel)` | 尝试获取主游戏面板。 |
 | `HasGameplayPanel()` | 是否存在可用主面板。 |
 | `GetBG_F()` / `GetBG_B()` | 前/后背景 `Image`。 |
-| `GetCharRect(posCode)` | 立绘槽位 `RectTransform`。`posCode` 支持 `L/M/R`、`LEFT/MID/RIGHT` 等（与面板内一致）。 |
-| `GetCharImage(posCode)` | 立绘槽位 `Image`（`L/M/R` 或 `Left/Mid/Right` 等）。 |
+| `GetCharRect(posCode)` | 立绘槽位 `RectTransform`。`posCode` 支持 `L/ML/M/MR/R` 缩写与 `LEFT/MIDLEFT/MID/MIDRIGHT/RIGHT`、`CharMid_Left/CharMid_Right` 等全名（与面板内一致）。 |
+| `GetCharImage(posCode)` | 立绘槽位 `Image`（同上，五槽位缩写或全名）。 |
 | `GetCharScaleX` / `SetCharScaleX` | 角色朝向（缩放 X），委托 `VNManager`。 |
 | `GetDialogueText()` | 对话正文 `TMP_Text`。 |
 | `GetSpeakerBox()` / `SetSpeakerBox(Sprite)` | 说话人框 `Image` / 设置 Sprite。 |
