@@ -899,6 +899,7 @@ public class VNGameplayPanel : BasePanel
     {
         string position = characterInfo["position"];
         string characterID = characterInfo["characterID"];
+        string group = characterInfo.ContainsKey("group") ? characterInfo["group"] : CharacterProfile.DefaultGroupName;
         string emotion = characterInfo["emotion"];
 
         Image charImage = GetCharImage(position);
@@ -907,7 +908,7 @@ public class VNGameplayPanel : BasePanel
         CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
         if (profile != null)
         {
-            Sprite sprite = profile.GetEmotionSprite(emotion);
+            Sprite sprite = profile.GetEmotionSprite(group, emotion);
             if (sprite != null)
             {
                 RectTransform charRect = charImage.rectTransform;
@@ -1003,23 +1004,24 @@ public class VNGameplayPanel : BasePanel
             headProfileTransform.gameObject.SetActive(true);
         }
         
-        // 解析 HeadProfile 格式：CharacterID_Emotion（与立绘格式相同）
-        string[] parts = headProfileValue.Trim().Split('_');
-        if (parts.Length < 2)
+        // 解析 HeadProfile 格式：CharacterID#分组#表情（与立绘格式相同）
+        string[] parts = headProfileValue.Trim().Split('#');
+        if (parts.Length != 3)
         {
-            Debug.LogWarning($"[VNGameplayPanel] HeadProfile 格式错误: {headProfileValue}，应为 CharacterID_Emotion");
+            Debug.LogWarning($"[VNGameplayPanel] HeadProfile 格式错误: {headProfileValue}，应为 CharacterID#分组#表情（如 Amy#uniform#Smile）");
             if (headProfileTransform != null) headProfileTransform.gameObject.SetActive(false);
             return;
         }
-        
+
         string characterID = parts[0].Trim();
-        string emotion = parts[1].Trim();
-        
+        string group = parts[1].Trim();
+        string emotion = parts[2].Trim();
+
         // 从 CharacterResManager 获取头像和边框
         CharacterProfile profile = CharacterResManager.GetInstance().TryGetCharacterProfile(characterID);
         if (profile != null)
         {
-            Sprite headSprite = profile.GetHeadSprite(emotion);
+            Sprite headSprite = profile.GetHeadSprite(group, emotion);
             if (headSprite != null && headImage != null)
             {
                 headImage.sprite = headSprite;
@@ -1027,7 +1029,7 @@ public class VNGameplayPanel : BasePanel
             }
             else
             {
-                Debug.LogWarning($"[VNGameplayPanel] 角色 {characterID} 没有找到情绪 {emotion} 的头像");
+                Debug.LogWarning($"[VNGameplayPanel] 角色 {characterID} 没有找到分组 {group} 情绪 {emotion} 的头像");
                 if (headProfileTransform != null) headProfileTransform.gameObject.SetActive(false);
                 return;
             }

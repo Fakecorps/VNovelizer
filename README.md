@@ -106,8 +106,8 @@ VNovelizer 使用 `ScriptableObject` 管理角色资源，实现了逻辑 ID 与
 | :--- | :---: | :--- | :--- |
 | **ID** | ✅ | **行号**。必须唯一，用于跳转和存档定位。 | `1001` |
 | **Speaker** | | 说话人 ID。每行独立；留空则无说话人名显示。 | `Amy` |
-| **HeadProfile** | | 头像配置。格式：`ID_表情名`。填 `hide` 隐藏；**留空则按隐藏头像处理**（不沿用上句）。 | `Amy_Smile` |
-| **CharLeft/Mid/Right** | | 左/中/右立绘。格式：`ID_表情名`。填 `hide` 或**留空**均隐藏该槽（不沿用上句）。 | `Amy_Normal` |
+| **HeadProfile** | | 头像配置。格式：`ID#分组#表情名`（分组对应 CharacterProfile 中的立绘分组）。填 `hide` 隐藏；**留空则按隐藏头像处理**（不沿用上句）。 | `Amy#uniform#Smile` |
+| **CharLeft/Mid_Left/Mid/Mid_Right/Right** | | 五个立绘槽位。格式：`ID#分组#表情名`。填 `hide` 或**留空**均隐藏该槽（不沿用上句）。 | `Amy#uniform#Normal` |
 | **Text** | | 对话文本。支持 TMP 富文本标签。 | `你好，<color=red>陌生人</color>。` |
 | **Background** | | 背景图名 (需在 Resources 背景目录)。留空继承。 | `School_Day` |
 | **BGM** | | 背景音乐名。填 `stop` 停止，`pause` 暂停。 | `Theme_Song` |
@@ -132,7 +132,7 @@ VNovelizer 使用 `ScriptableObject` 管理角色资源，实现了逻辑 ID 与
 *   **Speaker**：留空则本行不显示说话人名。
 *   **Text**：留空则本行正文为空字符串（是否允许纯演出行由剧本设计决定）。
 *   **HeadProfile**：留空视为隐藏头像（`hide`）；不沿用上一行的头像配置。
-*   **CharLeft / CharMid / CharRight**：留空或填 `hide` 均会**隐藏该槽**并从内部立绘状态中移除该位置；**不会**自动沿用上一行同槽立绘。连续多句同一角色出场时，需要在每一行重复填写立绘（或使用表格公式批量填充）。
+*   **CharLeft / CharMid_Left / CharMid / CharMid_Right / CharRight**：留空或填 `hide` 均会**隐藏该槽**并从内部立绘状态中移除该位置；**不会**自动沿用上一行同槽立绘。连续多句同一角色出场时，需要在每一行重复填写立绘（或使用表格公式批量填充）。
 
 #### 演出命令与立绘列（同行约束）
 
@@ -140,7 +140,7 @@ VNovelizer 使用 `ScriptableObject` 管理角色资源，实现了逻辑 ID 与
 
 *   `charmove`、`setchartrans`、`charflip` 等。
 
-**规则**：若某行 `Command` 中使用了 `charmove(M, …)` 等，该行 Excel 的 **CharMid（或对应槽）必须写明立绘**（如 `Amy_Normal`），不能依赖「上一行填过、本行留空」的旧习惯，否则本行会判定该槽无角色，命令无效或仅打警告日志。
+**规则**：若某行 `Command` 中使用了 `charmove(M, …)` 等，该行 Excel 的 **CharMid（或对应槽）必须写明立绘**（如 `Amy#uniform#Normal`），不能依赖「上一行填过、本行留空」的旧习惯，否则本行会判定该槽无角色，命令无效或仅打警告日志。
 
 `charfadein` / `charfadeout` / `charjump` 等以当前 UI 对象为准；同样建议该行 CSV 已正确配置立绘或先由前序行显式显示。
 

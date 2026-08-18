@@ -127,16 +127,12 @@ public class CharacterResManager : BaseManager<CharacterResManager>
 
     // ... 下面的代码保持不变 ...
 
-    public Sprite GetCharacterSprite(string characterID, string element)
+    public Sprite GetCharacterSprite(string characterID, string group, string element)
     {
         CharacterProfile profile = GetCharacterProfile(characterID);
         if (profile != null)
         {
-            foreach (ElementSprite emotionSprite in profile.ElementSprites)
-            {
-                if (emotionSprite.Element == element) return emotionSprite.Sprite;
-            }
-            Debug.LogError($"❌ 角色 '{characterID}' 找到了，但是没有名为 '{element}' 的样式图片。");
+            return profile.GetEmotionSprite(group, element);
         }
         return null;
     }

@@ -83,6 +83,9 @@ public class CharacterEditorPresenter
 
         CharacterProfile newProfile = ScriptableObject.CreateInstance<CharacterProfile>();
         newProfile.CharacterID = Path.GetFileNameWithoutExtension(path);
+        // 新建角色自带默认分组
+        newProfile.ElementSpriteGroups.Add(new ElementSpriteGroup { Group = CharacterProfile.DefaultGroupName });
+        newProfile.HeadSpriteGroups.Add(new ElementSpriteGroup { Group = CharacterProfile.DefaultGroupName });
 
         AssetDatabase.CreateAsset(newProfile, path);
         AssetDatabase.SaveAssets();

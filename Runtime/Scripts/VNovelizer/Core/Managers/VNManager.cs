@@ -306,12 +306,12 @@ public class VNManager : BaseManager<VNManager>
                 // D. 同步立绘显示 (FastForward 更新了 currentCharacters 数据，现在应用到 UI)
                 foreach (var kvp in currentCharacters)
                 {
-                    string[] parts = kvp.Value.Split('_');
-                    if (parts.Length >= 2)
+                    string[] parts = kvp.Value.Split('#');
+                    if (parts.Length == 3)
                     {
                         Dictionary<string, string> info = new Dictionary<string, string>
                         {
-                            { "position", kvp.Key }, { "characterID", parts[0] }, { "emotion", parts[1] }
+                            { "position", kvp.Key }, { "characterID", parts[0] }, { "group", parts[1] }, { "emotion", parts[2] }
                         };
                         EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
                         
@@ -1145,13 +1145,13 @@ public class VNManager : BaseManager<VNManager>
         }
         else if (!string.IsNullOrEmpty(charData))
         {
-            string[] parts = charData.Split('_');
-            if (parts.Length >= 2)
+            string[] parts = charData.Split('#');
+            if (parts.Length == 3)
             {
                 this.currentCharacters[position] = charData;
                 Dictionary<string, string> info = new Dictionary<string, string>
                 {
-                    { "position", position }, { "characterID", parts[0] }, { "emotion", parts[1] }
+                    { "position", position }, { "characterID", parts[0] }, { "group", parts[1] }, { "emotion", parts[2] }
                 };
                 EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
                 
@@ -1192,6 +1192,10 @@ public class VNManager : BaseManager<VNManager>
                         }
                     }
                 }
+            }
+            else
+            {
+                Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。新格式为 CharacterID#分组#表情（如 Amy#uniform#Smile），旧格式 ID_表情 已不再支持");
             }
         }
     }
@@ -1629,14 +1633,15 @@ public class VNManager : BaseManager<VNManager>
 // 同步立绘显示
     foreach (var kvp in currentCharacters)
     {
-        string[] parts = kvp.Value.Split('_');
-        if (parts.Length >= 2)
+        string[] parts = kvp.Value.Split('#');
+        if (parts.Length == 3)
         {
             Dictionary<string, object> info = new Dictionary<string, object>
             {
                 { "position", kvp.Key },
                 { "characterID", parts[0] },
-                { "emotion", parts[1] }
+                { "group", parts[1] },
+                { "emotion", parts[2] }
             };
 
             EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);

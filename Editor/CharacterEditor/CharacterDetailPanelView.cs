@@ -30,8 +30,6 @@ public class CharacterDetailPanelView : VisualElement
     private int currentTab;
 
     // 列表
-    private ListView elementListView;
-    private ListView headSpriteListView;
     private VisualElement expressionContainer;
     private VisualElement headContainer;
 
@@ -87,8 +85,6 @@ public class CharacterDetailPanelView : VisualElement
 
         contentPane.Clear();
         currentProfile = presenter.SelectedProfile;
-        elementListView = null;
-        headSpriteListView = null;
         previewImage = null;
 
         if (currentProfile == null)
@@ -340,11 +336,11 @@ public class CharacterDetailPanelView : VisualElement
         DrawExpressionList(profile);
         DrawHeadList(profile);
 
-        // 拖放导入
-        RegisterDropHandlers(expressionContainer, profile.ElementSprites, profile, "立绘",
-            () => elementListView?.Rebuild());
-        RegisterDropHandlers(headContainer, profile.HeadSprites, profile, "头像",
-            () => headSpriteListView?.Rebuild());
+        // 拖放导入（二维分组：文件名三级自动分组）
+        RegisterDropHandlers(expressionContainer, profile.ElementSpriteGroups, profile, "立绘",
+            () => Rebuild());
+        RegisterDropHandlers(headContainer, profile.HeadSpriteGroups, profile, "头像",
+            () => Rebuild());
 
         SwitchTab(currentTab);
     }
@@ -401,33 +397,147 @@ public class CharacterDetailPanelView : VisualElement
     // =========================================================
     private void DrawExpressionList(CharacterProfile profile)
     {
-        var header = CreateListHeader("表情立绘列表", () =>
+        var header = CreateListHeader("表情立绘分组", () =>
         {
-            profile.ElementSprites.Add(new ElementSprite());
+            string newName = MakeUniqueGroupName(profile.ElementSpriteGroups, "NewGroup");
+            profile.ElementSpriteGroups.Add(new ElementSpriteGroup { Group = newName });
             EditorUtility.SetDirty(profile);
-            elementListView?.Rebuild();
-        });
+            Rebuild();
+        }, "可拖拽图片到此批量导入（文件名 角色ID_分组_表情 自动分组）");
         expressionContainer.Add(header);
 
-        elementListView = CreateStyledListView(profile.ElementSprites, profile);
-        expressionContainer.Add(elementListView);
+        DrawGroupSections(expressionContainer, profile.ElementSpriteGroups, profile, "立绘");
     }
 
     private void DrawHeadList(CharacterProfile profile)
     {
-        var header = CreateListHeader("表情头像列表", () =>
+        var header = CreateListHeader("表情头像分组", () =>
         {
-            profile.HeadSprites.Add(new ElementSprite());
+            string newName = MakeUniqueGroupName(profile.HeadSpriteGroups, "NewGroup");
+            profile.HeadSpriteGroups.Add(new ElementSpriteGroup { Group = newName });
             EditorUtility.SetDirty(profile);
-            headSpriteListView?.Rebuild();
-        });
+            Rebuild();
+        }, "可拖拽图片到此批量导入（文件名 角色ID_分组_表情 自动分组）");
         headContainer.Add(header);
 
-        headSpriteListView = CreateStyledListView(profile.HeadSprites, profile);
-        headContainer.Add(headSpriteListView);
+        DrawGroupSections(headContainer, profile.HeadSpriteGroups, profile, "头像");
     }
 
-    private VisualElement CreateListHeader(string title, System.Action onAdd)
+    private string MakeUniqueGroupName(List<ElementSpriteGroup> groups, string baseName)
+    {
+        string name = baseName;
+        int i = 1;
+        while (groups.Any(g => g != null && g.Group == name))
+        {
+            name = baseName + " " + (++i);
+        }
+        return name;
+    }
+
+    /// <summary>
+    /// 绘制分组区块：每组一个卡片（组名可编辑 + 组内表情 ListView + 添加/删除）
+    /// </summary>
+    private void DrawGroupSections(VisualElement container, List<ElementSpriteGroup> groups, CharacterProfile profile, string kindLabel)
+    {
+        foreach (var group in groups.ToList())
+        {
+            if (group == null) continue;
+
+            var section = new VisualElement();
+            section.style.marginTop = 6;
+            section.style.marginBottom = 8;
+            section.style.borderTopWidth = 1;
+            section.style.borderLeftWidth = 1;
+            section.style.borderRightWidth = 1;
+            section.style.borderBottomWidth = 1;
+            section.style.borderTopColor = GalleryTheme.Hex(GalleryTheme.Border);
+            section.style.borderLeftColor = GalleryTheme.Hex(GalleryTheme.Border);
+            section.style.borderRightColor = GalleryTheme.Hex(GalleryTheme.Border);
+            section.style.borderBottomColor = GalleryTheme.Hex(GalleryTheme.Border);
+            section.style.borderTopLeftRadius = 4;
+            section.style.borderTopRightRadius = 4;
+
+            // ---- 组头：组名 + 计数 + 操作按钮 ----
+            var groupHeader = new VisualElement();
+            groupHeader.style.flexDirection = FlexDirection.Row;
+            groupHeader.style.alignItems = Align.Center;
+            groupHeader.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgCard);
+            groupHeader.style.paddingTop = 4;
+            groupHeader.style.paddingBottom = 4;
+            groupHeader.style.paddingLeft = 8;
+            groupHeader.style.paddingRight = 8;
+
+            var nameField = new TextField { value = group.Group, tooltip = "分组名（剧本中用 角色ID#分组#表情 引用，重命名会影响已有剧本引用）" };
+            nameField.style.width = 160;
+            nameField.style.fontSize = 12;
+            nameField.style.flexShrink = 0;
+            nameField.style.unityFontStyleAndWeight = FontStyle.Bold;
+            nameField.RegisterValueChangedCallback(evt =>
+            {
+                string newName = evt.newValue.Trim();
+                if (string.IsNullOrEmpty(newName)) return;
+                group.Group = newName;
+                EditorUtility.SetDirty(profile);
+            });
+            groupHeader.Add(nameField);
+
+            var countLabel = new Label($"{group.Sprites?.Count ?? 0} 项")
+            {
+                style = { color = GalleryTheme.Hex(GalleryTheme.TextMuted), fontSize = 10, marginLeft = 8, flexGrow = 1 }
+            };
+            groupHeader.Add(countLabel);
+
+            var addBtn = new Button(() =>
+            {
+                group.Sprites = group.Sprites ?? new List<ElementSprite>();
+                group.Sprites.Add(new ElementSprite());
+                EditorUtility.SetDirty(profile);
+                Rebuild();
+            }) { text = "+ 表情" };
+            GalleryStyles.ApplyButton(addBtn, GalleryTheme.AccentDim, true);
+            addBtn.style.fontSize = 10;
+            addBtn.style.width = 60;
+            addBtn.style.flexShrink = 0;
+            groupHeader.Add(addBtn);
+
+            var delGroupBtn = new Button(() =>
+            {
+                if (EditorUtility.DisplayDialog("删除分组",
+                    $"确定删除分组 '{group.Group}' 及其 {group.Sprites?.Count ?? 0} 个条目吗？\n（剧本中对该分组的引用将失效）", "删除", "取消"))
+                {
+                    groups.Remove(group);
+                    EditorUtility.SetDirty(profile);
+                    Rebuild();
+                }
+            }) { text = "删除组" };
+            GalleryStyles.ApplyButton(delGroupBtn, GalleryTheme.Danger, false);
+            delGroupBtn.style.fontSize = 10;
+            delGroupBtn.style.width = 60;
+            delGroupBtn.style.flexShrink = 0;
+            groupHeader.Add(delGroupBtn);
+
+            section.Add(groupHeader);
+
+            // ---- 组内表情列表 ----
+            group.Sprites = group.Sprites ?? new List<ElementSprite>();
+            var listView = CreateStyledListView(group.Sprites, profile);
+            section.Add(listView);
+
+            container.Add(section);
+        }
+
+        if (groups.Count == 0)
+        {
+            var empty = new Label("暂无分组，点击上方「+ 添加」或拖拽图片创建分组");
+            empty.style.height = 48;
+            empty.style.unityTextAlign = TextAnchor.MiddleCenter;
+            empty.style.color = GalleryTheme.Hex(GalleryTheme.TextMuted);
+            empty.style.fontSize = 11;
+            container.Add(empty);
+        }
+    }
+
+    private VisualElement CreateListHeader(string title, System.Action onAdd, string hint = "可拖拽图片到此批量导入")
     {
         var header = new VisualElement();
         header.style.flexDirection = FlexDirection.Row;
@@ -452,7 +562,7 @@ public class CharacterDetailPanelView : VisualElement
             }
         });
 
-        var hint = new Label("可拖拽图片到此批量导入")
+        var hintLabel = new Label(hint)
         {
             style =
             {
@@ -462,7 +572,7 @@ public class CharacterDetailPanelView : VisualElement
                 flexGrow = 1
             }
         };
-        header.Add(hint);
+        header.Add(hintLabel);
 
         var addBtn = new Button(onAdd) { text = "+ 添加" };
         GalleryStyles.ApplyButton(addBtn, GalleryTheme.AccentDim, true);
@@ -703,7 +813,7 @@ public class CharacterDetailPanelView : VisualElement
     // =========================================================
     //                      拖放导入
     // =========================================================
-    private void RegisterDropHandlers(VisualElement dropZone, List<ElementSprite> targetList,
+    private void RegisterDropHandlers(VisualElement dropZone, List<ElementSpriteGroup> targetGroups,
         CharacterProfile profile, string kindLabel, System.Action onRebuild)
     {
         var originalBg = dropZone.resolvedStyle.backgroundColor;
@@ -729,7 +839,7 @@ public class CharacterDetailPanelView : VisualElement
             if (sprites.Count == 0) return;
 
             DragAndDrop.AcceptDrag();
-            ShowBatchImportPanel(sprites, targetList, profile, kindLabel, onRebuild);
+            ShowBatchImportPanel(sprites, targetGroups, profile, kindLabel, onRebuild);
         });
     }
 
@@ -751,15 +861,40 @@ public class CharacterDetailPanelView : VisualElement
         return result;
     }
 
-    // 从文件名解析情绪名
-    private string ParseElementName(string spriteName, string charId)
+    private static ElementSprite FindInGroup(List<ElementSpriteGroup> groups, string groupName, string elementName)
     {
+        foreach (var g in groups)
+        {
+            if (g == null || g.Group != groupName) continue;
+            var hit = g.Sprites?.FirstOrDefault(e => e != null && e.Element == elementName);
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    // 从文件名解析分组名与情绪名：
+    // Amy_uniform_Smile → (uniform, Smile)；Amy_Smile / Amy → (Default, Smile / Amy)
+    private void ParseGroupedElementName(string spriteName, string charId, out string group, out string element)
+    {
+        group = CharacterProfile.DefaultGroupName;
+        element = spriteName;
+
         string n = spriteName;
         if (!string.IsNullOrEmpty(charId) && n.StartsWith(charId + "_", StringComparison.OrdinalIgnoreCase))
         {
             n = n.Substring(charId.Length + 1);
         }
-        return n;
+
+        int idx = n.IndexOf('_');
+        if (idx > 0 && idx < n.Length - 1)
+        {
+            group = n.Substring(0, idx);
+            element = n.Substring(idx + 1);
+        }
+        else
+        {
+            element = n;
+        }
     }
 
     // =========================================================
@@ -768,12 +903,13 @@ public class CharacterDetailPanelView : VisualElement
     private class ImportRow
     {
         public Sprite sprite;
+        public TextField groupField;
         public TextField nameField;
         public Label statusLabel;
         public VisualElement row;
     }
 
-    private void ShowBatchImportPanel(List<Sprite> sprites, List<ElementSprite> targetList,
+    private void ShowBatchImportPanel(List<Sprite> sprites, List<ElementSpriteGroup> targetGroups,
         CharacterProfile profile, string kindLabel, System.Action onRebuild)
     {
         var overlay = new VisualElement();
@@ -804,7 +940,7 @@ public class CharacterDetailPanelView : VisualElement
         };
         box.Add(titleLabel);
 
-        box.Add(new Label("已按文件名自动解析情绪名称（去掉角色ID前缀），可修改后再导入。同名条目将被覆盖。")
+        box.Add(new Label("已按文件名自动解析分组与表情名（角色ID_分组_表情），可修改后再导入。同分组同名条目将被覆盖。")
         {
             style =
             {
@@ -826,12 +962,13 @@ public class CharacterDetailPanelView : VisualElement
         updateStatus = (r) =>
         {
             string name = r.nameField.value.Trim();
+            string groupName = r.groupField.value.Trim();
             if (string.IsNullOrEmpty(name))
             {
                 r.statusLabel.text = "名称为空";
                 r.statusLabel.style.color = GalleryTheme.Hex(GalleryTheme.Danger);
             }
-            else if (targetList.Any(e => e != null && e.Element == name))
+            else if (FindInGroup(targetGroups, groupName, name) != null)
             {
                 r.statusLabel.text = "覆盖同名";
                 r.statusLabel.style.color = GalleryTheme.Hex(GalleryTheme.Warning);
@@ -869,7 +1006,15 @@ public class CharacterDetailPanelView : VisualElement
             thumb.style.flexShrink = 0;
             row.Add(thumb);
 
-            var nameField = new TextField { value = ParseElementName(sprite.name, profile.CharacterID) };
+            ParseGroupedElementName(sprite.name, profile.CharacterID, out string parsedGroup, out string parsedElement);
+
+            var groupField = new TextField { value = parsedGroup, tooltip = "分组名" };
+            groupField.style.width = 110;
+            groupField.style.marginRight = 6;
+            groupField.style.flexShrink = 0;
+            row.Add(groupField);
+
+            var nameField = new TextField { value = parsedElement, tooltip = "表情名" };
             nameField.style.flexGrow = 1;
             nameField.style.marginRight = 8;
             row.Add(nameField);
@@ -898,12 +1043,14 @@ public class CharacterDetailPanelView : VisualElement
             removeBtn.style.color = GalleryTheme.Hex(GalleryTheme.Danger);
             row.Add(removeBtn);
 
+            r.groupField = groupField;
             r.nameField = nameField;
             r.statusLabel = statusLabel;
             r.row = row;
             rows.Add(r);
 
             nameField.RegisterValueChangedCallback(_ => updateStatus(r));
+            groupField.RegisterValueChangedCallback(_ => updateStatus(r));
             updateStatus(r);
 
             rowsScroll.Add(row);
@@ -929,14 +1076,20 @@ public class CharacterDetailPanelView : VisualElement
                 string name = row.nameField.value.Trim();
                 if (string.IsNullOrEmpty(name)) continue;
 
-                var existing = targetList.FirstOrDefault(e => e != null && e.Element == name);
+                string groupName = row.groupField.value.Trim();
+                if (string.IsNullOrEmpty(groupName)) groupName = CharacterProfile.DefaultGroupName;
+
+                var targetGroup = CharacterProfile.GetOrAddGroup(targetGroups, groupName);
+                targetGroup.Sprites = targetGroup.Sprites ?? new List<ElementSprite>();
+
+                var existing = targetGroup.Sprites.FirstOrDefault(e => e != null && e.Element == name);
                 if (existing != null)
                 {
                     existing.Sprite = row.sprite;
                 }
                 else
                 {
-                    targetList.Add(new ElementSprite { Element = name, Sprite = row.sprite });
+                    targetGroup.Sprites.Add(new ElementSprite { Element = name, Sprite = row.sprite });
                 }
                 count++;
             }

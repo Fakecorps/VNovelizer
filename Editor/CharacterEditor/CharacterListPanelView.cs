@@ -197,10 +197,11 @@ public class CharacterListPanelView : VisualElement
         card.userData = profile;
         SetCardBorder(card, isSelected ? GalleryTheme.Hex(GalleryTheme.Accent) : GalleryTheme.Transparent_Color);
 
-        // 封面图
-        var cover = profile.ElementSprites != null
-            ? profile.ElementSprites.FirstOrDefault(e => e != null && e.Sprite != null)?.Sprite
-            : null;
+        // 封面图（遍历所有分组取第一个非空 Sprite；旧资产若尚未迁移也做兜底）
+        var cover = profile.ElementSpriteGroups?
+            .SelectMany(g => g?.Sprites ?? new System.Collections.Generic.List<ElementSprite>())
+            .FirstOrDefault(e => e != null && e.Sprite != null)?.Sprite
+            ?? profile.ElementSprites?.FirstOrDefault(e => e != null && e.Sprite != null)?.Sprite;
 
         var imgWrap = new VisualElement();
         imgWrap.style.width = 84;
