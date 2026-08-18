@@ -192,8 +192,10 @@ namespace VNovelizer.Core.Commands
             {
                 // 找不到角色时的默认位置
                 float defaultX = 0;
-                if (charCode.StartsWith("L")) defaultX = -400;
-                if (charCode.StartsWith("R")) defaultX = 400;
+                if (charCode.StartsWith("L") || charCode.StartsWith("Left", System.StringComparison.OrdinalIgnoreCase)) defaultX = -400;
+                if (charCode.StartsWith("ML") || charCode.StartsWith("MidLeft", System.StringComparison.OrdinalIgnoreCase)) defaultX = -200;
+                if (charCode.StartsWith("MR") || charCode.StartsWith("MidRight", System.StringComparison.OrdinalIgnoreCase)) defaultX = 200;
+                if (charCode.StartsWith("R") || charCode.StartsWith("Right", System.StringComparison.OrdinalIgnoreCase)) defaultX = 400;
 
                 rect.anchoredPosition = new Vector2(defaultX, 0) + charOffset;
             }

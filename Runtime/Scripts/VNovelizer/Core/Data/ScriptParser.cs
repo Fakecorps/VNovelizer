@@ -50,7 +50,34 @@ public static class ScriptParser
             }
 
             string[] columns = SplitCSV(line);
-            if (columns.Length >= 12) // 增加了 HeadProfile 列，现在需要 12 列
+            if (columns.Length >= 14) // 新 14 列格式：增加了 CharMid_Left / CharMid_Right 两个槽位列
+            {
+                StoryLine storyLine = new StoryLine
+                {
+                    ID = columns[0].Trim(),
+                    Speaker = columns[1].Trim(),
+                    HeadProfile = columns[2].Trim(),
+                    CharLeft = columns[3].Trim(),
+                    CharMid_Left = columns[4].Trim(),  // 新增：中左槽位
+                    CharMid = columns[5].Trim(),
+                    CharMid_Right = columns[6].Trim(), // 新增：中右槽位
+                    CharRight = columns[7].Trim(),
+                    Text = columns[8].Trim(),
+                    Background = columns[9].Trim(),
+                    BGM = columns[10].Trim(),
+                    Voice = columns[11].Trim(),
+                    Command = columns[12].Trim(),
+                    Note = columns[13].Trim()
+                };
+
+                data.Lines.Add(storyLine);
+                // 记录ID索引
+                if (!string.IsNullOrEmpty(storyLine.ID))
+                {
+                    data.IDMap[storyLine.ID] = data.Lines.Count - 1;
+                }
+            }
+            else if (columns.Length >= 12) // 旧 12 列格式（向后兼容：无 CharMid_Left / CharMid_Right 列）
             {
                 StoryLine storyLine = new StoryLine
                 {
@@ -58,7 +85,9 @@ public static class ScriptParser
                     Speaker = columns[1].Trim(),
                     HeadProfile = columns[2].Trim(), // 新增：HeadProfile 列
                     CharLeft = columns[3].Trim(),
+                    CharMid_Left = "",                 // 旧格式无此列，按空槽处理（隐藏）
                     CharMid = columns[4].Trim(),
+                    CharMid_Right = "",                // 旧格式无此列，按空槽处理（隐藏）
                     CharRight = columns[5].Trim(),
                     Text = columns[6].Trim(),
                     Background = columns[7].Trim(),

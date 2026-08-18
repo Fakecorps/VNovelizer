@@ -284,7 +284,9 @@ public class VNManager : BaseManager<VNManager>
                 // A. 强力清理 UI 现场
                 VNAPI.ClearAllEffects(); // 确保 EffectLayer 是空的
                 EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Left");
+                EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidLeft");
                 EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Mid");
+                EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidRight");
                 EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Right");
 
                 // 【修复】快进到目标行，如果遇到 choice 命令则停止
@@ -475,7 +477,9 @@ public class VNManager : BaseManager<VNManager>
                     else if (line.BGM != "pause" && line.BGM != "resume") currentBGM = line.BGM;
                 }
                 SimulateCharacterUpdate("Left", line.CharLeft);
+                SimulateCharacterUpdate("MidLeft", line.CharMid_Left);
                 SimulateCharacterUpdate("Mid", line.CharMid);
+                SimulateCharacterUpdate("MidRight", line.CharMid_Right);
                 SimulateCharacterUpdate("Right", line.CharRight);
                 if (line.Voice == "false") isVoiceEnabled = false;
                 else if (!string.IsNullOrEmpty(line.Voice)) isVoiceEnabled = true;
@@ -504,7 +508,9 @@ public class VNManager : BaseManager<VNManager>
 
             // 3. 立绘
             SimulateCharacterUpdate("Left", line.CharLeft);
+            SimulateCharacterUpdate("MidLeft", line.CharMid_Left);
             SimulateCharacterUpdate("Mid", line.CharMid);
+            SimulateCharacterUpdate("MidRight", line.CharMid_Right);
             SimulateCharacterUpdate("Right", line.CharRight);
 
             // 4. 语音
@@ -626,7 +632,9 @@ public class VNManager : BaseManager<VNManager>
         if (string.IsNullOrEmpty(pos)) return pos;
         string upper = pos.ToUpper();
         if (upper == "LEFT" || upper == "L") return "L";
+        if (upper == "ML" || upper == "MIDLEFT" || upper == "MID_LEFT" || upper == "CHARMID_LEFT" || upper == "CHARMIDLEFT") return "ML";
         if (upper == "MID" || upper == "MIDDLE" || upper == "M") return "M";
+        if (upper == "MR" || upper == "MIDRIGHT" || upper == "MID_RIGHT" || upper == "CHARMID_RIGHT" || upper == "CHARMIDRIGHT") return "MR";
         if (upper == "RIGHT" || upper == "R") return "R";
         return pos; // 未知格式，原样返回
     }
@@ -773,7 +781,9 @@ public class VNManager : BaseManager<VNManager>
         // 清理UI现场
         VNAPI.ClearAllEffects();
         EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Left");
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidLeft");
         EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Mid");
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidRight");
         EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Right");
 
         // 【修复】如果目标行索引大于0，需要预演到该位置，如果遇到 choice 命令则停止
@@ -1117,7 +1127,9 @@ public class VNManager : BaseManager<VNManager>
         }
 
         UpdateCharacter("Left", ResolveCharForSlot(currentLine.CharLeft, "Left"));
+        UpdateCharacter("MidLeft", ResolveCharForSlot(currentLine.CharMid_Left, "MidLeft"));
         UpdateCharacter("Mid", ResolveCharForSlot(currentLine.CharMid, "Mid"));
+        UpdateCharacter("MidRight", ResolveCharForSlot(currentLine.CharMid_Right, "MidRight"));
         UpdateCharacter("Right", ResolveCharForSlot(currentLine.CharRight, "Right"));
     }
 
@@ -1598,7 +1610,9 @@ public class VNManager : BaseManager<VNManager>
 // 强力清理 UI 现场
     VNAPI.ClearAllEffects();
     EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Left");
+    EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidLeft");
     EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Mid");
+    EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidRight");
     EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Right");
 // 快进到目标行，如果遇到 choice 命令则停止
     bool encounteredChoice = false;
@@ -2031,14 +2045,18 @@ public class VNManager : BaseManager<VNManager>
     public string GetCharacterData(string posCode)
     {
         string normalized = NormalizePositionCode(posCode);
-        // 需要同时检查 "L"/"M"/"R" 和 "Left"/"Mid"/"Right" 两种格式
+        // 需要同时检查 "L"/"ML"/"M"/"MR"/"R" 和 "Left"/"MidLeft"/"Mid"/"MidRight"/"Right" 两种格式
         if (currentCharacters.ContainsKey(normalized))
             return currentCharacters[normalized];
-        // 如果 normalized 是 "L"，也检查 "Left"
+        // 如果 normalized 是缩写，也检查全名
         if (normalized == "L" && currentCharacters.ContainsKey("Left"))
             return currentCharacters["Left"];
+        if (normalized == "ML" && currentCharacters.ContainsKey("MidLeft"))
+            return currentCharacters["MidLeft"];
         if (normalized == "M" && currentCharacters.ContainsKey("Mid"))
             return currentCharacters["Mid"];
+        if (normalized == "MR" && currentCharacters.ContainsKey("MidRight"))
+            return currentCharacters["MidRight"];
         if (normalized == "R" && currentCharacters.ContainsKey("Right"))
             return currentCharacters["Right"];
         return "";
@@ -2161,7 +2179,9 @@ public class VNManager : BaseManager<VNManager>
         
         // 5. 隐藏所有角色
         EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Left");
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidLeft");
         EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Mid");
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidRight");
         EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Right");
         currentCharacters.Clear();
         currentCharactersScaleX.Clear();

@@ -23,7 +23,9 @@ public class VNGameplayPanel : BasePanel
     [SerializeField] private Image bgImage_F;
     [SerializeField] private Image bgImage_B;
     [SerializeField] private Image charLeftImage;
+    [SerializeField] private Image charMidLeftImage;
     [SerializeField] private Image charMidImage;
+    [SerializeField] private Image charMidRightImage;
     [SerializeField] private Image charRightImage;
     [SerializeField] private Image speakerBox;
     [SerializeField] private TMP_Text speakerText;
@@ -104,7 +106,9 @@ public class VNGameplayPanel : BasePanel
         bgImage_F = GetControl<Image>("BG_Front");
         bgImage_B = GetControl<Image>("BG_Back");
         charLeftImage = GetControl<Image>("Char_Left");
+        charMidLeftImage = FindCharImageByCandidates("中左槽位 (ML)", "Char_Mid_Left", "CharMid_Left", "CharMidLeft", "Mid_Left");
         charMidImage = GetControl<Image>("Char_Mid");
+        charMidRightImage = FindCharImageByCandidates("中右槽位 (MR)", "Char_Mid_Right", "CharMid_Right", "CharMidRight", "Mid_Right");
         charRightImage = GetControl<Image>("Char_Right");
         speakerBox = GetControl<Image>("SpeakerBox");
         speakerText = GetControl<TMP_Text>("SpeakerText");
@@ -924,10 +928,12 @@ public class VNGameplayPanel : BasePanel
                 charRect.anchorMin = savedAnchorMin;
                 charRect.anchorMax = savedAnchorMax;
                 
-                // 位置代码转换：VNManager 内部使用 "Left"/"Mid"/"Right"，但 API 使用 "L"/"M"/"R"
+                // 位置代码转换：VNManager 内部使用 "Left"/"MidLeft"/"Mid"/"MidRight"/"Right"，但 API 使用 "L"/"ML"/"M"/"MR"/"R"
                 string posCode = position;
                 if (position == "Left") posCode = "L";
+                else if (position == "MidLeft") posCode = "ML";
                 else if (position == "Mid") posCode = "M";
+                else if (position == "MidRight") posCode = "MR";
                 else if (position == "Right") posCode = "R";
                 
                 // 【关键修复】保存基准位置（第一次显示时）
@@ -1392,6 +1398,21 @@ public class VNGameplayPanel : BasePanel
     #endregion
 
     #region 可供外部调用的API
+    /// <summary>
+    /// 按候选名称列表查找角色槽位 Image（用于新增槽位的命名兼容）
+    /// </summary>
+    private Image FindCharImageByCandidates(string slotDesc, params string[] candidateNames)
+    {
+        foreach (string name in candidateNames)
+        {
+            Image img = GetControl<Image>(name);
+            if (img != null) return img;
+        }
+        Debug.LogWarning($"[VNGameplayPanel] 未找到{slotDesc}的 Image（尝试过名称: {string.Join("/", candidateNames)}）。" +
+                         $"旧版 prefab 不含此槽位，如需使用 CharMid_Left / CharMid_Right 列，请在 prefab 中添加对应 GameObject。");
+        return null;
+    }
+
     public RectTransform GetCharRect(string posCode)
     {
         if (string.IsNullOrEmpty(posCode)) return null;
@@ -1402,10 +1423,24 @@ public class VNGameplayPanel : BasePanel
             case "LEFT":
                 return charLeftImage != null ? charLeftImage.rectTransform : null;
 
+            case "ML":
+            case "MIDLEFT":
+            case "MID_LEFT":
+            case "CHARMID_LEFT":
+            case "CHARMIDLEFT":
+                return charMidLeftImage != null ? charMidLeftImage.rectTransform : null;
+
             case "M":
             case "MID":
             case "MIDDLE":
                 return charMidImage != null ? charMidImage.rectTransform : null;
+
+            case "MR":
+            case "MIDRIGHT":
+            case "MID_RIGHT":
+            case "CHARMID_RIGHT":
+            case "CHARMIDRIGHT":
+                return charMidRightImage != null ? charMidRightImage.rectTransform : null;
 
             case "R":
             case "RIGHT":
@@ -1424,9 +1459,19 @@ public class VNGameplayPanel : BasePanel
             case "Left":
             case "L":
                 return charLeftImage;
+            case "MidLeft":
+            case "Mid_Left":
+            case "CharMid_Left":
+            case "ML":
+                return charMidLeftImage;
             case "Mid":
             case "M":
                 return charMidImage;
+            case "MidRight":
+            case "Mid_Right":
+            case "CharMid_Right":
+            case "MR":
+                return charMidRightImage;
             case "Right":
             case "R":
                 return charRightImage;
@@ -1544,14 +1589,16 @@ public class VNGameplayPanel : BasePanel
     }
     
     /// <summary>
-    /// 标准化位置代码（L/M/R）
+    /// 标准化位置代码（L/ML/M/MR/R）
     /// </summary>
     private string NormalizePositionCode(string posCode)
     {
         if (string.IsNullOrEmpty(posCode)) return posCode;
         string upper = posCode.ToUpper();
         if (upper == "LEFT" || upper == "L") return "L";
+        if (upper == "ML" || upper == "MIDLEFT" || upper == "MID_LEFT" || upper == "CHARMID_LEFT" || upper == "CHARMIDLEFT") return "ML";
         if (upper == "MID" || upper == "MIDDLE" || upper == "M") return "M";
+        if (upper == "MR" || upper == "MIDRIGHT" || upper == "MID_RIGHT" || upper == "CHARMID_RIGHT" || upper == "CHARMIDRIGHT") return "MR";
         if (upper == "RIGHT" || upper == "R") return "R";
         return posCode; // 未知格式，原样返回
     }

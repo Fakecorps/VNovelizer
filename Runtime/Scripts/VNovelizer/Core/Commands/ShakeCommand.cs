@@ -9,7 +9,7 @@ namespace VNovelizer.Core.Commands
     /// 震动命令
     /// 格式: shake(arg, shakeduration, shakeIntensity)
     /// arg = screen: 相机震动（整个面板）
-    /// arg = L/M/R: 对应位置的角色震动
+    /// arg = L/ML/M/MR/R: 对应位置的角色震动
     /// arg = dialogue: 对话框震动
     /// </summary>
     public class ShakeCommand : VNCommand
@@ -66,8 +66,11 @@ namespace VNovelizer.Core.Commands
                 // 屏幕震动（整个面板）
                 targetTransform = panel.transform;
             }
-            else if (arg == "l" || arg == "m" || arg == "r" || 
-                     arg == "left" || arg == "mid" || arg == "middle" || arg == "right")
+            else if (arg == "l" || arg == "m" || arg == "r" || arg == "ml" || arg == "mr" ||
+                     arg == "left" || arg == "midleft" || arg == "mid_left" ||
+                     arg == "mid" || arg == "middle" ||
+                     arg == "midright" || arg == "mid_right" || arg == "right" ||
+                     arg == "charmid_left" || arg == "charmid_right")
             {
                 // 角色震动
                 string posCode = NormalizePositionCode(arg);
@@ -98,7 +101,7 @@ namespace VNovelizer.Core.Commands
             }
             else
             {
-                Debug.LogError($"[ShakeCommand] 未知的震动目标: {arg}。支持的目标: screen, L/M/R, dialogue");
+                Debug.LogError($"[ShakeCommand] 未知的震动目标: {arg}。支持的目标: screen, L/ML/M/MR/R, dialogue");
                 return false;
             }
 
@@ -148,14 +151,16 @@ namespace VNovelizer.Core.Commands
         }
 
         /// <summary>
-        /// 标准化位置代码（L/M/R）
+        /// 标准化位置代码（L/ML/M/MR/R）
         /// </summary>
         private string NormalizePositionCode(string posCode)
         {
             if (string.IsNullOrEmpty(posCode)) return posCode;
             string lower = posCode.ToLower();
             if (lower == "left" || lower == "l") return "L";
+            if (lower == "ml" || lower == "midleft" || lower == "mid_left" || lower == "charmid_left" || lower == "charmidleft") return "ML";
             if (lower == "mid" || lower == "middle" || lower == "m") return "M";
+            if (lower == "mr" || lower == "midright" || lower == "mid_right" || lower == "charmid_right" || lower == "charmidright") return "MR";
             if (lower == "right" || lower == "r") return "R";
             return posCode;
         }
