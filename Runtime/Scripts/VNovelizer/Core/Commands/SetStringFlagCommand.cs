@@ -58,8 +58,8 @@ namespace VNovelizer.Core.Commands
             
             if (!string.IsNullOrEmpty(flagName))
             {
-                // 保存标志到GlobalData
-                GlobalDataManager.GetInstance().SetStringFlag(flagName, flagValue);
+                // 经 FlagService 作用域路由保存标志
+                FlagService.GetInstance().SetString(flagName, flagValue);
                 Debug.Log($"[SetStringFlagCommand] 设置标志 {flagName} = \"{flagValue}\"");
                 return true;
             }

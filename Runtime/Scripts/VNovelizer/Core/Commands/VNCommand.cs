@@ -77,6 +77,10 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new ShakeCommand());
             RegisterCommand(new WaitCommand());
             RegisterCommand(new JumpCommand());
+            RegisterCommand(new JumpIfCommand());
+            RegisterCommand(new JumpIfNotCommand());
+            RegisterCommand(new LoadScriptIfCommand());
+            RegisterCommand(new LoadScriptIfNotCommand());
             RegisterCommand(new LoadSceneCommand());
             RegisterCommand(new SetBoolFlagCommand());
             RegisterCommand(new SetIntFlagCommand());

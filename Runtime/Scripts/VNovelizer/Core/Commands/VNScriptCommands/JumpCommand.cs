@@ -31,5 +31,29 @@ namespace VNovelizer.Core.Commands
                 return false;
             }
         }
+
+        /// <summary>
+        /// 快进预演：写入 PendingJumpIndex，由 VNManager.FastForwardToLine 在每行模拟后消费。
+        /// 【Fix P3】此前未重写 Simulate，读档/跳行快进会忽略 jump 且把被跳过的行当作已执行，导致状态错乱。
+        /// </summary>
+        public override void Simulate(string args)
+        {
+            string targetID = (args ?? "").Trim();
+            if (string.IsNullOrEmpty(targetID))
+            {
+                Debug.LogError("[JumpCommand] Simulate 参数不能为空");
+                return;
+            }
+
+            VNManager manager = VNManager.GetInstance();
+            if (manager.LineIDIndexMap.TryGetValue(targetID, out int targetIndex))
+            {
+                manager.PendingJumpIndex = targetIndex;
+            }
+            else
+            {
+                Debug.LogError($"[JumpCommand] 快进中未找到指定的行ID: {targetID}");
+            }
+        }
     }
 }

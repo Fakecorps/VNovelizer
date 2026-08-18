@@ -34,6 +34,7 @@ public class GlobalData
     public Dictionary<string, bool> Flags = new Dictionary<string, bool>();
     public Dictionary<string, int> IntFlags = new Dictionary<string, int>();
     public Dictionary<string, string> StringFlags = new Dictionary<string, string>();
+    public Dictionary<string, float> FloatFlags = new Dictionary<string, float>();
     
     /// <summary>
     /// 设置游戏标志（bool类型）
@@ -114,6 +115,30 @@ public class GlobalData
     public string GetStringFlag(string flagName)
     {
         return StringFlags.ContainsKey(flagName) ? StringFlags[flagName] : "";
+    }
+
+    /// <summary>
+    /// 设置游戏标志（float类型）
+    /// </summary>
+    public void SetFloatFlag(string flagName, float value)
+    {
+        if (FloatFlags.ContainsKey(flagName))
+        {
+            FloatFlags[flagName] = value;
+        }
+        else
+        {
+            FloatFlags.Add(flagName, value);
+        }
+    }
+
+    /// <summary>
+    /// 获取游戏标志（float类型）
+    /// </summary>
+    /// <returns>标志值，如果不存在则返回 0</returns>
+    public float GetFloatFlag(string flagName)
+    {
+        return FloatFlags.ContainsKey(flagName) ? FloatFlags[flagName] : 0f;
     }
 
     public List<HistoryEntry> HistoryLog = new List<HistoryEntry>();

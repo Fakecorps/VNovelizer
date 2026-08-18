@@ -145,6 +145,10 @@ public class GlobalDataManager : BaseManager<GlobalDataManager>
         {
             globalData.StringFlags = new Dictionary<string, string>();
         }
+        if (globalData.FloatFlags == null)
+        {
+            globalData.FloatFlags = new Dictionary<string, float>();
+        }
         
         // 确保新添加的列表已初始化（兼容旧版本数据）
         if (globalData.UnlockedScenes == null)
@@ -484,5 +488,28 @@ public class GlobalDataManager : BaseManager<GlobalDataManager>
     {
         EnsureInitialized();
         return globalData != null ? globalData.GetStringFlag(flagName) : "";
+    }
+
+    /// <summary>
+    /// 设置游戏标志（float类型）
+    /// </summary>
+    public void SetFloatFlag(string flagName, float value)
+    {
+        EnsureInitialized();
+        if (globalData != null)
+        {
+            globalData.SetFloatFlag(flagName, value);
+            SaveGlobalData();
+        }
+    }
+
+    /// <summary>
+    /// 获取游戏标志（float类型）
+    /// </summary>
+    /// <returns>标志值，如果不存在则返回 0</returns>
+    public float GetFloatFlag(string flagName)
+    {
+        EnsureInitialized();
+        return globalData != null ? globalData.GetFloatFlag(flagName) : 0f;
     }
 }

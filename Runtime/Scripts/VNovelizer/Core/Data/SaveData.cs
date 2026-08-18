@@ -23,6 +23,7 @@ public class SaveData
     public Dictionary<string, bool> Flags;
     public Dictionary<string, int> IntFlags;
     public Dictionary<string, string> StringFlags;
+    public Dictionary<string, float> FloatFlags;
     
     // 历史记录
     public List<HistoryEntry> HistoryLog;

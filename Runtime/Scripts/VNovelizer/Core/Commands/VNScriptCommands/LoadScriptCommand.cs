@@ -67,5 +67,24 @@ namespace VNovelizer.Core.Commands
 
             return false;
         }
+
+        /// <summary>
+        /// 快进预演：写入 PendingScriptSwitch，由 VNManager.FastForwardToLine 消费（切换剧本数据源后重定向预演）。
+        /// 【Fix P3】此前未重写 Simulate，读档/跳行快进会静默丢失剧本切换。
+        /// </summary>
+        public override void Simulate(string args)
+        {
+            if (string.IsNullOrEmpty(args))
+            {
+                Debug.LogError("[LoadScript] Simulate 参数不能为空");
+                return;
+            }
+
+            string[] parts = args.Split(',');
+            string scriptName = parts[0].Trim();
+            string startID = parts.Length >= 2 && !string.IsNullOrEmpty(parts[1].Trim()) ? parts[1].Trim() : null;
+
+            VNManager.GetInstance().PendingScriptSwitch = (scriptName, startID);
+        }
     }
 }

@@ -20,6 +20,12 @@ public class VNManager : BaseManager<VNManager>
     public List<StoryLine> StoryLines { get; private set; } = new List<StoryLine>();
     public Dictionary<string, int> LineIDIndexMap { get; private set; } = new Dictionary<string, int>();
 
+    // === [Flag 扩展] 快进预演跳转请求 ===
+    // 由 jump/jumpif/jumpifnot 的 Simulate 写入目标行索引，FastForwardToLine 在每行模拟后消费
+    public int? PendingJumpIndex { get; set; }
+    // 由 loadscript/loadscriptif/loadscriptifnot 的 Simulate 写入 (剧本名, 起始行ID)，快进循环据此切换数据源
+    public (string scriptName, string startID)? PendingScriptSwitch { get; set; }
+
     // 当前行索引
     public int CurrentLineIndex { get; set; } = -1;
 
@@ -146,7 +152,10 @@ public class VNManager : BaseManager<VNManager>
         VNDebug.LogVerbose($"[VNManager] RunGameLogic 开始。剧本: {pendingScriptName}, 目标行: {pendingLineID}");
 
         InitializeManager();
-        
+
+        // [Flag 扩展] 新游戏：Save 作用域 Flag 复位为注册表默认值（Global 不动；兼容模式无操作）
+        FlagService.GetInstance().ResetSaveScope();
+
         // 【新增】显示加载进度面板
         ShowLoadingPanelAndStartGame();
     }
@@ -417,9 +426,10 @@ public class VNManager : BaseManager<VNManager>
     {
         currentBG = "";
         currentBGM = "";
-        // 【修复】同步通知 MusicManager 停止播放并清除 currentPlayingBGM，
-        // 避免 VNManager 状态与 MusicManager 状态不一致导致后续 PlayBGM 被重复检查挡住
-        MusicManager.GetInstance().StopBGM();
+        // 【BGM 修复】不再在此停止 BGM：
+        // MusicManager.PlayBGM 自带同名幂等检查（同名跳过播放），FastForwardToLine 结束时会
+        // 按预演结果按需 PlayBGM/StopBGM。若在此先 Stop，currentPlayingBGM 被清空导致幂等失效，
+        // 同名 BGM 会被"先停再从头播"——jump/jumpif 同剧本跳转时 BGM 无意义重启。
         currentCharacters.Clear();
         activeEffects.Clear();
         VNAPI.ClearAllEffects(); // 物理清空特效
@@ -446,12 +456,21 @@ public class VNManager : BaseManager<VNManager>
     /// <param name="targetIndex">目标行索引</param>
     /// <param name="ignoreChoice">是否忽略 choice 命令（用于 jump 命令强制跳转）</param>
     /// <returns>如果遇到 choice 命令返回 true，否则返回 false</returns>
-    public bool FastForwardToLine(int targetIndex, bool ignoreChoice = false)
+    public bool FastForwardToLine(int targetIndex, bool ignoreChoice = false, HashSet<string> visited = null)
     {
         ResetState();
         VNAPI.ClearAllEffects(); // 物理清空
         activeEffects.Clear();
-        if (targetIndex <= 0) return false;
+        if (targetIndex <= 0)
+        {
+            // 无预演内容：按"重建结果为空"处理 BGM（等价于旧版 ResetState 内 StopBGM 的语义，
+            // 供 loadscript 未指定起始行时停止上一个剧本的残留 BGM）
+            MusicManager.GetInstance().StopBGM();
+            return false;
+        }
+
+        // [Flag 扩展] 跳转防死循环：记录已进入的 (剧本, 行号)，跨递归共享
+        if (visited == null) visited = new HashSet<string>();
 
         bool encounteredChoice = false;
 
@@ -460,6 +479,13 @@ public class VNManager : BaseManager<VNManager>
         {
             if (i >= StoryLines.Count) break;
             StoryLine line = StoryLines[i];
+
+            // [Flag 扩展] 同一位置二次进入 = 跳转环（jump/jumpif/loadscript 成环），报错终止预演
+            if (!visited.Add(currentScriptName + "#" + i))
+            {
+                Debug.LogError($"[VNManager] 快进检测到跳转环：剧本 {currentScriptName} 第 {i} 行 (ID: {line.ID}) 被重复进入，已中止预演。请检查 jump/jumpif/loadscript 是否构成循环。");
+                break;
+            }
 
             // 【修复】检查是否包含 choice 命令，如果包含则停止快进（除非 ignoreChoice 为 true）
             if (!ignoreChoice && !string.IsNullOrEmpty(line.Command) && ContainsChoiceCommand(line.Command))
@@ -486,12 +512,34 @@ public class VNManager : BaseManager<VNManager>
                 lastLine = line;
                 
                 // 先应用其他命令（不包括 choice）
+                // [Flag 扩展] 模拟前复位跳转请求，模拟后按需消费
+                PendingJumpIndex = null;
+                PendingScriptSwitch = null;
                 string otherCommands = ExtractNonChoiceCommands(line.Command);
                 if (!string.IsNullOrEmpty(otherCommands))
                 {
                     CommandManager.GetInstance().SimulateCommands(otherCommands);
                 }
-                
+
+                // [Flag 扩展] choice 行的其它命令触发跳转/跨剧本切换时，跳转优先于停止
+                if (PendingScriptSwitch != null && TryApplyPendingScriptSwitch(visited, out bool switchResult))
+                {
+                    return switchResult;
+                }
+                if (PendingJumpIndex != null)
+                {
+                    int jumpTarget = PendingJumpIndex.Value;
+                    PendingJumpIndex = null;
+                    if (jumpTarget >= 0 && jumpTarget < StoryLines.Count)
+                    {
+                        encounteredChoice = false;
+                        i = jumpTarget - 1;
+                        lastLine = line;
+                        continue;
+                    }
+                    Debug.LogError($"[VNManager] 快进中跳转目标越界: index={jumpTarget}");
+                }
+
                 // 停止快进循环
                 break;
             }
@@ -518,9 +566,35 @@ public class VNManager : BaseManager<VNManager>
             else if (!string.IsNullOrEmpty(line.Voice)) isVoiceEnabled = true;
 
             // 5. Command 模拟 (特效、Flags 等)
+            // [Flag 扩展] 模拟前复位跳转请求；模拟后消费 jump/jumpif/loadscriptif 产生的快进跳转
+            PendingJumpIndex = null;
+            PendingScriptSwitch = null;
             if (!string.IsNullOrEmpty(line.Command))
             {
                 CommandManager.GetInstance().SimulateCommands(line.Command);
+            }
+
+            // [Flag 扩展] 跨剧本切换优先：切换数据源后重定向预演（内层递归完成后其后处理已执行）
+            if (PendingScriptSwitch != null && TryApplyPendingScriptSwitch(visited, out bool scriptSwitchResult))
+            {
+                return scriptSwitchResult;
+            }
+
+            // [Flag 扩展] 本剧本跳转：快进指针指向目标行（目标行仍会按需模拟）
+            if (PendingJumpIndex != null)
+            {
+                int jumpIndex = PendingJumpIndex.Value;
+                PendingJumpIndex = null;
+                if (jumpIndex < 0 || jumpIndex >= StoryLines.Count)
+                {
+                    Debug.LogError($"[VNManager] 快进中跳转目标越界: index={jumpIndex}");
+                }
+                else
+                {
+                    i = jumpIndex - 1; // for 自增后指向目标行
+                }
+                lastLine = line;
+                continue;
             }
 
             lastLine = line;
@@ -553,6 +627,42 @@ public class VNManager : BaseManager<VNManager>
         }
         
         return encounteredChoice;
+    }
+
+    /// <summary>
+    /// [Flag 扩展] 消费快进中的跨剧本切换请求（loadscript/loadscriptif/loadscriptifnot 的 Simulate 产生）。
+    /// 切换成功时重定向预演到新剧本并返回 true（result 为内层递归结果）；请求无效/加载失败返回 false，调用方按原剧本继续。
+    /// </summary>
+    private bool TryApplyPendingScriptSwitch(HashSet<string> visited, out bool result)
+    {
+        result = false;
+        if (PendingScriptSwitch == null) return false;
+
+        var sw = PendingScriptSwitch.Value;
+        PendingScriptSwitch = null;
+
+        var scriptData = ScriptParser.Parse(sw.scriptName);
+        if (scriptData == null || scriptData.Lines.Count == 0)
+        {
+            Debug.LogError($"[VNManager] 快进中加载剧本失败: {sw.scriptName}，按原剧本继续预演");
+            return false;
+        }
+
+        SetScriptData(scriptData.Lines, scriptData.IDMap, sw.scriptName);
+
+        int startIdx = 0;
+        if (!string.IsNullOrEmpty(sw.startID))
+        {
+            if (!scriptData.IDMap.TryGetValue(sw.startID, out startIdx))
+            {
+                Debug.LogWarning($"[VNManager] 快进中 loadscript 起始行 {sw.startID} 在剧本 {sw.scriptName} 中不存在，将从第 0 行开始");
+                startIdx = 0;
+            }
+        }
+
+        // 递归预演新剧本（共享 visited 防跨剧本环 A→B→A；内层完成后其 BGM/特效后处理已执行）
+        result = FastForwardToLine(startIdx, false, visited);
+        return true;
     }
 
     /// <summary>
@@ -1315,9 +1425,8 @@ public class VNManager : BaseManager<VNManager>
         saveData.CurrentBGM = this.currentBGM;
         saveData.Characters = new Dictionary<string, string>(this.currentCharacters);
         saveData.CharacterScaleX = new Dictionary<string, float>(this.currentCharactersScaleX);
-        saveData.Flags = new Dictionary<string, bool>(GlobalDataManager.GetInstance().GetGlobalData().Flags);
-        saveData.IntFlags = new Dictionary<string, int>(GlobalDataManager.GetInstance().GetGlobalData().IntFlags);
-        saveData.StringFlags = new Dictionary<string, string>(GlobalDataManager.GetInstance().GetGlobalData().StringFlags);
+        // [Flag 扩展] 经 FlagService 导出快照（Save 作用域 + 兼容模式全量；Global 作用域不进存档）
+        FlagService.GetInstance().ExportForSave(saveData);
         saveData.ActiveEffects = new List<string>(this.activeEffects); // 保存特效
         
         // 保存历史记录
@@ -1762,21 +1871,8 @@ public class VNManager : BaseManager<VNManager>
             GlobalDataManager.GetInstance().ClearHistoryLog();
         }
 
-        // 恢复标志
-        if (saveData.Flags != null)
-        {
-            GlobalDataManager.GetInstance().GetGlobalData().Flags = new Dictionary<string, bool>(saveData.Flags);
-        }
-        
-        if (saveData.IntFlags != null)
-        {
-            GlobalDataManager.GetInstance().GetGlobalData().IntFlags = new Dictionary<string, int>(saveData.IntFlags);
-        }
-        
-        if (saveData.StringFlags != null)
-        {
-            GlobalDataManager.GetInstance().GetGlobalData().StringFlags = new Dictionary<string, string>(saveData.StringFlags);
-        }
+        // [Flag 扩展] 恢复标志：经 FlagService 路由（Save 作用域 → 内存快照区；Global 不回退；兼容模式整体覆盖 GlobalData 保持旧行为）
+        FlagService.GetInstance().ImportFromSave(saveData);
 
         // 恢复立绘数据
         currentCharactersScaleX.Clear();
