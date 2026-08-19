@@ -77,7 +77,10 @@ public class VNManager : BaseManager<VNManager>
 
     //(3-29)文本行间转场
     private bool _advanceAfterCommandsRequested = false;
-    
+
+    // [Confirm 出口] 当前行 @Confirm: 出口段是否已被消费（防止出口被打断后重复执行；进入新行时复位）
+    private bool _confirmExitConsumed;
+
     public VNManager()
     {
         if (!isListeningSceneLoad)
@@ -597,6 +600,33 @@ public class VNManager : BaseManager<VNManager>
                 continue;
             }
 
+            // [Confirm 出口] 快进假设用户已点击本行：enter 段未产生跳转时模拟出口段并消费其跳转。
+            // （enter 段已跳转的行不视为"停留"，出口段跳过——与正向播放语义一致；
+            //  targetIndex 行本身不在循环内，其出口段不会被模拟，读档后正确处于"等点击"状态）
+            if (!string.IsNullOrEmpty(line.ConfirmCommands))
+            {
+                CommandManager.GetInstance().SimulateCommands(line.ConfirmCommands);
+
+                if (PendingScriptSwitch != null && TryApplyPendingScriptSwitch(visited, out bool confirmSwitchResult))
+                {
+                    return confirmSwitchResult;
+                }
+
+                if (PendingJumpIndex != null)
+                {
+                    int confirmJumpIndex = PendingJumpIndex.Value;
+                    PendingJumpIndex = null;
+                    if (confirmJumpIndex < 0 || confirmJumpIndex >= StoryLines.Count)
+                    {
+                        Debug.LogError($"[VNManager] 快进中出口跳转目标越界: index={confirmJumpIndex}");
+                    }
+                    else
+                    {
+                        i = confirmJumpIndex - 1;
+                    }
+                }
+            }
+
             lastLine = line;
         }
 
@@ -974,6 +1004,10 @@ public class VNManager : BaseManager<VNManager>
         }
 
         StoryLine currentLine = StoryLines[CurrentLineIndex];
+
+        // [Confirm 出口] 进入新行：出口段重新可用
+        _confirmExitConsumed = false;
+
         ApplyInheritance(currentLine);
         lastLine = currentLine;
 
@@ -1003,8 +1037,6 @@ public class VNManager : BaseManager<VNManager>
 
         _usePersistedCharacterSlotsWhenCsvCharCellsEmpty = false;
     }
-
-    
 
     private void CheckAndTriggerAutoPlay()
     {
@@ -1111,6 +1143,32 @@ public class VNManager : BaseManager<VNManager>
             return;
         }
 
+        // [Confirm 出口] 本行声明了 @Confirm: 且未消费：点击不再直接推进，
+        // 而是执行出口命令（出口内未产生跳转时按默认行为推进下一行）。
+        // 出口执行期间再次点击会先走上方的打断逻辑（出口已标记消费，打断后下次点击按默认推进）。
+        if (HasPendingConfirmExit)
+        {
+            if (!skipAnimations)
+            {
+                LaunchConfirmExit();
+                return;
+            }
+
+            // skip 模式：出口段以模拟方式执行（跳转生效、演出不出），保证跳过时流程正确
+            _confirmExitConsumed = true;
+            CommandManager.GetInstance().SimulateCommands(lastLine.ConfirmCommands);
+            if (PendingJumpIndex != null)
+            {
+                CurrentLineIndex = PendingJumpIndex.Value;
+                PendingJumpIndex = null;
+                PlayCurrentLineImmediately();
+                return;
+            }
+            CurrentLineIndex++;
+            PlayCurrentLineImmediately();
+            return;
+        }
+
         CurrentLineIndex++;
 
         if (skipAnimations)
@@ -1148,6 +1206,10 @@ public class VNManager : BaseManager<VNManager>
         }
 
         StoryLine currentLine = StoryLines[CurrentLineIndex];
+
+        // [Confirm 出口] 进入新行：出口段重新可用
+        _confirmExitConsumed = false;
+
         ApplyInheritance(currentLine);
         lastLine = currentLine;
 
@@ -1464,6 +1526,9 @@ public class VNManager : BaseManager<VNManager>
 
     public void ExecuteChoiceCommand(string command)
     {
+        // [Confirm 出口] 选项命令即本行出口：choice 行声明的 @Confirm: 段不再执行（解析期已警告该写法）
+        ConsumeConfirmExit();
+
         // 【并发防护】用户已做出选择，当前行的残余演出必须终止。
         // 场景：choice 与异步命令并行（如 [choice(...) & wait(3)]——choice 不在链尾的写法），
         // 用户在 wait 结束前点了选项 → 本方法启动新协程；若旧 _flowCoroutine 不停，
@@ -1485,6 +1550,12 @@ public class VNManager : BaseManager<VNManager>
     public bool IsAutoPlaying() { return isAutoPlaying; }
     public bool IsSkipping() { return isSkipping; }
     public bool IsTextDisplaying() { return isTextDisplaying; }
+
+    /// <summary>[Confirm 出口] 将当前行的 @Confirm: 出口段标记为已消费（choice 选项即本行出口，出口段不再执行）</summary>
+    public void ConsumeConfirmExit()
+    {
+        _confirmExitConsumed = true;
+    }
 
     public void SetConfig(string key, string value)
     {
@@ -1997,12 +2068,69 @@ public class VNManager : BaseManager<VNManager>
         // 如果某个命令登记了“命令全部执行完后自动前进”
         if (shouldAdvanceAfterCommands)
         {
+            // [Confirm 出口] 命令驱动的推进（如 fadeBlackOut）同样经由出口段，与点击/AutoPlay 行为统一
+            if (HasPendingConfirmExit)
+            {
+                _flowCoroutine = null; // 当前协程即将结束，让出句柄给出口协程
+                LaunchConfirmExit();
+                yield break;
+            }
             CurrentLineIndex++;
             PlayCurrentLine();
             yield break;
         }
 
         CheckAndTriggerAutoPlay();
+    }
+
+    // ==================== [Confirm 出口] 行尾出口执行（@Confirm: 语法糖） ====================
+
+    /// <summary>当前行是否声明了尚未消费的 @Confirm: 出口段</summary>
+    private bool HasPendingConfirmExit =>
+        !_confirmExitConsumed &&
+        lastLine != null &&
+        !string.IsNullOrEmpty(lastLine.ConfirmCommands);
+
+    /// <summary>
+    /// 启动当前行的出口协程（点击推进、AutoPlay、AdvanceAfterCommands 三个推进入口统一经由这里）。
+    /// 出口段标记为已消费：出口执行期间被用户点击打断时，下一次点击按默认行为推进，不重复执行出口命令。
+    /// </summary>
+    private void LaunchConfirmExit()
+    {
+        if (lastLine == null || string.IsNullOrEmpty(lastLine.ConfirmCommands)) return;
+        _confirmExitConsumed = true;
+        ClearAdvanceAfterCommandsRequest();
+        _flowCoroutine = MonoManager.GetInstance().StartCoroutine(ExecuteConfirmExit(lastLine.ConfirmCommands));
+    }
+
+    /// <summary>
+    /// 执行 @Confirm: 出口命令：出口命令产生跳转/切换（jump/jumpif/loadscript 生效）时播放新位置；
+    /// 未产生跳转时按默认行为推进下一行（等价于旧版 NextLine）。
+    /// </summary>
+    private IEnumerator ExecuteConfirmExit(string confirmCommands)
+    {
+        int preIndex = CurrentLineIndex;
+
+        yield return CommandManager.GetInstance().ExecuteCommandsAsync(confirmCommands);
+
+        _flowCoroutine = null;
+
+        GameStateManager stateManager = GameStateManager.GetInstance();
+        if (stateManager != null && stateManager.CurrentState == GameState.Choice)
+        {
+            // 出口段不应含 choice（解析期已报错拦截），防御性兜底：等待选择
+            yield break;
+        }
+
+        if (CurrentLineIndex != preIndex)
+        {
+            PlayCurrentLine();
+            yield break;
+        }
+
+        // 默认行为：推进到下一行
+        CurrentLineIndex++;
+        PlayCurrentLine();
     }
 
     private IEnumerator AutoPlayCountdown(float delay)
@@ -2041,9 +2169,17 @@ public class VNManager : BaseManager<VNManager>
         
         // 第二步：等待AutoSpeed时间后进入下一行
         yield return new WaitForSeconds(delay);
-        
+
         VNDebug.LogVerbose($"[VNManager] 自动播放进入下一行 (行索引: {CurrentLineIndex + 1})");
         _autoPlayCoroutine = null;
+
+        // [Confirm 出口] 自动播放 = 机器替用户点击：有出口段时经由出口执行（未跳转则默认推进），与点击行为统一
+        if (HasPendingConfirmExit)
+        {
+            LaunchConfirmExit();
+            yield break;
+        }
+
         CurrentLineIndex++;
         PlayCurrentLine();
     }

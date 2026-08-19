@@ -69,6 +69,7 @@ public static class ScriptParser
                     Command = columns[12].Trim(),
                     Note = columns[13].Trim()
                 };
+                SplitConfirmSection(storyLine, columns[12].Trim());
 
                 data.Lines.Add(storyLine);
                 // 记录ID索引
@@ -96,6 +97,7 @@ public static class ScriptParser
                     Command = columns[10].Trim(),
                     Note = columns[11].Trim()
                 };
+                SplitConfirmSection(storyLine, columns[10].Trim());
 
                 data.Lines.Add(storyLine);
                 // 记录ID索引
@@ -212,5 +214,65 @@ public static class ScriptParser
         // 添加最后一个字段
         fields.Add(currentField.ToString());
         return fields.ToArray();
+    }
+
+    // ==================== [Confirm 出口] Command 列切分 ====================
+
+    /// <summary>@Confirm: 标记（大小写不敏感匹配）</summary>
+    private const string ConfirmToken = "@confirm:";
+
+    /// <summary>
+    /// 将 Command 列原始内容按第一个 @Confirm: 切分为进入段（line.Command）与出口段（line.ConfirmCommands）。
+    /// 写法：shake(0.5)&@Confirm:jump(1010) —— @Confirm: 之前为进入行时执行的命令，之后为用户确认推进时执行的命令。
+    /// 规则：
+    ///   · 未出现 @Confirm: 时 ConfirmCommands 为空，行为与旧剧本完全一致；
+    ///   · 出现多个 @Confirm: 时报错，仅第一个生效（容错继续解析）；
+    ///   · 出口段禁止 choice 命令（出口执行后面板尚未响应即被默认推进），进入段含 choice 时警告出口不会触发。
+    /// </summary>
+    private static void SplitConfirmSection(StoryLine line, string rawCommand)
+    {
+        line.Command = "";
+        line.ConfirmCommands = "";
+        if (string.IsNullOrEmpty(rawCommand)) return;
+
+        int idx = rawCommand.ToLower().IndexOf(ConfirmToken);
+        if (idx < 0)
+        {
+            line.Command = rawCommand; // 无出口段：保持旧语义
+            return;
+        }
+
+        // 进入段：去掉 @Confirm: 前残留的分隔符 & 与空白
+        line.Command = rawCommand.Substring(0, idx).Trim().TrimEnd('&').Trim();
+
+        // 出口段：第一个 @Confirm: 之后的全部内容（含后续 &）
+        string rest = rawCommand.Substring(idx + ConfirmToken.Length);
+
+        int second = rest.ToLower().IndexOf(ConfirmToken);
+        if (second >= 0)
+        {
+            Debug.LogError($"[ScriptParser] 行 {line.ID}: Command 列包含多个 @Confirm:（仅第一个生效），请移除多余标记。");
+            rest = rest.Substring(0, second);
+        }
+        line.ConfirmCommands = rest.Trim();
+
+        // 语义校验：choice 与 @Confirm 的互斥关系
+        if (!string.IsNullOrEmpty(line.ConfirmCommands))
+        {
+            if (ContainsChoiceCommand(line.ConfirmCommands))
+            {
+                Debug.LogError($"[ScriptParser] 行 {line.ID}: @Confirm: 出口段不允许 choice 命令（出口执行后面板尚未响应即被默认推进），请将 choice 移至进入段。");
+            }
+            if (ContainsChoiceCommand(line.Command))
+            {
+                Debug.LogWarning($"[ScriptParser] 行 {line.ID}: 进入段含 choice 命令，Choice 状态会拦截普通点击，本行 @Confirm: 出口段将不会执行（choice 选项命令优先生效）。");
+            }
+        }
+    }
+
+    /// <summary>粗粒度检测命令串中是否含 choice 命令（与 VNManager.ContainsChoiceCommand 同规则）</summary>
+    private static bool ContainsChoiceCommand(string commandString)
+    {
+        return !string.IsNullOrEmpty(commandString) && commandString.ToLower().Contains("choice(");
     }
 }

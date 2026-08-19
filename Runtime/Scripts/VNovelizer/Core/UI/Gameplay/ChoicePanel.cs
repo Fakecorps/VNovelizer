@@ -54,6 +54,9 @@ public class ChoicePanel : BasePanel
 
         GameStateManager.GetInstance().SetState(GameState.Gameplay);
 
+        // [Confirm 出口] 选项即本行出口：choice 行声明的 @Confirm: 段不再执行
+        VNManager.GetInstance().ConsumeConfirmExit();
+
         // 注意：这里需要调用 VNManager 或 CommandManager 来执行
         if (!string.IsNullOrEmpty(command))
         {

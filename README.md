@@ -112,7 +112,7 @@ VNovelizer 使用 `ScriptableObject` 管理角色资源，实现了逻辑 ID 与
 | **Background** | | 背景图名 (需在 Resources 背景目录)。留空继承。 | `School_Day` |
 | **BGM** | | 背景音乐名。填 `stop` 停止，`pause` 暂停。 | `Theme_Song` |
 | **Voice** | | 语音文件名。留空自动尝试加载 `行ID.mp3`。`false` 为静音，即该剧本不使用配音。 | `1001_v` |
-| **Command** | | 演出指令集。多条指令用 `&` 分隔。 | `shake(screen)&wait(0.5)` |
+| **Command** | | 演出指令集。多条指令用 `&` 分隔；可用 `@Confirm:` 声明行尾出口指令（见指令手册）。 | `shake(screen)&wait(0.5)` |
 | **Note** | | 策划备注（游戏内不加载）。 | `第一章结束` |
 
 4.  编辑完成后保存 Excel。
@@ -186,7 +186,27 @@ VNManager.GetInstance().StartGame("Chapter1", "1005");
 
 ## 🎮 指令手册 (Command Reference)
 
-指令不区分大小写，参数间用逗号分隔，多指令用 `&` 连接。
+指令不区分大小写，参数间用逗号分隔。同一行多条指令的时序编排支持两种写法：
+
+*   **兼容模式**：用 `&` 连接，指令按顺序执行（连续的 `charfadein`/`charfadeout` 自动并行）。
+*   **命令链语法**：`&` 严格并行、`->` 严格串行、`[]` 分组，详见 **`Docs/VNCommandChainSpec.md`**。
+
+### ⏩ 行尾出口指令（@Confirm:）
+
+Command 列支持用 `@Confirm:` 把指令切分为两段：**进入本行时执行的指令**（`@Confirm:` 之前）与**用户确认推进时执行的出口指令**（`@Confirm:` 之后）。
+
+*   **未声明时**：点击确认后默认执行 `NextLine()`（推进到下一行）——与旧行为完全一致。
+*   **声明后**：点击确认（或自动播放到时、命令请求推进时）先执行出口指令；出口指令产生跳转（`jump`/`jumpif`/`loadscript`）时播放目标行，未跳转则按默认行为推进下一行。
+*   *示例*：
+    *   `jumpif(Favor>=60,1010)&jumpif(Favor<60,1011)` —— 写在**上一行**的出口：播完上一行，点击时检查 Favor 决定去向（推荐写法，跳转行无需单独占一行）。
+    *   `shake(0.5)&@Confirm:jump(1010)` —— 演出后**等待玩家点击**再跳转（与行内裸 `jump` 的"演出完自动跳"相区别）。
+    *   `@Confirm:setintflag(Favor,+10)` —— 点击时先加分，再默认推进下一行。
+
+> **注意**：
+> *   `@Confirm:` 之后的内容整体属于出口段（其中的 `&` 不再切分进入段），一段内仍可用命令链语法。
+> *   出口段禁止 `choice` 命令（解析期报错）；进入段含 `choice` 时出口段不会执行（选项命令优先生效，解析期警告）。
+> *   出口指令的执行时机：点击推进、自动播放（AutoPlay）、命令驱动推进（如 `fadeBlackOut`）三个入口统一经由出口段。
+> *   快进/读档预演会模拟出口段以同步跳转与 Flag 状态；读档后当前行的出口段保持"等点击"状态。
 
 <details>
 <summary><strong>📐 流程控制 (Flow Control)</strong></summary>
@@ -194,9 +214,18 @@ VNManager.GetInstance().StartGame("Chapter1", "1005");
 <br>
 
 *   `jump(id)`: 跳转到当前剧本的指定行 ID。
-*   `loadscript(filename)`: 加载并切换到新的剧本文件。
+*   `jumpif(condition, targetId)`: 条件为真时跳转，等价于 `jump(targetId)`；为假时无操作继续执行。
+*   `jumpifnot(condition, targetId)`: 条件为假时跳转（`jumpif` 的取反版）。
+*   `loadscript(scriptName[, startId])`: 加载并切换到新剧本，可指定起始行 ID（缺省从头开始）。
+*   `loadscriptif(condition, scriptName[, startId])`: 条件为真时加载剧本；为假时无操作。
+*   `loadscriptifnot(condition, scriptName[, startId])`: 条件为假时加载剧本（取反版）。
+*   `loadscene(sceneName)`: 加载 Unity 场景（场景需加入 Build Settings）。
 *   `choice(Text | Command)`: 创建分支选项。
     *   *示例*: `choice(去吃饭|jump(200)) & choice(去睡觉|jump(300))`
+    *   本地化写法：`choice(@loc:choice.key|jump(200))`，详见 `Docs/VNLocalizationGuide.md`。
+*   `exit()`: 结束当前游戏并返回主菜单场景（参数必须为空）。
+
+> **条件语法**（`jumpif` / `loadscriptif` 系列）：支持 `Amy_Favor >= 50`、`Met_Amy`、`!Met_Amy`、`PlayerName == "Alice"` 等表达式，操作数来自 Flag。
 
 </details>
 
@@ -205,14 +234,20 @@ VNManager.GetInstance().StartGame("Chapter1", "1005");
 
 <br>
 
-*   `bgfade(imageName, duration)`: 背景图淡入切换。
-*   `shake(target, duration, strength)`: 震动效果。
-    *   *target*: `screen` (全屏) 或 `dialogue` (对话框)。
+*   `bgfade(imageName[, duration])`: 背景图淡入切换（duration 缺省 1.0 秒）。
+*   `shake(target[, duration, strength])`: 震动效果（duration 缺省 0.5，strength 缺省 10 像素）。
+    *   *target*: `screen` (全屏)、`dialogue` (对话框) 或 `L`/`ML`/`M`/`MR`/`R`（对应槽位立绘）。
+*   `wait(seconds)`: 等待指定秒数（只能异步执行，用于命令链中控制节奏）。
 *   `playparticle(name)`: 播放粒子特效（需预制体）。
-*   `stopparticle(name)`: 停止粒子特效。
-*   `playvideo(filename)`: 播放全屏视频（需位于 StreamingAssets）。
-*   `playanim(name)`: 播放 Animator 动画状态。
-*   `stopanim(name)`: 停止动画。
+*   `stopparticle(name)`: 停止粒子特效（延迟 5 秒回收，让余粒飘完）。
+*   `playvideo(filename[, nextCommand])`: 播放全屏视频（需位于 StreamingAssets），结束后可执行一条命令。
+    *   *示例*: `playvideo(op.mp4, loadscript(Chapter2))`
+*   `playanim(name[, pos[, loop]])`: 播放 Animator 动画。
+    *   *pos*: 挂载槽位，缺省 `M`；追加 `,loop` 则循环播放（需配对 `stopanim` 回收）。
+*   `stopanim(name)`: 停止并回收循环动画。
+*   `fadeBlackIn(duration)`: 黑幕淡入（遮罩变透明，画面显现）。
+*   `fadeBlackOut(duration)`: 黑幕淡出（画面变黑）；完成后**自动推进下一行**。
+*   `hide()`: 隐藏对话框 UI，进入大图/CG 观赏模式（参数必须为空；点击后恢复）。
 
 </details>
 
@@ -221,14 +256,24 @@ VNManager.GetInstance().StartGame("Chapter1", "1005");
 
 <br>
 
-*   `charjump(pos)`: 让指定位置的立绘跳跃 (`L`, `M`, `R`)。
-*   `charflip(pos)`: 水平翻转立绘。
-*   `charfadein(pos, duration)`: 立绘淡入。
-*   `charfadeout(pos, duration)`: 立绘淡出。
-*   `charmove(pos, x, y, duration)`: 移动立绘到指定坐标。
-*   `setchartrans(pos, x, y, scale)`: 精确设置立绘位置和缩放。
+*   `charfadein(pos[, duration])`: 立绘淡入（duration 缺省 0.5 秒）。
+*   `charfadeout(pos[, duration])`: 立绘淡出（duration 缺省 0.5 秒）。
+*   `charmove(pos, x, y[, duration])`: 平滑移动立绘到指定坐标（duration 缺省 0.5 秒）。
+*   `charjump(pos[, duration, times, height])`: 立绘跳跃（缺省 0.4 秒 / 1 次 / 30 像素高）。
+*   `charflip(pos[, dir])`: 水平翻转立绘。
+    *   *dir* 缺省为切换翻转；可填 `1`/`-1` 或 `left`/`right` 强制指定朝向。
+*   `setchartrans(pos, x, y, scale)`: 瞬间设置立绘位置与缩放（保留翻转朝向）。
 
-> **提示**：使用 `charmove` / `setchartrans` / `charflip` 时，**该行 Excel 中对应槽位（CharLeft/Mid/Right）须已填写立绘**，详见上文「剧本：行级状态规则 → 演出命令与立绘列」。
+> **提示**：使用 `charmove` / `setchartrans` / `charflip` 时，**该行 Excel 中对应槽位（CharLeft/Mid/Right）须已填写立绘**，详见上文「剧本：行级状态规则 → 演出命令与立绘列」。立绘位代码：`L` / `ML` / `M` / `MR` / `R`。
+
+</details>
+
+<details>
+<summary><strong>🔊 音频 (Audio)</strong></summary>
+
+<br>
+
+*   `playsfx(name[, times])`: 播放音效（times 缺省 1 次，逐次等待播完）。
 
 </details>
 
@@ -237,15 +282,41 @@ VNManager.GetInstance().StartGame("Chapter1", "1005");
 
 <br>
 
-*   `setboolflag(key, value)`: 设置布尔变量 (`true`/`false`)。
-*   `setintflag(key, value)`: 设置整数变量。
-*   `setstringflag(key, value)`: 设置字符串变量。
+*   `setboolflag(key[, value])`: 设置布尔变量（value 缺省 `true`）。
+*   `setintflag(key, value)`: 设置整数变量，支持相对运算：`+10` / `-10` / `*2` / `/2`（除法为整数除法）。
+    *   *示例*: `setintflag(Amy_Favor, +10)` → 当前值 +10。
+*   `setstringflag(key, value)`: 设置字符串变量（值含逗号时需用引号包裹）。
+    *   *示例*: `setstringflag(message, "Hello, World")`
 *   `unlockcg(name)`: 解锁画廊中的 CG。
 *   `unlockmusic(name)`: 解锁画廊中的音乐。
 *   `unlockscene(name)`: 解锁回想场景。
-*   `playsfx(name, times)`: 播放音效。
-*   `t_color(R,G,B)`: 修改当前行字体颜色，效果不继承。
-*   `t_size(font size)`: 修改当前行字体大小，效果不继承。
+
+> Flag 的作用域（Global 持久 / Save 随档回退）由 Flag 注册表（`VNovelizer → Flag 编辑器`）定义，详见 `Docs/VNFlagSystemDesign.md`。
+
+</details>
+
+<details>
+<summary><strong>✍️ 文本样式 (Text Styling)</strong></summary>
+
+<br>
+
+*   `t_color(R,G,B)`: 修改当前行字体颜色（0-255），效果不继承到下一行。
+*   `t_size(fontSize)`: 修改当前行字体大小（10-200），效果不继承到下一行。
+*   `settextspeed(secPerChar)`: 设置打字机速度（秒/字，如 `0.05`）。
+*   `setautospeed(speed)`: 设置自动播放速度。
+*   `showprompt(text[, duration])`: 在屏幕上显示临时提示文字（duration 缺省 2 秒）。
+    *   *示例*: `showprompt(好感度+1)`
+
+</details>
+
+<details>
+<summary><strong>⚙️ 配置 (Config)</strong></summary>
+
+<br>
+
+*   `config(key:value)`: 运行时修改全局配置。
+    *   *key*: `voice`（`true`/`false` 语音开关）、`textspeed`（打字速度）、`autospeed`（自动播放速度）。
+    *   *示例*: `config(voice:false)`
 
 </details>
 
