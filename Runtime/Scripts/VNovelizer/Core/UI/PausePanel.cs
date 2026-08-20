@@ -188,7 +188,7 @@ public class PausePanel : BasePanel
         
         // 【Bug修复】截图已经在打开PausePanel之前完成，这里不需要再次截屏
         // 打开保存面板
-        UIManager.GetInstance().ShowPanel<SaveLoadPanel>("SaveLoadPanel", VNProjectConfig.Instance.UI_SaveLoadPath, E_UI_Layer.Top, (panel) =>
+        UIManager.GetInstance().Show<SaveLoadPanel>((panel) =>
         {
             panel.SetMode(SaveLoadPanel.Mode.Save);
         });
@@ -210,7 +210,7 @@ public class PausePanel : BasePanel
         gameObject.SetActive(false);
         
         // 打开加载面板
-        UIManager.GetInstance().ShowPanel<SaveLoadPanel>("SaveLoadPanel", VNProjectConfig.Instance.UI_SaveLoadPath, E_UI_Layer.Top, (panel) =>
+        UIManager.GetInstance().Show<SaveLoadPanel>((panel) =>
         {
             panel.SetMode(SaveLoadPanel.Mode.Load);
         });
@@ -232,9 +232,7 @@ public class PausePanel : BasePanel
         gameObject.SetActive(false);
         
         // 打开设置面板
-        string path = VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_SettingsPath : "VNPrefabs/UI/Settings";
-        if (string.IsNullOrEmpty(path)) path = "VNPrefabs/UI/Settings";
-        UIManager.GetInstance().ShowPanel<SettingsPanel>("SettingsPanel", path, E_UI_Layer.Top, null);
+        UIManager.GetInstance().Show<SettingsPanel>();
     }
     
     /// <summary>

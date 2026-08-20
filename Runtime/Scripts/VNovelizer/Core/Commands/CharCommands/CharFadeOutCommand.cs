@@ -1,13 +1,14 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using VNovelizer.Core.API;
-using VNovelizer.Core.Compat;
+using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
-    /// 角色淡出命令 (PrimeTween 高性能版)
+    /// 角色淡出命令（剧场层实现）
+    /// 格式：charfadeout(位置, [时长])
+    /// 淡出到 0 后隐藏并将透明度复位为 1（与旧行为一致：隐藏时归位 alpha）。
     /// </summary>
     public class CharFadeOutCommand : VNCommand
     {
@@ -15,15 +16,8 @@ namespace VNovelizer.Core.Commands
 
         private float defaultDuration = 0.5f;
 
-        private struct ActiveFade
-        {
-            public int Token;
-            public CanvasGroup CanvasGroup;
-            public CompatTween Tween;
-        }
-
-        private readonly List<ActiveFade> _activeFades = new List<ActiveFade>();
-        private int _nextFadeToken;
+        // --- 活动淡出登记（支持多实例并行 + 点击跳过时正确归位） ---
+        private readonly List<string> _activeFades = new List<string>();
 
         public override bool Execute(string args)
         {
@@ -39,68 +33,39 @@ namespace VNovelizer.Core.Commands
             float duration = defaultDuration;
             if (parts.Length > 1) float.TryParse(parts[1].Trim(), out duration);
 
-            RectTransform targetRect = VNAPI.GetCharRect(posCode);
-            if (targetRect == null || !targetRect.gameObject.activeSelf)
-                yield break;
+            var theater = TheaterManager.GetInstance();
+            var actor = theater.GetActor(posCode);
+            if (actor == null) yield break;
 
-            CanvasGroup targetCG = targetRect.GetComponent<CanvasGroup>();
-            if (targetCG == null) targetCG = targetRect.gameObject.AddComponent<CanvasGroup>();
+            var state = theater.GetState(posCode);
+            if (state != null && !state.visible) yield break; // 已隐藏，无需淡出
 
-            CompatTween fadeTween = AnimationCompat.Alpha(targetCG, startValue: targetCG.alpha, endValue: 0f, duration: duration)
-                .OnComplete(() =>
-                {
-                    if (targetCG != null && targetCG.gameObject != null)
-                    {
-                        targetCG.gameObject.SetActive(false);
-                        targetCG.alpha = 1f;
-                    }
-                });
-
-            int token = ++_nextFadeToken;
-            _activeFades.Add(new ActiveFade { Token = token, CanvasGroup = targetCG, Tween = fadeTween });
-
+            _activeFades.Add(posCode);
             try
             {
-                yield return fadeTween.ToYieldInstruction();
-
-                if (targetCG != null && targetCG.gameObject != null)
-                {
-                }
-                else
-                {
-                    Debug.LogWarning("[CharFadeOut] CanvasGroup 在动画过程中被销毁");
-                }
+                yield return actor.FadeAsync(0f, duration);
             }
             finally
             {
-                UnregisterFade(token);
+                _activeFades.Remove(posCode);
             }
+
+            // 淡出完成：隐藏并归位透明度（后续 charfadein 从 1 → 淡入逻辑不受影响）
+            theater.SetVisible(posCode, false);
+            theater.SetAlpha(posCode, 1f);
         }
 
-        private void UnregisterFade(int token)
-        {
-            for (int i = _activeFades.Count - 1; i >= 0; i--)
-            {
-                if (_activeFades[i].Token == token)
-                    _activeFades.RemoveAt(i);
-            }
-        }
-
+        /// <summary>中断：瞬间到终态（隐藏）</summary>
         public override void Interrupt()
         {
-            var snapshot = new List<ActiveFade>(_activeFades);
-            bool anyCompleted = false;
-            foreach (var af in snapshot)
+            var theater = TheaterManager.GetInstance();
+            foreach (string posCode in _activeFades)
             {
-                if (af.Tween.isAlive)
-                {
-                    af.Tween.Complete();
-                    anyCompleted = true;
-                }
+                var actor = theater.GetActor(posCode);
+                actor?.Interrupt();
+                theater.SetVisible(posCode, false);
+                theater.SetAlpha(posCode, 1f);
             }
-            if (anyCompleted)
-                Debug.Log("[CharFadeOut] 动画被中断，已瞬间隐藏。");
-
             _activeFades.Clear();
         }
     }

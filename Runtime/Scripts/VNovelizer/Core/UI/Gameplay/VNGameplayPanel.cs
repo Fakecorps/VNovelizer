@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -20,17 +20,10 @@ public class VNGameplayPanel : BasePanel
     public System.Action OnInitialized;
 
     // 模块组件
-    [SerializeField] private Image bgImage_F;
-    [SerializeField] private Image bgImage_B;
-    [SerializeField] private Image charLeftImage;
-    [SerializeField] private Image charMidLeftImage;
-    [SerializeField] private Image charMidImage;
-    [SerializeField] private Image charMidRightImage;
-    [SerializeField] private Image charRightImage;
+    // 【剧场层重构】舞台字段已删除：背景/立绘/特效层由剧场层（TheaterManager）渲染
     [SerializeField] private Image speakerBox;
     [SerializeField] private TMP_Text speakerText;
     [SerializeField] private TMP_Text dialogueText;
-    [SerializeField] private Transform effectLayer;
     
     // HeadProfile 组件
     [SerializeField] private Image headImage; // 头像显示的 Image
@@ -44,14 +37,6 @@ public class VNGameplayPanel : BasePanel
     [Header("HeadFrame 配置")]
     [Tooltip("默认头像边框 Sprite（可选，如果为空则使用 VNProjectConfig 中的全局默认值）")]
     [SerializeField] private Sprite defaultHeadFrameSprite;
-    
-    // 【新增】存储每个位置的默认 Transform（用于 setchartrans 命令的恢复）
-    private Dictionary<string, Vector2> defaultCharPositions = new Dictionary<string, Vector2>();
-    private Dictionary<string, float> defaultCharScales = new Dictionary<string, float>();
-    private HashSet<string> modifiedCharTransforms = new HashSet<string>(); // 记录哪些位置的 Transform 被修改过
-    
-    // 【新增】存储每个位置的基准位置（用于 offset 应用，避免累加）
-    private Dictionary<string, Vector2> baseCharPositions = new Dictionary<string, Vector2>();
 
     // 【新增】存储对话文本的默认属性（用于 t_color 和 t_size 命令的恢复）
     private Color? defaultDialogueTextColor = null;
@@ -102,18 +87,10 @@ public class VNGameplayPanel : BasePanel
     {
         base.Awake();
 
-        // 获取组件
-        bgImage_F = GetControl<Image>("BG_Front");
-        bgImage_B = GetControl<Image>("BG_Back");
-        charLeftImage = GetControl<Image>("Char_Left");
-        charMidLeftImage = FindCharImageByCandidates("中左槽位 (ML)", "Char_Mid_Left", "CharMid_Left", "CharMidLeft", "Mid_Left");
-        charMidImage = GetControl<Image>("Char_Mid");
-        charMidRightImage = FindCharImageByCandidates("中右槽位 (MR)", "Char_Mid_Right", "CharMid_Right", "CharMidRight", "Mid_Right");
-        charRightImage = GetControl<Image>("Char_Right");
+        // 获取组件（舞台字段由剧场层管理：BG_Front/BG_Back/Char_*/EffectLayer 不再由面板解析）
         speakerBox = GetControl<Image>("SpeakerBox");
         speakerText = GetControl<TMP_Text>("SpeakerText");
         dialogueText = GetControl<TMP_Text>("DialougeText");
-        effectLayer = transform.Find("EffectLayer");
         
         // 获取UI根节点（必须在获取 HeadProfile 之前）
         uiRoot = transform.Find("UIRoot");
@@ -202,9 +179,9 @@ public class VNGameplayPanel : BasePanel
 
         // 注册事件
         EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.UpdateDialogue, OnUpdateDialogue);
-        EventCenter.GetInstance().AddEventListener<string>(VNGameEvents.ChangeBackground, OnChangeBackground);
-        EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.ShowCharacter, OnShowCharacter);
-        EventCenter.GetInstance().AddEventListener<string>(VNGameEvents.HideCharacter, OnHideCharacter);
+        // 【剧场层重构】舞台事件（ChangeBackground/ShowCharacter/HideCharacter）已改由 TheaterManager 消费，
+        // 面板不再监听，避免 UGUI 与剧场双渲染。下方 OnChangeBackground/OnShowCharacter/OnHideCharacter
+        // 方法保留待阶段 3 清理（当前为死代码）。
         EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.UpdateHeadProfile, OnUpdateHeadProfile);
         EventCenter.GetInstance().AddEventListener("TextSpeedChanged", OnTextSpeedChanged);
         EventCenter.GetInstance().AddEventListener("AutoSpeedChanged", OnAutoSpeedChanged);
@@ -513,7 +490,7 @@ public class VNGameplayPanel : BasePanel
     // Log事件 - 打开历史记录
     public void OnLog(InputAction.CallbackContext context)
     {
-        var historyPanel = UIManager.GetInstance().GetPanel<HistoryPanel>("HistoryPanel");
+        var historyPanel = UIManager.GetInstance().Get<HistoryPanel>();
         
         // 【重要】如果HistoryPanel已经打开
         if (historyPanel != null && historyPanel.gameObject.activeSelf)
@@ -545,9 +522,7 @@ public class VNGameplayPanel : BasePanel
 
         // 打开历史记录面板
         GameStateManager.GetInstance().SetState(GameState.History);
-        string path = VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_HistoryPath : "VNPrefabs/UI/History";
-        if (string.IsNullOrEmpty(path)) path = "VNPrefabs/UI/History";
-        UIManager.GetInstance().ShowPanel<HistoryPanel>("HistoryPanel", path, E_UI_Layer.Top, null);
+        UIManager.GetInstance().Show<HistoryPanel>();
     }
 
     // Save事件 - 打开保存系统
@@ -560,7 +535,7 @@ public class VNGameplayPanel : BasePanel
             return;
         }
 
-        var saveLoadPanel = UIManager.GetInstance().GetPanel<SaveLoadPanel>("SaveLoadPanel");
+        var saveLoadPanel = UIManager.GetInstance().Get<SaveLoadPanel>();
 
         if (saveLoadPanel != null && saveLoadPanel.gameObject.activeSelf)
         {
@@ -572,7 +547,7 @@ public class VNGameplayPanel : BasePanel
         {
             // 打开保存面板
             SaveManager.GetInstance().CaptureCurrentScreen();
-            UIManager.GetInstance().ShowPanel<SaveLoadPanel>("SaveLoadPanel", VNProjectConfig.Instance.UI_SaveLoadPath, E_UI_Layer.Top, (panel) =>
+            UIManager.GetInstance().Show<SaveLoadPanel>((panel) =>
             {
                 panel.SetMode(SaveLoadPanel.Mode.Save);
             });
@@ -597,7 +572,7 @@ public class VNGameplayPanel : BasePanel
             return;
         }
 
-        var pausePanel = UIManager.GetInstance().GetPanel<PausePanel>("PausePanel");
+        var pausePanel = UIManager.GetInstance().Get<PausePanel>();
 
         if (pausePanel != null && pausePanel.gameObject.activeSelf)
         {
@@ -611,9 +586,7 @@ public class VNGameplayPanel : BasePanel
             SaveManager.GetInstance().CaptureCurrentScreen();
             
             // 打开暂停面板
-            string path = VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_PausePath : "VNPrefabs/UI/Pause";
-            if (string.IsNullOrEmpty(path)) path = "VNPrefabs/UI/Pause";
-            UIManager.GetInstance().ShowPanel<PausePanel>("PausePanel", path, E_UI_Layer.Top, null);
+            UIManager.GetInstance().Show<PausePanel>();
         }
     }
     
@@ -699,7 +672,7 @@ public class VNGameplayPanel : BasePanel
 
     private void OnLogFallback()
     {
-        UIManager.GetInstance().ShowPanel<HistoryPanel>("HistoryPanel", VNProjectConfig.Instance.UI_HistoryPath, E_UI_Layer.Middle, null);
+        UIManager.GetInstance().Show<HistoryPanel>();
     }
     #endregion
 
@@ -839,143 +812,6 @@ public class VNGameplayPanel : BasePanel
     }
 
 
-    private void OnChangeBackground(string backgroundPath)
-    {
-        if (bgImage_F == null)
-        {
-            bgImage_F = GetControl<Image>("BackgroundLayer");
-            if (bgImage_F == null) return;
-        }
-
-        if (backgroundPath == "black")
-        {
-            bgImage_F.color = Color.black;
-            bgImage_F.sprite = null;
-        }
-        else
-        {
-            string fullBackgroundPath = backgroundPath;
-
-            if (!fullBackgroundPath.Contains("/"))
-            {
-                string rootPath = VNProjectConfig.Instance.BackgroundResPath;
-                string path = rootPath + "/" + fullBackgroundPath;
-                ResourcesManager.GetInstance().LoadAsync<Sprite>(path, (sprite) =>
-                {
-                    if (sprite != null)
-                    {
-                        bgImage_F.sprite = sprite;
-                        bgImage_F.color = Color.white;
-                    }
-                    else
-                    {
-                        string pathWithBackgrounds = "Backgrounds/" + fullBackgroundPath;
-                        ResourcesManager.GetInstance().LoadAsync<Sprite>(pathWithBackgrounds, (sprite2) =>
-                        {
-                            if (sprite2 != null)
-                            {
-                                bgImage_F.sprite = sprite2;
-                                bgImage_F.color = Color.white;
-                            }
-                        });
-                    }
-                });
-            }
-            else
-            {
-                ResourcesManager.GetInstance().LoadAsync<Sprite>(fullBackgroundPath, (sprite) =>
-                {
-                    if (sprite != null)
-                    {
-                        bgImage_F.sprite = sprite;
-                        bgImage_F.color = Color.white;
-                    }
-                });
-            }
-        }
-    }
-
-    private void OnShowCharacter(Dictionary<string, string> characterInfo)
-    {
-        string position = characterInfo["position"];
-        string characterID = characterInfo["characterID"];
-        string group = characterInfo.ContainsKey("group") ? characterInfo["group"] : CharacterProfile.DefaultGroupName;
-        string emotion = characterInfo["emotion"];
-
-        Image charImage = GetCharImage(position);
-        if (charImage == null) return;
-
-        CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
-        if (profile != null)
-        {
-            Sprite sprite = profile.GetEmotionSprite(group, emotion);
-            if (sprite != null)
-            {
-                RectTransform charRect = charImage.rectTransform;
-                
-                // 保存原始锚点设置（SetNativeSize会重置锚点）
-                Vector2 savedAnchorMin = charRect.anchorMin;
-                Vector2 savedAnchorMax = charRect.anchorMax;
-                
-                // 设置sprite并恢复原始尺寸（避免拉伸）
-                charImage.sprite = sprite;
-                charImage.color = Color.white;
-                charImage.gameObject.SetActive(true);
-                
-                // 使用SetNativeSize()恢复原始尺寸，保证不会产生拉伸
-                charImage.SetNativeSize();
-                
-                // 恢复锚点设置（SetNativeSize会将anchorMax设为anchorMin，需要恢复）
-                charRect.anchorMin = savedAnchorMin;
-                charRect.anchorMax = savedAnchorMax;
-                
-                // 位置代码转换：VNManager 内部使用 "Left"/"MidLeft"/"Mid"/"MidRight"/"Right"，但 API 使用 "L"/"ML"/"M"/"MR"/"R"
-                string posCode = position;
-                if (position == "Left") posCode = "L";
-                else if (position == "MidLeft") posCode = "ML";
-                else if (position == "Mid") posCode = "M";
-                else if (position == "MidRight") posCode = "MR";
-                else if (position == "Right") posCode = "R";
-                
-                // 【关键修复】保存基准位置（第一次显示时）
-                // SetNativeSize()并恢复锚点后，此时的anchoredPosition是基准位置
-                // 如果该位置还没有保存基准位置，则保存它
-                if (!baseCharPositions.ContainsKey(posCode))
-                {
-                    baseCharPositions[posCode] = charRect.anchoredPosition;
-                    VNDebug.LogVerbose($"[VNGameplayPanel] 保存位置 {position}({posCode}) 的基准位置: {baseCharPositions[posCode]}");
-                }
-                
-                // 基于保存的基准位置应用offset，而不是基于当前位置（避免累加）
-                Vector2 basePosition = baseCharPositions[posCode];
-                charRect.anchoredPosition = basePosition + profile.offset;
-                
-                // 应用profile中的scale（使用localScale，不影响布局系统）
-                float profileScale = profile.scale > 0 ? profile.scale : 1.0f; // 防止非正值
-                Vector3 scale = Vector3.one * profileScale;
-                
-                // 应用保存的翻转状态（如果存在）
-                float savedScaleX = VNManager.GetInstance().GetCharacterScaleX(posCode);
-                if (savedScaleX != 1f) // 如果不是默认值，应用翻转
-                {
-                    scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
-                }
-                charRect.localScale = scale;
-                
-                VNDebug.LogVerbose($"[VNGameplayPanel] 应用位置 {position}({posCode}) - Scale: {profileScale}, Offset: {profile.offset}, Flip: {savedScaleX}, BasePos: {basePosition}, FinalPos: {charRect.anchoredPosition}");
-            }
-        }
-    }
-
-    private void OnHideCharacter(string position)
-    {
-        Image charImage = GetCharImage(position);
-        if (charImage != null)
-        {
-            charImage.gameObject.SetActive(false);
-        }
-    }
-    
     /// <summary>
     /// 更新 HeadProfile 显示
     /// </summary>
@@ -1181,7 +1017,7 @@ public class VNGameplayPanel : BasePanel
         }
 
         SaveManager.GetInstance().CaptureCurrentScreen();
-        UIManager.GetInstance().ShowPanel<SaveLoadPanel>("SaveLoadPanel", VNProjectConfig.Instance.UI_SaveLoadPath, E_UI_Layer.Top, (panel)=>
+        UIManager.GetInstance().Show<SaveLoadPanel>((panel)=>
         {
             panel.SetMode(SaveLoadPanel.Mode.Save);
         });
@@ -1196,7 +1032,7 @@ public class VNGameplayPanel : BasePanel
             return;
         }
 
-        UIManager.GetInstance().ShowPanel<SaveLoadPanel>("SaveLoadPanel", VNProjectConfig.Instance.UI_SaveLoadPath, E_UI_Layer.Top, (panel) =>
+        UIManager.GetInstance().Show<SaveLoadPanel>((panel) =>
         {
             panel.SetMode(SaveLoadPanel.Mode.Load);
         });
@@ -1211,7 +1047,7 @@ public class VNGameplayPanel : BasePanel
             return;
         }
 
-        var historyPanel = UIManager.GetInstance().GetPanel<HistoryPanel>("HistoryPanel");
+        var historyPanel = UIManager.GetInstance().Get<HistoryPanel>();
 
         if (historyPanel != null && historyPanel.gameObject.activeSelf)
         {
@@ -1223,7 +1059,7 @@ public class VNGameplayPanel : BasePanel
         {
             // 打开前先设置状态
             GameStateManager.GetInstance().SetState(GameState.History);
-            UIManager.GetInstance().ShowPanel<HistoryPanel>("HistoryPanel", VNProjectConfig.Instance.UI_HistoryPath, E_UI_Layer.Top, null);
+            UIManager.GetInstance().Show<HistoryPanel>();
         }
     }
 
@@ -1317,9 +1153,7 @@ public class VNGameplayPanel : BasePanel
         OnInitialized = null;
         // 移除事件监听
         EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>(VNGameEvents.UpdateDialogue, OnUpdateDialogue);
-        EventCenter.GetInstance().RemoveEventListener<string>(VNGameEvents.ChangeBackground, OnChangeBackground);
-        EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>(VNGameEvents.ShowCharacter, OnShowCharacter);
-        EventCenter.GetInstance().RemoveEventListener<string>(VNGameEvents.HideCharacter, OnHideCharacter);
+        // 【剧场层重构】舞台事件已由 TheaterManager 常驻消费，面板不再注销（未注册）
         EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>(VNGameEvents.UpdateHeadProfile, OnUpdateHeadProfile);
         EventCenter.GetInstance().RemoveEventListener("TextSpeedChanged", OnTextSpeedChanged);
         EventCenter.GetInstance().RemoveEventListener("AutoSpeedChanged", OnAutoSpeedChanged);
@@ -1400,108 +1234,6 @@ public class VNGameplayPanel : BasePanel
     #endregion
 
     #region 可供外部调用的API
-    /// <summary>
-    /// 按候选名称列表查找角色槽位 Image（用于新增槽位的命名兼容）
-    /// </summary>
-    private Image FindCharImageByCandidates(string slotDesc, params string[] candidateNames)
-    {
-        foreach (string name in candidateNames)
-        {
-            Image img = GetControl<Image>(name);
-            if (img != null) return img;
-        }
-        Debug.LogWarning($"[VNGameplayPanel] 未找到{slotDesc}的 Image（尝试过名称: {string.Join("/", candidateNames)}）。" +
-                         $"旧版 prefab 不含此槽位，如需使用 CharMid_Left / CharMid_Right 列，请在 prefab 中添加对应 GameObject。");
-        return null;
-    }
-
-    public RectTransform GetCharRect(string posCode)
-    {
-        if (string.IsNullOrEmpty(posCode)) return null;
-
-        switch (posCode.ToUpper())
-        {
-            case "L":
-            case "LEFT":
-                return charLeftImage != null ? charLeftImage.rectTransform : null;
-
-            case "ML":
-            case "MIDLEFT":
-            case "MID_LEFT":
-            case "CHARMID_LEFT":
-            case "CHARMIDLEFT":
-                return charMidLeftImage != null ? charMidLeftImage.rectTransform : null;
-
-            case "M":
-            case "MID":
-            case "MIDDLE":
-                return charMidImage != null ? charMidImage.rectTransform : null;
-
-            case "MR":
-            case "MIDRIGHT":
-            case "MID_RIGHT":
-            case "CHARMID_RIGHT":
-            case "CHARMIDRIGHT":
-                return charMidRightImage != null ? charMidRightImage.rectTransform : null;
-
-            case "R":
-            case "RIGHT":
-                return charRightImage != null ? charRightImage.rectTransform : null;
-
-            default:
-                Debug.LogWarning($"[VNGameplayPanel] 未知的位置代码: {posCode}");
-                return null;
-        }
-    }
-
-    public Image GetCharImage(string position)
-    {
-        switch (position)
-        {
-            case "Left":
-            case "L":
-                return charLeftImage;
-            case "MidLeft":
-            case "Mid_Left":
-            case "CharMid_Left":
-            case "ML":
-                return charMidLeftImage;
-            case "Mid":
-            case "M":
-                return charMidImage;
-            case "MidRight":
-            case "Mid_Right":
-            case "CharMid_Right":
-            case "MR":
-                return charMidRightImage;
-            case "Right":
-            case "R":
-                return charRightImage;
-            default:
-                Debug.LogError($"Invalid character position: {position}");
-                return null;
-        }
-    }
-
-    public Image GetBG_F()
-    {
-        if (bgImage_F != null)
-        {
-            return bgImage_F;
-        }
-        return null;
-    }
-
-    public Image GetBG_B()
-    {
-        if (bgImage_B != null)
-        { 
-            return bgImage_B;
-        }
-        return null;
-        
-    }
-
     public TMP_Text GetDialogueText()
     {
         if (dialogueText != null)
@@ -1529,8 +1261,6 @@ public class VNGameplayPanel : BasePanel
         return null;
     }
 
-    public Transform GetEffectLayer() => effectLayer;
-    
     /// <summary>
     /// 检查打字机效果是否正在进行
     /// </summary>
@@ -1541,69 +1271,6 @@ public class VNGameplayPanel : BasePanel
 
     /// <summary>立即完成当前台词的打字机效果。</summary>
     public void CompleteDialogueTyping() => CompleteTextTyping();
-    
-    /// <summary>
-    /// 保存指定位置的默认 Transform（在第一次修改时调用）
-    /// </summary>
-    public void SaveDefaultCharTransform(string posCode)
-    {
-        RectTransform rect = GetCharRect(posCode);
-        if (rect != null)
-        {
-            string normalizedPos = NormalizePositionCode(posCode);
-            if (!defaultCharPositions.ContainsKey(normalizedPos))
-            {
-                defaultCharPositions[normalizedPos] = rect.anchoredPosition;
-                defaultCharScales[normalizedPos] = rect.localScale.y; // 使用 y 值作为缩放（通常 x 和 y 相同）
-                VNDebug.LogVerbose($"[VNGameplayPanel] 保存位置 {posCode}({normalizedPos}) 的默认 Transform: 位置={rect.anchoredPosition}, 缩放={rect.localScale.y}");
-            }
-            // 标记该位置已被修改
-            modifiedCharTransforms.Add(normalizedPos);
-        }
-    }
-    
-    /// <summary>
-    /// 恢复所有被修改的角色 Transform 到默认值
-    /// </summary>
-    public void RestoreDefaultCharTransforms()
-    {
-        if (modifiedCharTransforms.Count == 0) return;
-        
-        foreach (string posCode in modifiedCharTransforms)
-        {
-            RectTransform rect = GetCharRect(posCode);
-            if (rect != null && defaultCharPositions.ContainsKey(posCode) && defaultCharScales.ContainsKey(posCode))
-            {
-                rect.anchoredPosition = defaultCharPositions[posCode];
-                
-                // 恢复缩放时，保持原有的翻转状态（scale.x 的符号）
-                Vector3 currentScale = rect.localScale;
-                float defaultScale = defaultCharScales[posCode];
-                float scaleX = Mathf.Sign(currentScale.x) * Mathf.Abs(defaultScale);
-                rect.localScale = new Vector3(scaleX, defaultScale, 1f);
-                
-                VNDebug.LogVerbose($"[VNGameplayPanel] 恢复位置 {posCode} 的默认 Transform: 位置={defaultCharPositions[posCode]}, 缩放={defaultScale}");
-            }
-        }
-        
-        // 清空修改记录，准备下一行的处理
-        modifiedCharTransforms.Clear();
-    }
-    
-    /// <summary>
-    /// 标准化位置代码（L/ML/M/MR/R）
-    /// </summary>
-    private string NormalizePositionCode(string posCode)
-    {
-        if (string.IsNullOrEmpty(posCode)) return posCode;
-        string upper = posCode.ToUpper();
-        if (upper == "LEFT" || upper == "L") return "L";
-        if (upper == "ML" || upper == "MIDLEFT" || upper == "MID_LEFT" || upper == "CHARMID_LEFT" || upper == "CHARMIDLEFT") return "ML";
-        if (upper == "MID" || upper == "MIDDLE" || upper == "M") return "M";
-        if (upper == "MR" || upper == "MIDRIGHT" || upper == "MID_RIGHT" || upper == "CHARMID_RIGHT" || upper == "CHARMIDRIGHT") return "MR";
-        if (upper == "RIGHT" || upper == "R") return "R";
-        return posCode; // 未知格式，原样返回
-    }
 
     /// <summary>
     /// 获取对话框的 RectTransform（用于震动）

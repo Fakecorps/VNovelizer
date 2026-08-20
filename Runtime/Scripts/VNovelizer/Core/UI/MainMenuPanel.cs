@@ -106,7 +106,7 @@ public class MainMenuPanel : BasePanel
         base.OnEnable();
         
         // 确保UIManager已初始化（主菜单场景可能没有初始化UIManager）
-        if (UIManager.GetInstance() != null && UIManager.GetInstance().canvas == null)
+        if (UIManager.GetInstance() != null && !UIManager.GetInstance().IsInitialized)
         {
             UIManager.GetInstance().Init();
         }
@@ -223,12 +223,7 @@ public class MainMenuPanel : BasePanel
         Debug.Log($"[MainMenuPanel] 开始新游戏流程: 剧本={scriptName}, 行ID={lineID}");
 
         // 1. 先显示常驻加载界面
-        UIManager.GetInstance().ShowPanel<LoadingProgressPanel>(
-            "LoadingProgressPanel",
-            VNProjectConfig.Instance.UI_LoadingPath,
-            E_UI_Layer.System,
-            null
-        );
+        UIManager.GetInstance().Show<LoadingProgressPanel>();
 
         // 2. 强制刷新 UI，并至少等一帧，让 loading 真正显示到屏幕上
         Canvas.ForceUpdateCanvases();
@@ -267,10 +262,7 @@ public class MainMenuPanel : BasePanel
         }
         
         // 显示存档加载面板
-        UIManager.GetInstance().ShowPanel<SaveLoadPanel>(
-            "SaveLoadPanel", 
-            VNProjectConfig.Instance.UI_SaveLoadPath, 
-            E_UI_Layer.Middle, 
+        UIManager.GetInstance().Show<SaveLoadPanel>(
             (panel) =>
             {
                 if (panel != null)
@@ -287,14 +279,7 @@ public class MainMenuPanel : BasePanel
     private void OnGalleryBtnClick()
     {
         // 显示画廊面板
-        // 注意：GalleryPanel 的路径可能需要从配置中读取
-        string galleryPath = VNProjectConfig.Instance.UI_GalleryPath; // 临时使用Settings路径
-        UIManager.GetInstance().ShowPanel<GalleryPanel>(
-            "GalleryPanel", 
-            galleryPath, 
-            E_UI_Layer.Middle, 
-            null
-        );
+        UIManager.GetInstance().Show<GalleryPanel>();
     }
     
     /// <summary>
@@ -303,12 +288,7 @@ public class MainMenuPanel : BasePanel
     private void OnSettingsBtnClick()
     {
         // 显示设置面板
-        UIManager.GetInstance().ShowPanel<SettingsPanel>(
-            "SettingsPanel", 
-            VNProjectConfig.Instance.UI_SettingsPath, 
-            E_UI_Layer.Middle, 
-            null
-        );
+        UIManager.GetInstance().Show<SettingsPanel>();
     }
     
     /// <summary>
@@ -317,11 +297,7 @@ public class MainMenuPanel : BasePanel
     private void OnQuitBtnClick()
     {
         // 显示确认对话框
-        string confirmPath = VNProjectConfig.Instance.UI_ConfirmPath;
-        UIManager.GetInstance().ShowPanel<ConfirmPanel>(
-            "ConfirmPanel", 
-            confirmPath, 
-            E_UI_Layer.System, 
+        UIManager.GetInstance().Show<ConfirmPanel>(
             (panel) =>
             {
                 if (panel != null)

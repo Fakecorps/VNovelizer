@@ -1,14 +1,15 @@
 using UnityEngine;
-using VNovelizer.Core.API;
+using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
-    /// 角色水平翻转命令
+    /// 角色水平翻转命令（剧场层实现）
     /// 格式：charflip(位置, [可选]方向)
     /// 示例1：charflip(M) -> 切换翻转状态 (左变右，右变左)
     /// 示例2：charflip(M, -1) -> 强制面朝左
     /// 示例3：charflip(M, 1) -> 强制面朝右
+    /// 翻转状态源仍为 VNManager.currentCharactersScaleX（纯数据，随存档持久化）。
     /// </summary>
     public class CharFlipCommand : VNCommand
     {
@@ -21,50 +22,46 @@ namespace VNovelizer.Core.Commands
             string[] parts = args.Split(',');
             string posCode = parts[0].Trim();
 
-            // 1. 获取角色
-            RectTransform target = VNAPI.GetCharRect(posCode);
-            if (target == null)
-            {
-                Debug.LogError($"[CharFlip] 找不到角色: {posCode}");
-                return false;
-            }
+            var vnManager = VNManager.GetInstance();
+            var theater = TheaterManager.GetInstance();
 
-            // 2. 确定翻转方向
+            // 1. 确定翻转方向（基于当前状态符号，与旧实现语义一致）
+            float currentScaleX = vnManager.GetCharacterScaleX(posCode);
             float targetScaleX;
 
             if (parts.Length > 1)
             {
-                // 强制指定：填 1 或 -1
                 if (float.TryParse(parts[1].Trim(), out float val))
                 {
-                    // 只要符号，保留原有大小（防止缩放被重置）
-                    targetScaleX = Mathf.Sign(val) * Mathf.Abs(target.localScale.x);
+                    targetScaleX = Mathf.Sign(val);
                 }
                 else
                 {
-                    // 也可以支持 "left", "right" 字符串
                     string dir = parts[1].Trim().ToLower();
-                    if (dir == "left") targetScaleX = -1f * Mathf.Abs(target.localScale.x);
-                    else targetScaleX = 1f * Mathf.Abs(target.localScale.x);
+                    targetScaleX = dir == "left" ? -1f : 1f;
                 }
             }
             else
             {
-                // 默认模式：切换方向 (取反)
-                targetScaleX = -target.localScale.x;
+                targetScaleX = currentScaleX * -1f;
             }
 
-            // 3. 应用翻转到UI
-            Vector3 scale = target.localScale;
-            scale.x = targetScaleX;
-            target.localScale = scale;
+            // 2. 更新数据状态（Simulate 与 Execute 共享的唯一事实源）
+            vnManager.SetCharacterScaleX(posCode, targetScaleX);
 
-            // 4. 同步更新内部状态（保持状态一致性）
-            VNManager.GetInstance().SetCharacterScaleX(posCode, targetScaleX);
+            // 3. 应用到剧场（演员不在台时只更新数据，登台时 OnShowCharacter 会读取）
+            var state = theater.GetState(posCode);
+            if (state != null)
+            {
+                theater.SetFlip(posCode, targetScaleX < 0f);
+                Debug.Log($"[CharFlip] 角色 {posCode} 翻转至 X={targetScaleX}");
+                return true;
+            }
 
-            Debug.Log($"[CharFlip] 角色 {posCode} 翻转至 X={scale.x}");
+            Debug.Log($"[CharFlip] 角色 {posCode} 不在台上，翻转状态已记录: X={targetScaleX}");
             return true;
         }
+
         public override void Simulate(string args)
         {
             if (string.IsNullOrEmpty(args)) return;
@@ -72,38 +69,27 @@ namespace VNovelizer.Core.Commands
             string[] parts = args.Split(',');
             string posCode = parts[0].Trim();
 
-            // 1. 获取当前角色状态
-            string charData = VNManager.GetInstance().GetCharacterData(posCode); // 获取 "CharID_Emotion"
-            if (string.IsNullOrEmpty(charData) || charData == "hide") 
+            string charData = VNManager.GetInstance().GetCharacterData(posCode);
+            if (string.IsNullOrEmpty(charData) || charData == "hide")
             {
                 Debug.LogWarning($"[CharFlip.Simulate] 位置 {posCode} 没有角色，跳过翻转");
-                return; // 没角色就跳过
+                return;
             }
 
-            // 2. 解析新的翻转方向 (只改变 scale.x 的符号)
+            float currentScaleX = VNManager.GetInstance().GetCharacterScaleX(posCode);
             float targetScaleX;
             if (parts.Length > 1)
             {
-                // 强制指定方向
                 if (float.TryParse(parts[1].Trim(), out float val))
-                {
-                    targetScaleX = Mathf.Sign(val); // 只需要符号，绝对值设为1
-                }
+                    targetScaleX = Mathf.Sign(val);
                 else
-                {
-                    string dir = parts[1].Trim().ToLower();
-                    if (dir == "left") targetScaleX = -1f;
-                    else targetScaleX = 1f;
-                }
+                    targetScaleX = parts[1].Trim().ToLower() == "left" ? -1f : 1f;
             }
             else
             {
-                // 默认切换：获取当前 scale.x，然后取反
-                float currentScaleX = VNManager.GetInstance().GetCharacterScaleX(posCode);
                 targetScaleX = currentScaleX * -1f;
             }
 
-            // 3. 更新内部状态（不操作UI，因为UI还没创建）
             VNManager.GetInstance().SetCharacterScaleX(posCode, targetScaleX);
             Debug.Log($"[CharFlip.Simulate] 位置 {posCode} 翻转状态更新为: {targetScaleX}");
         }

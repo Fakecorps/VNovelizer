@@ -192,6 +192,11 @@ public class VNProjectConfig : ScriptableObject
     private bool ValidateKey(string value) => value != null && value.Length == 32;
     private bool ValidateIV(string value) => value != null && value.Length == 16;
 
+    // ==================== 八、剧场 ====================
+    [Order(800), BoxGroup("八、剧场"), LabelText("自定义场景相机")]
+    [Tooltip("剧场专用场景相机预制体（可预挂后处理组件，如 Bloom/DoF，默认禁用）。留空使用引擎默认相机")]
+    public GameObject CustomSceneCameraPrefab;
+
     // ==================== 辅助方法 ====================
 #if UNITY_EDITOR
     public string GetExcelFolderPath()

@@ -7,6 +7,7 @@
         "Unity.Localization.Editor",
         "Unity.Localization",
         "Unity.ResourceManager",
+        "Alchemy",
         "Alchemy.Editor"
     ],
     "includePlatforms": [

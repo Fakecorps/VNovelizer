@@ -267,12 +267,7 @@ public class SaveLoadPanel : BasePanel
         bool wasFromPause = !stateManager.IsStateStackEmpty();
 
         // 先显示常驻 loading
-        UIManager.GetInstance().ShowPanel<LoadingProgressPanel>(
-            "LoadingProgressPanel",
-            VNProjectConfig.Instance.UI_LoadingPath,
-            E_UI_Layer.System,
-            null
-        );
+        UIManager.GetInstance().Show<LoadingProgressPanel>();
 
         // 强制刷新并等待一帧，让 loading 先真正显示出来
         Canvas.ForceUpdateCanvases();
@@ -326,10 +321,7 @@ public class SaveLoadPanel : BasePanel
     private void OnDeleteSlotClick(int slotIndex)
     {
         // 弹出确认框
-        string loadPath = VNProjectConfig.Instance.UI_ConfirmPath;
-        string confirmPath = loadPath;
-
-        UIManager.GetInstance().ShowPanel<ConfirmPanel>("ConfirmPanel", confirmPath, E_UI_Layer.System, (panel) =>
+        UIManager.GetInstance().Show<ConfirmPanel>((panel) =>
         {
             panel.Show(
                 "Delete",
@@ -377,9 +369,7 @@ public class SaveLoadPanel : BasePanel
         // 如果恢复后的状态是Pause，重新显示PausePanel
         if (GameStateManager.GetInstance().CurrentState == GameState.Pause)
         {
-            string path = VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_PausePath : "VNPrefabs/UI/Pause";
-            if (string.IsNullOrEmpty(path)) path = "VNPrefabs/UI/Pause";
-            UIManager.GetInstance().ShowPanel<PausePanel>("PausePanel", path, E_UI_Layer.Top, null);
+            UIManager.GetInstance().Show<PausePanel>();
         }
     }
 

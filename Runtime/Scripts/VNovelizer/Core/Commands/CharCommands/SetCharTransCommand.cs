@@ -1,14 +1,13 @@
-using System.Collections;
 using UnityEngine;
-using VNovelizer.Core.API;
+using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
-    /// 设置角色 Transform 命令
+    /// 设置角色 Transform 命令（剧场层实现）
     /// 格式：setchartrans(位置, Pos X, Pos Y, Scale)
-    /// 示例：setchartrans(M, 100, 200, 1.5) -> 将中间位置的角色移动到 (100, 200)，缩放为 1.5
-    /// 注意：此命令不继承，执行下一行时会自动恢复到默认 Transform
+    /// 坐标为剧本像素语义；缩放与翻转分离（scale 为正值大小，翻转符号独立保持）。
+    /// 注意：此命令不继承，执行下一行时会自动恢复到默认 Transform（OnShowCharacter 重置）。
     /// </summary>
     public class SetCharTransCommand : VNCommand
     {
@@ -25,7 +24,6 @@ namespace VNovelizer.Core.Commands
                 return false;
             }
 
-            // 解析参数
             string posCode = parts[0].Trim();
             if (!float.TryParse(parts[1].Trim(), out float posX))
             {
@@ -43,28 +41,19 @@ namespace VNovelizer.Core.Commands
                 return false;
             }
 
-            // 获取角色 RectTransform
-            RectTransform target = VNAPI.GetCharRect(posCode);
-            if (target == null)
+            var theater = TheaterManager.GetInstance();
+            var state = theater.GetState(posCode);
+            if (state == null)
             {
                 Debug.LogError($"[SetCharTrans] 找不到角色: {posCode}");
                 return false;
             }
 
-            // 获取面板并保存默认值（如果还没有保存过）
-            var panel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
-            if (panel != null)
-            {
-                panel.SaveDefaultCharTransform(posCode);
-            }
-
-            // 设置位置
-            target.anchoredPosition = new Vector2(posX, posY);
-            
-            // 设置缩放（保持原有的翻转状态，即 scale.x 的符号）
-            Vector3 currentScale = target.localScale;
-            float scaleX = Mathf.Sign(currentScale.x) * Mathf.Abs(scale); // 保持符号，应用新缩放值
-            target.localScale = new Vector3(scaleX, scale, 1f);
+            // 保持原有翻转符号，应用新缩放（与旧实现语义一致）
+            bool flipped = state.scaleX < 0f;
+            theater.SetPosition(posCode, new Vector2(posX, posY));
+            theater.SetScale(posCode, Mathf.Abs(scale));
+            theater.SetFlip(posCode, flipped);
 
             Debug.Log($"[SetCharTrans] 角色 {posCode} Transform 已设置: 位置=({posX}, {posY}), 缩放={scale}");
             return true;
@@ -72,15 +61,13 @@ namespace VNovelizer.Core.Commands
 
         public override void Simulate(string args)
         {
-            // 预演模式下，只记录状态，不操作UI
+            // 预演语义与旧实现一致：Transform 是行内瞬态演出，不落状态
             if (string.IsNullOrEmpty(args)) return;
 
             string[] parts = args.Split(',');
             if (parts.Length < 4) return;
 
             string posCode = parts[0].Trim();
-            
-            // 检查角色是否存在
             string charData = VNManager.GetInstance().GetCharacterData(posCode);
             if (string.IsNullOrEmpty(charData) || charData == "hide")
             {
@@ -88,10 +75,7 @@ namespace VNovelizer.Core.Commands
                 return;
             }
 
-            // 预演模式下不操作UI，只记录日志
             Debug.Log($"[SetCharTrans.Simulate] 位置 {posCode} 的 Transform 将在运行时设置");
         }
     }
 }
-
-

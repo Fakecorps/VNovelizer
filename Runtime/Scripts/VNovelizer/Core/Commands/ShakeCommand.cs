@@ -2,27 +2,31 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
-    /// 震动命令
+    /// 震动命令（剧场层实现）
     /// 格式: shake(arg, shakeduration, shakeIntensity)
-    /// arg = screen: 相机震动（整个面板）
-    /// arg = L/ML/M/MR/R: 对应位置的角色震动
-    /// arg = dialogue: 对话框震动
+    /// arg = screen: 相机震动（剧场场景相机，UI 纹丝不动）
+    /// arg = L/ML/M/MR/R: 对应位置的角色震动（剧场演员）
+    /// arg = dialogue: 对话框震动（UI 层，保持旧实现）
     /// </summary>
     public class ShakeCommand : VNCommand
     {
         public override string CommandName { get { return "shake"; } }
 
-        // 默认参数：震动 UI 时，强度通常需要大一点，因为 UI 坐标单位是像素
+        // 默认参数：强度单位为剧本像素（UI 与剧场演员统一像素语义，相机内部换算世界单位）
         private float defaultDuration = 0.5f;
-        private float defaultIntensity = 10f; // UI像素偏移量
+        private float defaultIntensity = 10f;
 
-        // --- 活动震动协程跟踪（支持多实例并行 + 点击跳过时正确中断） ---
-        // 记录 (协程句柄, 目标 rect, 原始位置)，中断时全部停止并强制归位
-        private readonly List<(Coroutine co, RectTransform rect, Vector2 originalPos)> _activeShakes
+        // --- 活动震动跟踪（支持多实例并行 + 点击跳过时正确中断归位） ---
+        private bool _screenShakeActive;
+        private readonly List<string> _activeActorShakes = new List<string>();
+
+        // 对话框震动（UI 层）：协程句柄 + 原始位置
+        private readonly List<(Coroutine co, RectTransform rect, Vector2 originalPos)> _activeUiShakes
             = new List<(Coroutine, RectTransform, Vector2)>();
 
         public override bool Execute(string args)
@@ -37,7 +41,7 @@ namespace VNovelizer.Core.Commands
             string[] parts = args.Split(',');
             if (parts.Length < 1)
             {
-                Debug.LogError("[ShakeCommand] 参数不足，至少需要指定震动目标（screen/L/M/R/dialogue）");
+                Debug.LogError("[ShakeCommand] 参数不足，至少需要指定震动目标（screen/L/ML/M/MR/R/dialogue）");
                 return false;
             }
 
@@ -50,179 +54,141 @@ namespace VNovelizer.Core.Commands
             if (parts.Length >= 3)
                 float.TryParse(parts[2].Trim(), out intensity);
 
-            // 使用泛型方法获取 VNGameplayPanel
-            var panel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
-            if (panel == null)
-            {
-                Debug.LogError("[ShakeCommand] 未找到 VNGameplayPanel，请确保该面板已打开。");
-                return false;
-            }
-
-            Transform targetTransform = null;
-
-            // 根据 arg 参数确定震动目标
+            // 1) 相机震动：剧场场景相机（只震戏内画面，UI 稳定）
             if (arg == "screen")
             {
-                // 屏幕震动（整个面板）
-                targetTransform = panel.transform;
+                SceneCameraManager.GetInstance().BeginShake(duration, intensity * MeshActor.PixelsToWorld);
+                _screenShakeActive = true;
+                Debug.Log($"[ShakeCommand] 开始相机震动: 持续时间={duration}, 强度={intensity}px");
+                return true;
             }
-            else if (arg == "l" || arg == "m" || arg == "r" || arg == "ml" || arg == "mr" ||
-                     arg == "left" || arg == "midleft" || arg == "mid_left" ||
-                     arg == "mid" || arg == "middle" ||
-                     arg == "midright" || arg == "mid_right" || arg == "right" ||
-                     arg == "charmid_left" || arg == "charmid_right")
+
+            // 2) 角色震动：剧场演员
+            string posCode = TheaterManager.NormalizePosCode(arg);
+            if (posCode != null)
             {
-                // 角色震动
-                string posCode = NormalizePositionCode(arg);
-                RectTransform charRect = VNAPI.GetCharRect(posCode);
-                if (charRect != null)
-                {
-                    targetTransform = charRect;
-                }
-                else
+                var theater = TheaterManager.GetInstance();
+                if (theater.GetActor(posCode) == null)
                 {
                     Debug.LogError($"[ShakeCommand] 找不到位置 {arg} 的角色");
                     return false;
                 }
+                theater.BeginActorShake(posCode, duration, intensity);
+                if (!_activeActorShakes.Contains(posCode))
+                    _activeActorShakes.Add(posCode);
+                Debug.Log($"[ShakeCommand] 开始角色震动: 目标={arg}, 持续时间={duration}, 强度={intensity}px");
+                return true;
             }
-            else if (arg == "dialogue")
+
+            // 3) 对话框震动：UI 层（保持旧实现）
+            if (arg == "dialogue")
             {
-                // 对话框震动
-                RectTransform dialogueBoxRect = panel.GetDialogueBoxRect();
-                if (dialogueBoxRect != null)
+                var panel = UIManager.GetInstance().Get<VNGameplayPanel>();
+                if (panel == null)
                 {
-                    targetTransform = dialogueBoxRect;
+                    Debug.LogError("[ShakeCommand] 未找到 VNGameplayPanel，请确保该面板已打开。");
+                    return false;
                 }
-                else
+
+                RectTransform dialogueBoxRect = panel.GetDialogueBoxRect();
+                if (dialogueBoxRect == null)
                 {
                     Debug.LogError("[ShakeCommand] 找不到对话框");
                     return false;
                 }
-            }
-            else
-            {
-                Debug.LogError($"[ShakeCommand] 未知的震动目标: {arg}。支持的目标: screen, L/ML/M/MR/R, dialogue");
-                return false;
-            }
 
-            if (targetTransform != null)
-            {
-                // 先记录原始位置（StartCoroutine 会同步执行到第一个 yield，
-                // 届时 anchoredPosition 已被首个偏移改变，必须提前捕获）
-                var rect = targetTransform.GetComponent<RectTransform>();
-                Vector2 originalPos = rect != null ? rect.anchoredPosition : Vector2.zero;
-
-                // 启动震动协程（登记句柄，支持并行实例与中断归位）
-                var co = MonoManager.GetInstance().StartCoroutine(ShakeUICoroutine(targetTransform, duration, intensity));
-                if (rect != null)
-                    _activeShakes.Add((co, rect, originalPos));
-                Debug.Log($"[ShakeCommand] 开始震动: 目标={arg}, 持续时间={duration}, 强度={intensity}");
+                // 先记录原始位置（StartCoroutine 会同步执行到第一个 yield，须提前捕获）
+                Vector2 originalPos = dialogueBoxRect.anchoredPosition;
+                var co = MonoManager.GetInstance().StartCoroutine(ShakeUICoroutine(dialogueBoxRect, duration, intensity));
+                _activeUiShakes.Add((co, dialogueBoxRect, originalPos));
+                Debug.Log($"[ShakeCommand] 开始对话框震动: 持续时间={duration}, 强度={intensity}px");
                 return true;
             }
 
+            Debug.LogError($"[ShakeCommand] 未知的震动目标: {arg}。支持的目标: screen, L/ML/M/MR/R, dialogue");
             return false;
         }
 
         /// <summary>
-        /// 中断全部震动：停止协程并强制归位，防止跳过后 UI 元素持续震动/偏移残留
+        /// 中断全部震动：相机/演员归位 + 对话框强制归位
         /// </summary>
         public override void Interrupt()
         {
-            if (_activeShakes.Count == 0) return;
-
-            var mono = MonoManager.GetInstance();
-            foreach (var entry in _activeShakes)
+            // 相机震动
+            if (_screenShakeActive)
             {
-                mono.StopCoroutine(entry.co);
-                if (entry.rect != null && entry.rect.gameObject != null)
+                SceneCameraManager.GetInstance().CancelShake();
+                _screenShakeActive = false;
+            }
+
+            // 演员震动
+            if (_activeActorShakes.Count > 0)
+            {
+                var theater = TheaterManager.GetInstance();
+                foreach (string posCode in _activeActorShakes)
+                    theater.CancelActorShake(posCode);
+                _activeActorShakes.Clear();
+            }
+
+            // 对话框震动（UI 层）
+            if (_activeUiShakes.Count > 0)
+            {
+                var mono = MonoManager.GetInstance();
+                foreach (var entry in _activeUiShakes)
                 {
-                    try
+                    mono.StopCoroutine(entry.co);
+                    if (entry.rect != null && entry.rect.gameObject != null)
                     {
-                        entry.rect.anchoredPosition = entry.originalPos;
-                    }
-                    catch (MissingReferenceException)
-                    {
-                        // 对象已销毁，无需归位
+                        try
+                        {
+                            entry.rect.anchoredPosition = entry.originalPos;
+                        }
+                        catch (MissingReferenceException)
+                        {
+                            // 对象已销毁，无需归位
+                        }
                     }
                 }
+                _activeUiShakes.Clear();
             }
-            _activeShakes.Clear();
-            Debug.Log("[ShakeCommand] 震动被玩家中断，已全部归位。");
         }
 
         /// <summary>
-        /// 标准化位置代码（L/ML/M/MR/R）
+        /// UI 震动协程（对话框分支专用）
         /// </summary>
-        private string NormalizePositionCode(string posCode)
+        private IEnumerator ShakeUICoroutine(RectTransform rect, float duration, float intensity)
         {
-            if (string.IsNullOrEmpty(posCode)) return posCode;
-            string lower = posCode.ToLower();
-            if (lower == "left" || lower == "l") return "L";
-            if (lower == "ml" || lower == "midleft" || lower == "mid_left" || lower == "charmid_left" || lower == "charmidleft") return "ML";
-            if (lower == "mid" || lower == "middle" || lower == "m") return "M";
-            if (lower == "mr" || lower == "midright" || lower == "mid_right" || lower == "charmid_right" || lower == "charmidright") return "MR";
-            if (lower == "right" || lower == "r") return "R";
-            return posCode;
-        }
-
-        /// <summary>
-        /// UI 震动协程
-        /// </summary>
-        private IEnumerator ShakeUICoroutine(Transform targetTransform, float duration, float intensity)
-        {
-            if (targetTransform == null) yield break;
-
-            // 获取 RectTransform 以便操作 UI 坐标
-            RectTransform rect = targetTransform.GetComponent<RectTransform>();
             if (rect == null) yield break;
 
-            // 记录原始坐标 (AnchoredPosition 是相对于父物体的坐标)
             Vector2 originalPos = rect.anchoredPosition;
 
             try
             {
-            float elapsedTime = 0f;
-
-            while (elapsedTime < duration)
-            {
-                // 【Bug修复】每次循环都检查对象是否有效
-                if (rect == null || targetTransform == null)
+                float elapsedTime = 0f;
+                while (elapsedTime < duration)
                 {
-                    Debug.LogWarning("[ShakeCommand] RectTransform 在震动过程中被销毁，中断震动");
-                    yield break;
-                }
+                    if (rect == null)
+                    {
+                        Debug.LogWarning("[ShakeCommand] RectTransform 在震动过程中被销毁，中断震动");
+                        yield break;
+                    }
 
-                // 生成随机偏移 (UI 坐标系)
-                float offsetX = Random.Range(-intensity, intensity);
-                float offsetY = Random.Range(-intensity, intensity);
+                    float offsetX = Random.Range(-intensity, intensity);
+                    float offsetY = Random.Range(-intensity, intensity);
+                    rect.anchoredPosition = new Vector2(originalPos.x + offsetX, originalPos.y + offsetY);
 
-                // 应用偏移
-                try
-                {
-                    rect.anchoredPosition = new Vector2(
-                        originalPos.x + offsetX,
-                        originalPos.y + offsetY
-                    );
+                    elapsedTime += Time.deltaTime;
+                    yield return null;
                 }
-                catch (MissingReferenceException)
-                {
-                    Debug.LogWarning("[ShakeCommand] RectTransform 已被销毁，中断震动");
-                    yield break;
-                }
-
-                elapsedTime += Time.deltaTime;
-                yield return null;
-            }
             }
             finally
             {
-                // 自然结束（或被外部 StopCoroutine）时从活动列表移除
-                int idx = _activeShakes.FindIndex(e => e.rect == rect);
-                if (idx >= 0) _activeShakes.RemoveAt(idx);
+                int idx = _activeUiShakes.FindIndex(e => e.rect == rect);
+                if (idx >= 0) _activeUiShakes.RemoveAt(idx);
             }
 
-            // 震动结束，强制归位，防止偏移累积
-            if (rect != null && targetTransform != null)
+            // 震动结束归位，防止偏移累积
+            if (rect != null)
             {
                 try
                 {

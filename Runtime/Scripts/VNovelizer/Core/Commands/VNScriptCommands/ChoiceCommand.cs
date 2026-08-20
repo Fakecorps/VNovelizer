@@ -40,16 +40,12 @@ namespace VNovelizer.Core.Commands
             VNDebug.LogVerbose($"[ChoiceCommand] 解析选项 -> Text: {text}, Cmd: {cmd}");
 
             // 3. 获取或打开面板
-            var panel = UIManager.GetInstance().GetPanel<ChoicePanel>("ChoicePanel");
+            var panel = UIManager.GetInstance().Get<ChoicePanel>();
 
             if (panel == null || !panel.gameObject.activeSelf)
             {
-                // 如果面板没开，先打开
-                // 确保 VNProjectConfig 里配了 UI_ChoicePath
-                string path = VNProjectConfig.Instance.UI_ChoicePath;
-                if (string.IsNullOrEmpty(path)) path = "VNPrefabs/UI/Choice"; // 保底路径
-
-                UIManager.GetInstance().ShowPanel<ChoicePanel>("ChoicePanel", path, E_UI_Layer.Top, (p) =>
+                // 如果面板没开，先打开（路径由 UIManager 注册表解析）
+                UIManager.GetInstance().Show<ChoicePanel>((p) =>
                 {
                     p.AddChoice(text, cmd);
                 });

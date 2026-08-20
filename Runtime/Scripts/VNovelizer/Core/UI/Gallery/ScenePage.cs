@@ -247,11 +247,11 @@ public class ScenePage : MonoBehaviour
         if (sceneData != null && !string.IsNullOrEmpty(sceneData.ScriptName))
         {
             //记录主菜单状态（在隐藏之前）
-            MainMenuPanel mainMenuPanel = UIManager.GetInstance().GetPanel<MainMenuPanel>("MainMenuPanel");
+            MainMenuPanel mainMenuPanel = UIManager.GetInstance().Get<MainMenuPanel>();
             bool wasMainMenuVisible = mainMenuPanel != null && mainMenuPanel.gameObject.activeSelf;
             
             //隐藏画廊面板
-            GalleryPanel galleryPanel = UIManager.GetInstance().GetPanel<GalleryPanel>("GalleryPanel");
+            GalleryPanel galleryPanel = UIManager.GetInstance().Get<GalleryPanel>();
             if (galleryPanel != null)
             {
                 galleryPanel.gameObject.SetActive(false);

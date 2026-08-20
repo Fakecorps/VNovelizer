@@ -16,7 +16,7 @@ namespace VNovelizer.Core.API
 
         private static VNGameplayPanel GetPanel()
         {
-            var panel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            var panel = UIManager.GetInstance().Get<VNGameplayPanel>();
             if (panel == null)
             {
                 // 尝试直接在场景里找 (应对 UIManager 字典更新延迟)
@@ -36,45 +36,39 @@ namespace VNovelizer.Core.API
         public static bool HasGameplayPanel() => GetPanel() != null;
 
         /// <summary>
-        /// 获取前背景图 (用于正常显示)
+        /// 获取前背景图（【剧场层重构】已废弃——背景由 TheaterManager 渲染，请改用 TheaterManager.GetActor 获取 IActor）
         /// </summary>
-        public static Image GetBG_F()
-        {
-            var panel = GetPanel();
-            return panel != null ? panel.GetBG_F() : null;
-        }
+        [Obsolete("背景已迁移至剧场层，请改用 TheaterManager.GetActor 获取 IActor")]
+        public static Image GetBG_F() => null;
 
         /// <summary>
-        /// 获取后背景图 (用于淡入淡出过渡)
+        /// 获取后背景图（【剧场层重构】已废弃——同 GetBG_F，请改用 TheaterManager.GetActor 获取 IActor）
         /// </summary>
-        public static Image GetBG_B()
-        {
-            var panel = GetPanel();
-            return panel != null ? panel.GetBG_B() : null;
-        }
+        [Obsolete("背景已迁移至剧场层，请改用 TheaterManager.GetActor 获取 IActor")]
+        public static Image GetBG_B() => null;
 
         /// <summary>
-        /// 获取指定位置的角色 RectTransform
+        /// 获取指定位置的角色 RectTransform（【剧场层重构】已废弃——立绘由 TheaterManager 渲染，请改用 TheaterManager.GetActor 获取 IActor）
         /// </summary>
-        /// <param name="posCode">L, M, R</param>
-        public static RectTransform GetCharRect(string posCode)
-        {
-            var panel = GetPanel();
-            return panel != null ? panel.GetCharRect(posCode) : null;
-        }
+        [Obsolete("立绘已迁移至剧场层，请改用 TheaterManager.GetActor 获取 IActor")]
+        public static RectTransform GetCharRect(string posCode) => null;
 
         /// <summary>
-        /// 获取指定位置的角色 Image
+        /// 获取指定位置的角色 Image（【剧场层重构】已废弃——同 GetCharRect）
         /// </summary>
-        /// <param name="posCode">L, M, R</param>
-        public static Image GetCharImage(string posCode)
+        [Obsolete("立绘已迁移至剧场层，请改用 TheaterManager.GetActor 获取 IActor")]
+        public static Image GetCharImage(string posCode) => null;
+
+        /// <summary>特效层（【剧场层重构】阶段 4 之前暂保留 UI 层实现：查找 VNGameplayPanel 下的 EffectLayer；阶段 4 迁移至剧场层后将移除）</summary>
+        public static Transform GetEffectLayer()
         {
             var panel = GetPanel();
-            return panel != null ? panel.GetCharImage(posCode) : null;
+            if (panel == null) return null;
+            return panel.transform.Find("EffectLayer");
         }
 
         public static float GetCharScaleX(string posCode) => VNManager.GetInstance().GetCharacterScaleX(posCode);//获取角色朝向
-        public static void SetCharScaleX(string posCode, float scaleX) => VNManager.GetInstance().SetCharacterScaleX(posCode, scaleX);//设置角色朝向
+        public static void SetCharScaleX(string posCode, float scaleX) => VNManager.GetInstance().SetCharacterScaleX(posCode, scaleX);//设置角色朝向//设置角色朝向
         public static TMP_Text GetDialogueText()
         {
             var panel = GetPanel();
@@ -130,12 +124,6 @@ namespace VNovelizer.Core.API
 
             return panel != null ? panel.GetSpeakerText() : null;
         }
-        public static Transform GetEffectLayer()
-        {
-            var panel = GetPanel();
-            return panel != null ? panel.GetEffectLayer() : null;
-        }
-
         /// <summary>对话框区域 RectTransform（如震屏等）。</summary>
         public static RectTransform GetDialogueBoxRect()
         {
@@ -302,15 +290,7 @@ namespace VNovelizer.Core.API
 
         public static void PlayVideo(string videoName, System.Action onComplete)
         {
-            Transform parent = UIManager.GetInstance().GetLayerFather(E_UI_Layer.System);
-            if (parent == null)
-            {
-                VNDebug.LogVerbose("[VNAPI] 找不到系统层父物体");
-                onComplete?.Invoke();
-                return;
-            }
-
-            // 2. 加载预制体
+            // 1. 加载预制体
             var config = VNProjectConfig.Instance;
             if (config == null || string.IsNullOrEmpty(config.VideoObjPath))
             {
@@ -329,8 +309,18 @@ namespace VNovelizer.Core.API
                 return;
             }
 
-            // 3. 实例化并播放
-            GameObject go = UnityEngine.Object.Instantiate(prefab, parent);
+            // 2. 实例化为场景根对象，并保证全屏 Canvas 契约
+            //    （【UI架构v2】视频以独立全屏 Canvas 呈现，sortingOrder=45 压过全部面板、低于常驻加载条；
+            //     VideoModel 播完自毁 GO 时连带销毁 Canvas，无容器泄漏）
+            GameObject go = UnityEngine.Object.Instantiate(prefab);
+            go.name = "VideoPlayer_Fullscreen";
+
+            var canvas = go.GetComponent<Canvas>();
+            if (canvas == null) canvas = go.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 45;
+
+            if (go.GetComponent<CanvasScaler>() == null) go.AddComponent<CanvasScaler>();
 
             // 确保全屏铺满
             RectTransform rect = go.GetComponent<RectTransform>();

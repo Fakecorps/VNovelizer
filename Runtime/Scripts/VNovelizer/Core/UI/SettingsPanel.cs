@@ -873,9 +873,7 @@ public class SettingsPanel : BasePanel
         // 如果恢复后的状态是Pause，重新显示PausePanel
         if (GameStateManager.GetInstance().CurrentState == GameState.Pause)
         {
-            string path = VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_PausePath : "VNPrefabs/UI/Pause";
-            if (string.IsNullOrEmpty(path)) path = "VNPrefabs/UI/Pause";
-            UIManager.GetInstance().ShowPanel<PausePanel>("PausePanel", path, E_UI_Layer.Top, null);
+            UIManager.GetInstance().Show<PausePanel>();
         }
     }
 

@@ -1,13 +1,14 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using VNovelizer.Core.API;
-using VNovelizer.Core.Compat;
+using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
-    /// 角色淡入命令 (PrimeTween 高性能版)
+    /// 角色淡入命令（剧场层实现）
+    /// 格式：charfadein(位置, [时长])
+    /// 经 TheaterManager 驱动 IActor，不再接触 UGUI 类型。
     /// </summary>
     public class CharFadeInCommand : VNCommand
     {
@@ -15,15 +16,8 @@ namespace VNovelizer.Core.Commands
 
         private float defaultDuration = 0.5f;
 
-        private struct ActiveFade
-        {
-            public int Token;
-            public CanvasGroup CanvasGroup;
-            public CompatTween Tween;
-        }
-
-        private readonly List<ActiveFade> _activeFades = new List<ActiveFade>();
-        private int _nextFadeToken;
+        // --- 活动淡入登记（支持多实例并行 + 点击跳过时正确归位） ---
+        private readonly List<string> _activeFades = new List<string>();
 
         public override bool Execute(string args)
         {
@@ -39,70 +33,38 @@ namespace VNovelizer.Core.Commands
             float duration = defaultDuration;
             if (parts.Length > 1) float.TryParse(parts[1].Trim(), out duration);
 
-            RectTransform targetRect = VNAPI.GetCharRect(posCode);
-            if (targetRect == null)
+            var theater = TheaterManager.GetInstance();
+            var actor = theater.GetActor(posCode);
+            if (actor == null)
             {
                 Debug.LogError($"[CharFadeIn] 找不到位置 {posCode} 的角色");
                 yield break;
             }
 
-            CanvasGroup targetCG = targetRect.GetComponent<CanvasGroup>();
-            if (targetCG == null) targetCG = targetRect.gameObject.AddComponent<CanvasGroup>();
+            theater.SetVisible(posCode, true);
+            theater.SetAlpha(posCode, 0f);
 
-            targetCG.alpha = 0;
-            targetRect.gameObject.SetActive(true);
-
-            CompatTween fadeTween = AnimationCompat.Alpha(targetCG, 1f, duration, Ease.OutQuad);
-            int token = ++_nextFadeToken;
-            _activeFades.Add(new ActiveFade { Token = token, CanvasGroup = targetCG, Tween = fadeTween });
-
+            _activeFades.Add(posCode);
             try
             {
-                yield return fadeTween.ToYieldInstruction();
-
-                if (targetCG != null && targetCG.gameObject != null)
-                {
-                }
-                else
-                {
-                    Debug.LogWarning("[CharFadeIn] CanvasGroup 在动画过程中被销毁");
-                }
+                yield return actor.FadeAsync(1f, duration);
             }
             finally
             {
-                UnregisterFade(token);
+                _activeFades.Remove(posCode);
             }
         }
 
-        private void UnregisterFade(int token)
-        {
-            for (int i = _activeFades.Count - 1; i >= 0; i--)
-            {
-                if (_activeFades[i].Token == token)
-                    _activeFades.RemoveAt(i);
-            }
-        }
-
+        /// <summary>中断：瞬间到终态（完全显示）</summary>
         public override void Interrupt()
         {
-            var snapshot = new List<ActiveFade>(_activeFades);
-            foreach (var af in snapshot)
+            var theater = TheaterManager.GetInstance();
+            foreach (string posCode in _activeFades)
             {
-                if (af.Tween.isAlive)
-                    af.Tween.Complete();
-
-                if (af.CanvasGroup != null)
-                {
-                    try
-                    {
-                        if (af.CanvasGroup.gameObject != null)
-                            af.CanvasGroup.alpha = 1f;
-                    }
-                    catch (MissingReferenceException)
-                    {
-                        Debug.LogWarning("[CharFadeIn] 尝试中断时发现 CanvasGroup 已被销毁");
-                    }
-                }
+                var actor = theater.GetActor(posCode);
+                actor?.Interrupt();
+                theater.SetAlpha(posCode, 1f);
+                theater.SetVisible(posCode, true);
             }
             _activeFades.Clear();
         }

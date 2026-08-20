@@ -182,15 +182,17 @@ namespace VNovelizer.Core.Commands
                 charCode = posArg;
             }
 
-            // 获取角色位置
-            RectTransform charRect = VNAPI.GetCharRect(charCode);
-            if (charRect != null)
+            // 【剧场层重构】从 TheaterManager 获取角色位置（剧本像素语义）
+            var theater = VNovelizer.Core.Theater.TheaterManager.GetInstance();
+            var actorState = theater.GetState(charCode);
+            if (actorState != null)
             {
-                rect.anchoredPosition = charRect.anchoredPosition + charOffset;
+                // 角色位置为剧场像素语义，直接用作 rect.anchoredPosition（UI Canvas 参考分辨率与剧场一致）
+                rect.anchoredPosition = actorState.position + charOffset;
             }
             else
             {
-                // 找不到角色时的默认位置
+                // 找不到角色时的默认位置（按槽位约定的 -400/-200/0/200/400）
                 float defaultX = 0;
                 if (charCode.StartsWith("L") || charCode.StartsWith("Left", System.StringComparison.OrdinalIgnoreCase)) defaultX = -400;
                 if (charCode.StartsWith("ML") || charCode.StartsWith("MidLeft", System.StringComparison.OrdinalIgnoreCase)) defaultX = -200;

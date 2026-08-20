@@ -10,6 +10,7 @@ using VNovelizer.Core.Localization;
 using VNovelizer.Core;
 using VNovelizer.Core.Diagnostics;
 using VNovelizer.Core.Compat;
+using VNovelizer.Core.Theater;
 
 /// <summary>
 /// 视觉小说核心管理器 (终极预演版)
@@ -169,10 +170,7 @@ public class VNManager : BaseManager<VNManager>
     private void ShowLoadingPanelAndStartGame()
     {
         // 1. 显示加载进度面板
-        UIManager.GetInstance().ShowPanel<LoadingProgressPanel>(
-            "LoadingProgressPanel",
-            VNProjectConfig.Instance.UI_LoadingPath,
-            E_UI_Layer.System,
+        UIManager.GetInstance().Show<LoadingProgressPanel>(
             (loadingPanel) =>
             {
                 // 加载面板显示成功后，开始加载流程
@@ -288,7 +286,7 @@ public class VNManager : BaseManager<VNManager>
         // 3. 显示 UI (异步过程)
         if (StoryLines.Count > 0)
         {
-            UIManager.GetInstance().ShowPanel<VNGameplayPanel>("VNGameplayPanel", VNProjectConfig.Instance.UI_VNGamePlayPath, E_UI_Layer.Middle, (panel) =>
+            UIManager.GetInstance().Show<VNGameplayPanel>((panel) =>
             {
                 // 【修复】确保游戏状态设置为 Gameplay（场景回放时需要）
                 GameStateManager.GetInstance().SetState(GameState.Gameplay);
@@ -343,25 +341,14 @@ public class VNManager : BaseManager<VNManager>
                                 float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
                                 Vector3 scale = Vector3.one * profileScale;
                                 scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
-                                
-                                RectTransform charRect = VNAPI.GetCharRect(posCode);
-                                if (charRect != null)
-                                {
-                                    charRect.localScale = scale;
-                                    VNDebug.LogVerbose($"[VNManager] 同步位置 {kvp.Key}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
-                                }
+
+                                // 【剧场层重构】立绘 RectTransform 已迁移至 IActor，翻转与缩放由 TheaterManager.SetFlip/SetScale 表达
+                                VNDebug.LogVerbose($"[VNManager] 同步位置 {kvp.Key}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
                             }
                             else
                             {
-                                // 如果找不到profile，使用旧的逻辑（只应用翻转状态）
-                                RectTransform charRect = VNAPI.GetCharRect(posCode);
-                                if (charRect != null)
-                                {
-                                    Vector3 scale = charRect.localScale;
-                                    scale.x = savedScaleX;
-                                    charRect.localScale = scale;
-                                    VNDebug.LogVerboseWarning($"[VNManager] 找不到角色 {characterID} 的Profile，只应用翻转状态: {savedScaleX}");
-                                }
+                                // 【剧场层重构】同上，立绘变换由 IActor 表达
+                                VNDebug.LogVerboseWarning($"[VNManager] 找不到角色 {characterID} 的Profile，翻转状态: {savedScaleX}");
                             }
                         }
                     }
@@ -411,6 +398,7 @@ public class VNManager : BaseManager<VNManager>
         MusicManager.GetInstance();
         VoiceManager.GetInstance();
         SaveManager.GetInstance();
+        TheaterManager.GetInstance().Init(); // 剧场层（场景相机 + 演员容器）
 
         // 【Bug修复】清理音效列表，防止场景切换时引用已销毁的对象
         MusicManager.GetInstance().ClearAllSFX();
@@ -840,10 +828,7 @@ public class VNManager : BaseManager<VNManager>
     private void ShowLoadingPanelAndContinueGame(SaveData saveData)
     {
         // 1. 显示加载进度面板
-        UIManager.GetInstance().ShowPanel<LoadingProgressPanel>(
-            "LoadingProgressPanel",
-            VNProjectConfig.Instance.UI_LoadingPath,
-            E_UI_Layer.System,
+        UIManager.GetInstance().Show<LoadingProgressPanel>(
             (loadingPanel) =>
             {
                 // 加载面板显示成功后，开始加载流程
@@ -996,10 +981,9 @@ public class VNManager : BaseManager<VNManager>
         }
 
 
-        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        var gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
         if (gameplayPanel != null)
         {
-            gameplayPanel.RestoreDefaultCharTransforms();
             gameplayPanel.RestoreDefaultTextProperties();
         }
 
@@ -1017,14 +1001,6 @@ public class VNManager : BaseManager<VNManager>
 
         GlobalDataManager.GetInstance().AddReadLineID(currentLine.ID);
 
-        // if (!string.IsNullOrEmpty(currentLine.Command))
-        // {
-        //     _flowCoroutine = MonoManager.GetInstance().StartCoroutine(ExecuteActionsAndContinue(currentLine.Command));
-        // }
-        // else
-        // {
-        //     CheckAndTriggerAutoPlay();
-        // }
         if (!string.IsNullOrEmpty(currentLine.Command))
         {
             ClearAdvanceAfterCommandsRequest();
@@ -1049,7 +1025,7 @@ public class VNManager : BaseManager<VNManager>
         
         // 检查打字机效果是否完成
         bool isTextTyping = false;
-        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        var gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
         if (gameplayPanel != null)
         {
             isTextTyping = gameplayPanel.IsTextTyping();
@@ -1198,10 +1174,9 @@ public class VNManager : BaseManager<VNManager>
             _autoPlayCoroutine = null;
         }
 
-        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        var gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
         if (gameplayPanel != null)
         {
-            gameplayPanel.RestoreDefaultCharTransforms();
             gameplayPanel.RestoreDefaultTextProperties();
         }
 
@@ -1343,25 +1318,14 @@ public class VNManager : BaseManager<VNManager>
                         float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
                         Vector3 scale = Vector3.one * profileScale;
                         scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
-                        
-                        RectTransform charRect = VNAPI.GetCharRect(posCode);
-                        if (charRect != null)
-                        {
-                            charRect.localScale = scale;
-                            VNDebug.LogVerbose($"[VNManager] 应用位置 {position}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
-                        }
+
+                        // 【剧场层重构】立绘 RectTransform 已迁移至 IActor，翻转与缩放由 TheaterManager 表达
+                        VNDebug.LogVerbose($"[VNManager] 应用位置 {position}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
                     }
                     else
                     {
-                        // 如果找不到profile，使用旧的逻辑（只应用翻转状态）
-                        RectTransform charRect = VNAPI.GetCharRect(posCode);
-                        if (charRect != null)
-                        {
-                            Vector3 scale = charRect.localScale;
-                            scale.x = savedScaleX;
-                            charRect.localScale = scale;
-                            VNDebug.LogVerboseWarning($"[VNManager] 找不到角色 {characterID} 的Profile，只应用翻转状态: {savedScaleX}");
-                        }
+                        // 【剧场层重构】同上，立绘变换由 IActor 表达
+                        VNDebug.LogVerboseWarning($"[VNManager] 找不到角色 {characterID} 的Profile，翻转状态: {savedScaleX}");
                     }
                 }
             }
@@ -1589,7 +1553,7 @@ public class VNManager : BaseManager<VNManager>
             bool scriptDone = scriptProgress >= 1f || scriptProgress < 0f;
             bool uiDone = uiProgress >= 1f || uiProgress < 0f;
 
-            gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
             bool panelReady =
                 isGameplayPanelLoadCallbackFired &&
                 gameplayPanel != null &&
@@ -1605,7 +1569,7 @@ public class VNManager : BaseManager<VNManager>
             yield return null;
         }
 
-        gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
         if (gameplayPanel == null || gameplayPanel.gameObject == null || !gameplayPanel.gameObject.activeInHierarchy)
         {
             Debug.LogError("[VNManager] 无法获取VNGameplayPanel，继续游戏失败");
@@ -1681,7 +1645,7 @@ public class VNManager : BaseManager<VNManager>
         if (StoryLines.Count > 0)
         {
             // UIManager会自动注册任务 "ui_VNGameplayPanel"，我们只需要等待它完成
-            UIManager.GetInstance().ShowPanel<VNGameplayPanel>("VNGameplayPanel", VNProjectConfig.Instance.UI_VNGamePlayPath, E_UI_Layer.Middle, (panel) =>
+            UIManager.GetInstance().Show<VNGameplayPanel>((panel) =>
             {
                 isGameplayPanelLoadCallbackFired = true;
                 VNDebug.LogVerbose("[VNManager] VNGameplayPanel 的 ShowPanel 回调已触发");
@@ -1708,32 +1672,14 @@ public class VNManager : BaseManager<VNManager>
 
     private IEnumerator DelayedStartGameplay()
 {
-    // VNGameplayPanel gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
-    // // VNGameplayPanel拿不到，考虑文件缺失的情况
-    // if (gameplayPanel == null)
-    // {
-    //     Debug.LogError("[VNManager] 无法获取VNGameplayPanel，游戏启动失败");
-    //
-    //     if (onGameStartedCallback != null)
-    //     {
-    //         onGameStartedCallback.Invoke();
-    //         onGameStartedCallback = null;
-    //     }
-    //
-    //     yield break;
-    // }
-    
-    VNGameplayPanel gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+    VNGameplayPanel gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
 
     // 如果还没拿到，强制再创建一次
     if (gameplayPanel == null)
     {
         Debug.LogWarning("[VNManager] DelayedStartGameplay 时未找到 VNGameplayPanel，尝试强制补建...");
 
-        UIManager.GetInstance().ShowPanel<VNGameplayPanel>(
-            "VNGameplayPanel",
-            VNProjectConfig.Instance.UI_VNGamePlayPath,
-            E_UI_Layer.Middle,
+        UIManager.GetInstance().Show<VNGameplayPanel>(
             (panel) =>
             {
                 VNDebug.LogVerbose("[VNManager] VNGameplayPanel 强制补建回调成功（StartGame）");
@@ -1743,7 +1689,7 @@ public class VNManager : BaseManager<VNManager>
         // 最多再等 30 帧
         for (int i = 0; i < 30; i++)
         {
-            gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
             if (gameplayPanel != null &&
                 gameplayPanel.gameObject != null &&
                 gameplayPanel.gameObject.activeInHierarchy)
@@ -1757,7 +1703,7 @@ public class VNManager : BaseManager<VNManager>
     }
     
     //再尝试重新拿
-    gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+    gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
     if (gameplayPanel == null || gameplayPanel.gameObject == null || !gameplayPanel.gameObject.activeInHierarchy)
     {
         Debug.LogError("[VNManager] 无法获取VNGameplayPanel，游戏启动失败");
@@ -1811,12 +1757,14 @@ public class VNManager : BaseManager<VNManager>
         CurrentLineIndex = targetIndex;
     }
 // 同步立绘显示
-    foreach (var kvp in currentCharacters)
+foreach (var kvp in currentCharacters)
+{
+    string[] parts = kvp.Value.Split('#');
+    if (parts.Length == 3)
     {
-        string[] parts = kvp.Value.Split('#');
-        if (parts.Length == 3)
-        {
-            Dictionary<string, object> info = new Dictionary<string, object>
+        // 【修复】事件契约类型为 Dictionary<string,string>（EventCenter 按泛型类型分发），
+        // 旧代码用 Dictionary<string,object> 触发会被静默丢弃
+        Dictionary<string, string> info = new Dictionary<string, string>
             {
                 { "position", kvp.Key },
                 { "characterID", parts[0] },
@@ -1836,25 +1784,17 @@ public class VNManager : BaseManager<VNManager>
                 if (profile != null)
                 {
                     float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
-                    Vector3 scale = Vector3.one * profileScale;
-                    scale.x = savedScaleX * profileScale;
+                                    Vector3 scale = Vector3.one * profileScale;
+                                    scale.x = savedScaleX * profileScale;
 
-                    RectTransform charRect = VNAPI.GetCharRect(posCode);
-                    if (charRect != null)
-                    {
-                        charRect.localScale = scale;
-                    }
-                }
-                else
-                {
-                    RectTransform charRect = VNAPI.GetCharRect(posCode);
-                    if (charRect != null)
-                    {
-                        Vector3 scale = charRect.localScale;
-                        scale.x = savedScaleX;
-                        charRect.localScale = scale;
-                    }
-                }
+                                    // 【剧场层重构】立绘 RectTransform 已迁移至 IActor，立绘变换由 TheaterManager 表达
+                                    VNDebug.LogVerbose($"[VNManager] FastForwardToLine scale - ProfileScale: {profileScale}, Flip: {savedScaleX}");
+                                }
+                                else
+                                {
+                                    // 【剧场层重构】同上
+                                    VNDebug.LogVerboseWarning($"[VNManager] FastForwardToLine profile missing, flip: {savedScaleX}");
+                                }
             }
         }
     }
@@ -1966,7 +1906,7 @@ public class VNManager : BaseManager<VNManager>
         // 2. 显示 UI (异步过程，UIManager会自动注册并跟踪进度)
         if (StoryLines.Count > 0)
         {
-            UIManager.GetInstance().ShowPanel<VNGameplayPanel>("VNGameplayPanel", VNProjectConfig.Instance.UI_VNGamePlayPath, E_UI_Layer.Middle, (panel) =>
+            UIManager.GetInstance().Show<VNGameplayPanel>((panel) =>
             {
                 // UI加载完成，UIManager会自动完成任务
                 // 注意：这里不立即执行游戏逻辑，等待OnContinueGameLoadingCompleted回调
@@ -1996,7 +1936,7 @@ public class VNManager : BaseManager<VNManager>
         // yield return null; // 等待一帧
         
         // 获取游戏面板
-        VNGameplayPanel gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        VNGameplayPanel gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
         if (gameplayPanel == null)
         {
             Debug.LogError("[VNManager] 无法获取VNGameplayPanel，继续游戏失败");
@@ -2021,26 +1961,6 @@ public class VNManager : BaseManager<VNManager>
         currentLoadingSaveData = null;
     }
     
-    
-    
-    // private IEnumerator ExecuteActionsAndContinue(string actionString)
-    // {
-    //     int preIndex = CurrentLineIndex;
-    //     yield return CommandManager.GetInstance().ExecuteCommandsAsync(actionString);
-    //     _flowCoroutine = null;
-    //
-    //     // 【修复】检查游戏状态，如果是 Choice 状态，不应该继续前进或触发自动播放
-    //     GameStateManager stateManager = GameStateManager.GetInstance();
-    //     if (stateManager != null && stateManager.CurrentState == GameState.Choice)
-    //     {
-    //         // 在 Choice 状态下，等待玩家选择，不继续前进
-    //         VNDebug.LogVerbose("[VNManager] 命令执行完成，当前处于 Choice 状态，停止继续前进");
-    //         yield return null;
-    //     }
-    //
-    //     if (CurrentLineIndex != preIndex) PlayCurrentLine();
-    //     else CheckAndTriggerAutoPlay();
-    // }
     private IEnumerator ExecuteActionsAndContinue(string actionString)
     {
         int preIndex = CurrentLineIndex;
@@ -2135,7 +2055,7 @@ public class VNManager : BaseManager<VNManager>
 
     private IEnumerator AutoPlayCountdown(float delay)
     {
-        var gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        var gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
         bool isTextTyping = false;
         bool isVoicePlaying = false;
         
@@ -2202,7 +2122,7 @@ public class VNManager : BaseManager<VNManager>
             bool scriptDone = scriptProgress >= 1f || scriptProgress < 0f;
             bool uiDone = uiProgress >= 1f || uiProgress < 0f;
 
-            gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
             bool panelReady =
                 isGameplayPanelLoadCallbackFired &&
                 gameplayPanel != null &&
@@ -2218,7 +2138,7 @@ public class VNManager : BaseManager<VNManager>
             yield return null;
         }
 
-        gameplayPanel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+        gameplayPanel = UIManager.GetInstance().Get<VNGameplayPanel>();
         if (gameplayPanel == null || gameplayPanel.gameObject == null || !gameplayPanel.gameObject.activeInHierarchy)
         {
             Debug.LogError("[VNManager] 加载任务已结束，但仍无法获取 VNGameplayPanel，游戏启动失败");
@@ -2343,7 +2263,7 @@ public class VNManager : BaseManager<VNManager>
         UIManager.GetInstance().HidePanel("VNGameplayPanel");
         
         // 【修复2】重新显示画廊面板（如果之前被隐藏了）
-        GalleryPanel galleryPanel = UIManager.GetInstance().GetPanel<GalleryPanel>("GalleryPanel");
+        GalleryPanel galleryPanel = UIManager.GetInstance().Get<GalleryPanel>();
         if (galleryPanel != null)
         {
             // 面板已存在，直接显示
@@ -2353,12 +2273,7 @@ public class VNManager : BaseManager<VNManager>
         else
         {
             // 面板不存在，重新加载
-            string galleryPath = VNProjectConfig.Instance != null 
-                ? VNProjectConfig.Instance.UI_GalleryPath 
-                : "VNPrefabs/UI/Gallery";
-            if (string.IsNullOrEmpty(galleryPath)) galleryPath = "VNPrefabs/UI/Gallery";
-            
-            UIManager.GetInstance().ShowPanel<GalleryPanel>("GalleryPanel", galleryPath, E_UI_Layer.Middle, (panel) =>
+            UIManager.GetInstance().Show<GalleryPanel>((panel) =>
             {
                 // 切换到场景回放页面
                 if (panel != null)
@@ -2372,7 +2287,7 @@ public class VNManager : BaseManager<VNManager>
         VNDebug.LogVerbose($"[VNManager] 检查是否需要恢复主菜单: wasMainMenuVisibleBeforeReplay = {wasMainMenuVisibleBeforeReplay}");
         if (wasMainMenuVisibleBeforeReplay)
         {
-            MainMenuPanel mainMenuPanel = UIManager.GetInstance().GetPanel<MainMenuPanel>("MainMenuPanel");
+            MainMenuPanel mainMenuPanel = UIManager.GetInstance().Get<MainMenuPanel>();
             if (mainMenuPanel != null)
             {
                 mainMenuPanel.gameObject.SetActive(true);

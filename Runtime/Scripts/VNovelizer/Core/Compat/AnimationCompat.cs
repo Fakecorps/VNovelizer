@@ -249,7 +249,7 @@ namespace VNovelizer.Core.Compat
         public static CompatSequence CreateSequence(int cycles, SequenceCycleMode cycleMode)
         {
 #if PRIME_TWEEN_INSTALLED
-            return Sequence.Create(cycles: cycles, cycleMode: (CycleMode)(int)cycleMode);
+            return Sequence.Create(cycles: cycles, cycleMode: (Sequence.SequenceCycleMode)(int)cycleMode);
 #else
             return default;
 #endif

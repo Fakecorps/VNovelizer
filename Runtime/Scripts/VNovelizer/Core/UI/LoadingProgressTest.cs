@@ -97,10 +97,7 @@ public class LoadingProgressTest : MonoBehaviour
         // 显示加载面板
         Debug.Log("[LoadingProgressTest] 显示加载面板");
         LoadingProgressPanel panel = null;
-        UIManager.GetInstance().ShowPanel<LoadingProgressPanel>(
-            "LoadingProgressPanel",
-            VNProjectConfig.Instance.UI_LoadingPath,
-            E_UI_Layer.System,
+        UIManager.GetInstance().Show<LoadingProgressPanel>(
             (p) => { panel = p; Debug.Log("[LoadingProgressTest] 面板加载完成回调"); }
         );
         
@@ -113,7 +110,7 @@ public class LoadingProgressTest : MonoBehaviour
             // 如果回调还没执行，尝试从字典中获取
             if (panel == null)
             {
-                panel = UIManager.GetInstance().GetPanel<LoadingProgressPanel>("LoadingProgressPanel");
+                panel = UIManager.GetInstance().Get<LoadingProgressPanel>();
             }
         }
         

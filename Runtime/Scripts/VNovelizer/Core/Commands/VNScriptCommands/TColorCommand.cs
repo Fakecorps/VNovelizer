@@ -37,7 +37,7 @@ namespace VNovelizer.Core.Commands
             g = Mathf.Clamp(g, 0f, 255f) / 255f;
             b = Mathf.Clamp(b, 0f, 255f) / 255f;
 
-            var panel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            var panel = UIManager.GetInstance().Get<VNGameplayPanel>();
             if (panel != null)
             {
                 panel.SetDialogueTextColor(new Color(r, g, b, 1f));

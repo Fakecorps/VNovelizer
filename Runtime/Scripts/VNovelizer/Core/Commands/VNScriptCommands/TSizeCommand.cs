@@ -26,7 +26,7 @@ namespace VNovelizer.Core.Commands
             // 确保字体大小合理（通常 10-100）
             fontSize = Mathf.Clamp(fontSize, 10f, 200f);
 
-            var panel = UIManager.GetInstance().GetPanel<VNGameplayPanel>("VNGameplayPanel");
+            var panel = UIManager.GetInstance().Get<VNGameplayPanel>();
             if (panel != null)
             {
                 panel.SetDialogueTextSize(fontSize);
