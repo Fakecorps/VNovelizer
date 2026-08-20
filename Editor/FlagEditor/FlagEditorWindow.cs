@@ -89,11 +89,24 @@ public class FlagEditorWindow : EditorWindow
 
     private void CreateRegistryAsset()
     {
-        // 用户内容目录（工作区优先，旧版目录存在时沿用）+ 注册 Addressables
-        string dir = VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(FlagService.DefaultRegistryPath));
-        VNProjectPaths.EnsureFolder(dir);
+        // 默认落点（工作区优先，旧版目录存在时沿用）
+        string defaultDir = VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(FlagService.DefaultRegistryPath));
+        VNProjectPaths.EnsureFolder(defaultDir);
 
-        string path = dir + "/VNFlagRegistry.asset";
+        // 保存位置由用户自选（SaveFilePanelInProject 限定项目内）：
+        // 运行时按固定资源键索引（注册写地址），与文件保存位置/文件名无关
+        string path = EditorUtility.SaveFilePanelInProject(
+            "创建 Flag 注册表", "VNFlagRegistry", "asset",
+            "选择 Flag 注册表的保存位置（保存在项目内任意位置均可，运行时索引不受影响）。",
+            defaultDir);
+        if (string.IsNullOrEmpty(path)) return; // 用户取消
+
+        if (AssetDatabase.LoadAssetAtPath<Object>(path) != null)
+        {
+            EditorUtility.DisplayDialog("已存在", $"目标位置已有同名资产：\n{path}", "确定");
+            return;
+        }
+
         var asset = CreateInstance<FlagRegistry>();
         AssetDatabase.CreateAsset(asset, path);
         AssetDatabase.SaveAssets();

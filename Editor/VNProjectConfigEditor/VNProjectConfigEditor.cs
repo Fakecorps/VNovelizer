@@ -167,6 +167,32 @@ public class VNProjectConfigEditor : Editor
         };
         card.Add(titleLabel);
 
+        // "八、UI 模板覆写"分组：头部注入"从模板创建…"按钮（复制包内模板 + 自动指派覆写）
+        if (title.Contains("UI 模板覆写"))
+        {
+            var hint = new Label("留空 = 使用包内默认模板（无需任何配置）。要自定义某个 UI，点击下方按钮从模板创建副本（画廊数据容器同理，也可直接拖拽指派）：")
+            {
+                style =
+                {
+                    whiteSpace = UnityEngine.UIElements.WhiteSpace.Normal,
+                    marginBottom = 4f,
+                    color = new Color(0.7f, 0.7f, 0.7f, 1f),
+                }
+            };
+            card.Add(hint);
+
+            var createButton = new Button(() =>
+            {
+                var config = target as VNProjectConfig;
+                if (config != null) VNUIPrefabTemplateCreator.ShowTemplateMenu(config);
+            })
+            {
+                text = "从模板创建自定义 UI…",
+                style = { marginBottom = 6f },
+            };
+            card.Add(createButton);
+        }
+
         foreach (var member in members)
         {
             var prop = serializedObject.FindProperty(member.Name);

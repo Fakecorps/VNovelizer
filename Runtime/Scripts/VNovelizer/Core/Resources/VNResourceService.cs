@@ -96,7 +96,14 @@ public static class VNResourceService
     {
         // 跳过不可用提供者
         while (index < _providers.Count && !_providers[index].IsAvailable) index++;
-        if (index >= _providers.Count) { finalOp.Complete(null); return; }
+        if (index >= _providers.Count)
+        {
+            // 全链未命中：让失败可见（异步调用方大多对 null 静默，此处是唯一的统一报告点）
+            Debug.LogWarning($"[VNResourceService] 资源加载失败（提供者链全部未命中）: \"{key}\" ({typeof(T).Name})，" +
+                             $"链: {DescribeChain()}。请检查资源名/逻辑名是否一致、资源是否已分配（资源管理器）或存在于旧 Resources 目录。");
+            finalOp.Complete(null);
+            return;
+        }
 
         int providerIndex = index;
         float chainLength = Mathf.Max(1, _providers.Count);

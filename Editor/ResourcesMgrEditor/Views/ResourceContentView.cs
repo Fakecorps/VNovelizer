@@ -16,6 +16,7 @@ public class ResourceContentView
 
     public event Action<ResourceItem, int> OnItemMouseDown;
     public event Action<ResourceItem> OnItemPlay;  // 新增：双击/按钮触发播放
+    public event Action<ResourceItem, DropdownMenu> OnItemContextMenu; // 右键菜单（向 evt.menu 追加动作，由 Presenter 决定内容）
 
     private List<ResourceItem> _items;
     private HashSet<string> _selected;
@@ -203,8 +204,8 @@ public class ResourceContentView
             card.Add(placeholder);
         }
 
-        // 文件名
-        var label = new Label(item.Name);
+        // 文件名（显示逻辑名——剧本作者看到什么，Excel 里就写什么）
+        var label = new Label(item.DisplayName);
         label.style.overflow = Overflow.Hidden;
         label.style.textOverflow = TextOverflow.Ellipsis;
         label.style.whiteSpace = WhiteSpace.NoWrap;
@@ -275,6 +276,11 @@ public class ResourceContentView
             if (play != null) play.style.opacity = 0;
         });
         card.RegisterCallback<MouseDownEvent>(evt => OnItemMouseDown?.Invoke(item, evt.clickCount));
+        card.RegisterCallback<ContextualMenuPopulateEvent>(evt =>
+        {
+            evt.StopPropagation();
+            OnItemContextMenu?.Invoke(item, evt.menu);
+        });
 
         RightPane.Add(card);
     }
@@ -345,7 +351,7 @@ public class ResourceContentView
         icon.scaleMode = ScaleMode.ScaleToFit;
         nameCell.Add(icon);
 
-        var nameLabel = new Label(item.Name);
+        var nameLabel = new Label(item.DisplayName);
         nameLabel.style.flexGrow = 1;
         nameLabel.style.color = isSelected ? Color.white : ResourceStyles.TextPrimary;
         nameLabel.style.overflow = Overflow.Hidden;
@@ -439,6 +445,11 @@ public class ResourceContentView
             row.style.backgroundColor = _selected.Contains(item.AssetPath) ? ResourceStyles.CardSelected : baseC;
         });
         row.RegisterCallback<MouseDownEvent>(evt => OnItemMouseDown?.Invoke(item, evt.clickCount));
+        row.RegisterCallback<ContextualMenuPopulateEvent>(evt =>
+        {
+            evt.StopPropagation();
+            OnItemContextMenu?.Invoke(item, evt.menu);
+        });
 
         RightPane.Add(row);
     }

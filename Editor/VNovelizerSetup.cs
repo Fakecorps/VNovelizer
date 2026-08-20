@@ -1,10 +1,17 @@
 ﻿using UnityEditor;
 using UnityEngine;
 using System.IO;
-using System.Reflection;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 
+/// <summary>
+/// 一键初始化向导（零复制流程，见 Docs/VNResourceProviderRefactoring.md）。
+///
+/// 原则：不复制任何包内内容到 Assets。全部通过 Addressables 注册（GUID 寻址，文件留在原地）：
+/// - 新项目：包内默认资源（Runtime/PackageDefault/VNovelizerRes）注册进 VNovelizer 组；
+/// - 存量项目：旧目录（Assets/Resources/VNovelizerRes）中的用户副本注册进组（副本优先于包内原件，
+///   与 Resources 兜底所见一致）；
+/// - 唯一写入用户 Assets 的资产：VNProjectConfig（全引擎引导配置）与画廊数据容器（用户数据）。
+/// </summary>
 public class VNovelizerSetup : EditorWindow
 {
     private static bool isPrimeTweenInstalled = false;
@@ -33,19 +40,20 @@ public class VNovelizerSetup : EditorWindow
         GUILayout.Label("欢迎使用 VNovelizer！", EditorStyles.boldLabel);
         GUILayout.Space(10);
 
-        bool legacyMode = Directory.Exists("Assets/Resources/VNovelizerRes");
-        if (legacyMode)
+        bool legacyExists = Directory.Exists("Assets/Resources/VNovelizerRes");
+        if (legacyExists)
         {
-            GUILayout.Label("检测到旧版资源目录（Assets/Resources/VNovelizerRes），将沿用兼容模式。\n（新项目不再复制资源到 Assets，改用 Addressables 注册，详见文档）",
-                EditorStyles.wordWrappedLabel);
+            GUILayout.Label("检测到旧版资源目录（Assets/Resources/VNovelizerRes）。\n" +
+                "初始化会把该目录注册进 Addressables（不复制、不移动、不修改任何文件），\n" +
+                "运行时优先按地址加载其中的内容。", EditorStyles.wordWrappedLabel);
         }
-        else
-        {
-            GUILayout.Label("此工具将帮助您初始化项目结构、安装依赖并注册资源。\n" +
-                "新流程不会复制任何资源文件到 Assets：包内默认资源直接注册进 Addressables，\n" +
-                "您自己的内容请放在 Assets/VNovelizer 工作区。\n(首次运行将跳过已存在的文件，保留用户定制内容)",
-                EditorStyles.wordWrappedLabel);
-        }
+        GUILayout.Space(4);
+        GUILayout.Label("初始化内容：\n" +
+            "• 包内默认资源注册进 Addressables（不复制任何文件到 Assets）\n" +
+            "• 创建用户内容工作区 Assets/VNovelizer（空目录骨架）\n" +
+            "• 创建项目配置与画廊数据容器（仅用户必需的数据资产）\n" +
+            "• 注册场景到 Build Settings（直接引用包内场景，不复制）\n" +
+            "• 配置包依赖 / TMP / Input System", EditorStyles.wordWrappedLabel);
         GUILayout.Space(20);
 
         if (GUILayout.Button("一键初始化项目", GUILayout.Height(40)))
@@ -60,46 +68,49 @@ public class VNovelizerSetup : EditorWindow
 
         // 1. 获取插件包路径
         var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(VNovelizerSetup).Assembly);
-        string packagePath = packageInfo != null ? packageInfo.resolvedPath : null;
         string packageName = packageInfo != null ? packageInfo.name : null;
 
-        if (string.IsNullOrEmpty(packagePath))
+        if (string.IsNullOrEmpty(packageName))
         {
             Debug.LogError("无法定位插件包路径！");
             return;
         }
 
-        // 2. 基础目录：StreamingAssets（视频始终走 StreamingAssets，不经资源提供者链）
+        // 2. 基础目录：StreamingAssets（视频始终走 StreamingAssets 原始文件，不经资源提供者链）
         CreateDir(assetsRoot, "StreamingAssets");
         CreateDir(assetsRoot, "StreamingAssets/VNovelizerRes/Videos");
 
-        // 3. 项目配置（全项目唯一的 Resources 引导资产，先建好供后续步骤读取路径）
+        // 3. 项目配置（全项目唯一的 Resources 引导资产）
         string configPath = EnsureProjectConfig(assetsRoot);
 
-        // 4. 双模式初始化资源：
-        //    存量项目（旧目录存在）→ 兼容模式：沿用旧版复制流程；
-        //    新项目 → Addressables 模式：包内默认资源注册进 VNovelizer 组（不复制文件），工作区只建空目录
-        bool legacyMode = Directory.Exists(Path.Combine(assetsRoot, "Resources/VNovelizerRes"));
-        int registeredCount = 0;
-        if (legacyMode)
-        {
-            SetupLegacyMode(assetsRoot, packagePath);
-        }
-        else
-        {
-            registeredCount = SetupAddressablesMode();
-        }
+        // 4. 用户工作区（空目录骨架，不写任何文件）
+        VNProjectPaths.EnsureWorkspaceFolders();
 
-        // 5. 场景注册：本地副本优先（存量用户可能已自定义）；无副本直接注册包内场景（不复制）
-        RegisterScenes(assetsRoot, packageName, packagePath, legacyMode);
+        // 5. Addressables 注册（核心步骤，零复制）：
+        //    存量项目 → 注册旧目录用户副本；新项目 → 注册包内默认资源（文件留在包里）
+        bool legacyExists = Directory.Exists(Path.Combine(assetsRoot, "Resources/VNovelizerRes"));
+        int registeredCount = VNAddressablesRegistrar.SyncAll();
 
-        // 6. 确保包依赖（PrimeTween scoped registry + Package）
+        // 6. 画廊数据容器（用户数据；目录按存量/新项目双模式解析，已存在则跳过）
+        string cgKey = VNUIPrefabKeys.CGDataContainer;
+        string musicKey = VNUIPrefabKeys.MusicDataContainer;
+        string sceneKey = VNUIPrefabKeys.SceneDataContainer;
+
+        CreateDataContainer<CGDataContainer>(VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(cgKey)) + "/CGDataContainer.asset", cgKey);
+        CreateDataContainer<MusicDataContainer>(VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(musicKey)) + "/MusicDataContainer.asset", musicKey);
+        CreateDataContainer<SceneDataContainer>(VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(sceneKey)) + "/SceneDataContainer.asset", sceneKey);
+
+        // 7. 场景注册：本地副本（Assets/Scenes，存量用户可能已自定义）存在则用副本，
+        //    否则直接注册包内场景（不复制文件）
+        RegisterScenes(assetsRoot, packageName);
+
+        // 8. 确保包依赖（PrimeTween scoped registry + Package）
         EnsureManifestDependencies();
 
-        // 7. 导入 TMP Essential Resources
+        // 9. 导入 TMP Essential Resources
         ImportTMPEssentialResources();
 
-        // 8. 配置 Input System 为 Both 模式
+        // 10. 配置 Input System 为 Both 模式
         bool needRestart = ConfigureInputSystemBoth();
 
         AssetDatabase.Refresh();
@@ -108,22 +119,18 @@ public class VNovelizerSetup : EditorWindow
         if (configObj != null) Selection.activeObject = configObj;
 
         string completeMsg = "初始化成功！\n\n" +
-            (legacyMode
-                ? "兼容模式：检测到旧版资源目录，已沿用 Assets/Resources/VNovelizerRes。\n" +
-                  "（如需迁移到 Addressables 模式请查阅 Docs/VNResourceProviderRefactoring.md）"
+            (legacyExists
+                ? $"检测到旧版资源目录，已将其内容注册进 Addressables（{registeredCount} 个资产，未复制/未修改任何文件）。\n" +
+                  "运行时优先按地址加载其中内容；如需彻底迁移到工作区模式，可逐步把内容移入 Assets/VNovelizer 并重新同步。"
                 : $"Addressables 模式：{registeredCount} 个包内默认资源已注册进 VNovelizer 组（未复制任何文件到 Assets）。\n" +
-                  "用户内容工作区：Assets/VNovelizer（角色/背景/剧本/音频放这里即可）") + "\n\n" +
-            "1. 数据容器已就绪\n" +
-            "2. 场景已配置\n" +
+                  "用户内容工作区：Assets/VNovelizer（角色/背景/剧本/音频放这里即可，或经资源管理器拖放分配——资产可放在项目内任意位置）") + "\n\n" +
+            "1. 画廊数据容器已就绪\n" +
+            "2. 场景已注册到 Build Settings\n" +
             "3. 包依赖已写入 manifest.json\n" +
             "4. TMP Essential Resources 已导入\n" +
-            "5. Input System 已设为 Both 模式";
-
-        if (!legacyMode)
-        {
-            completeMsg += "\n\n注意：构建游戏（File → Build Settings → Build）之前，请先执行 Addressables 构建：\n" +
-                           "Window → Asset Management → Addressables → Groups → Build → New Build → Default Build Script";
-        }
+            "5. Input System 已设为 Both 模式" +
+            "\n\n注意：构建游戏（File → Build Settings → Build）之前，请先执行 Addressables 构建：\n" +
+            "Window → Asset Management → Addressables → Groups → Build → New Build → Default Build Script";
 
         if (needRestart)
         {
@@ -133,122 +140,22 @@ public class VNovelizerSetup : EditorWindow
         EditorUtility.DisplayDialog("完成", completeMsg, "好的");
     }
 
-    // ==================== 旧版兼容模式（存量项目） ====================
-
-    /// <summary>旧版流程：复制包内默认内容到 Assets/Resources/VNovelizerRes（已存在的文件跳过）</summary>
-    private static void SetupLegacyMode(string assetsRoot, string packagePath)
-    {
-        CreateDir(assetsRoot, "Resources/VNovelizerRes");
-        string resRootDest = Path.Combine(assetsRoot, "Resources/VNovelizerRes");
-
-        string resRootSource = Path.Combine(packagePath, "Runtime/PackageDefault/VNovelizerRes");
-        if (Directory.Exists(resRootSource))
-        {
-            string[] foldersToCopy = new string[]
-            {
-                "Audio",
-                "Backgrounds",
-                "Characters",
-                "ExcelVNScripts",
-                "Fonts",
-                "VNScripts",
-                "Materials",
-                "VFX",
-                "VNPrefabs"
-            };
-
-            foreach (var folder in foldersToCopy)
-            {
-                string src = Path.Combine(resRootSource, folder);
-                string dest = Path.Combine(resRootDest, folder);
-
-                if (Directory.Exists(src))
-                {
-                    Debug.Log($"[Setup] 正在复制 {folder}...");
-                    CopyDirectory(src, dest);
-                }
-                else
-                {
-                    Debug.LogWarning($"[Setup] 源文件夹不存在: {folder}");
-                }
-            }
-        }
-
-        CreateDir(assetsRoot, "Resources/VNovelizerRes/GalleryContent");
-        CreateDir(assetsRoot, "Resources/VNovelizerRes/GalleryContent/CG");
-        CreateDir(assetsRoot, "Resources/VNovelizerRes/GalleryContent/Music");
-        CreateDir(assetsRoot, "Resources/VNovelizerRes/GalleryContent/Scene");
-
-        CreateDataContainer<CGDataContainer>("Assets/Resources/VNovelizerRes/GalleryContent/CG/CGDataContainer.asset", null);
-        CreateDataContainer<MusicDataContainer>("Assets/Resources/VNovelizerRes/GalleryContent/Music/MusicDataContainer.asset", null);
-        CreateDataContainer<SceneDataContainer>("Assets/Resources/VNovelizerRes/GalleryContent/Scene/SceneDataContainer.asset", null);
-    }
-
-    // ==================== Addressables 模式（新项目） ====================
-
-    /// <summary>
-    /// 新版流程：
-    /// 1. 创建用户工作区 Assets/VNovelizer（仅空目录骨架，不放任何文件）；
-    /// 2. 初始化 Addressables 并注册包内默认资源（地址 = 资源键，文件本体留在包内）；
-    /// 3. 在工作区创建画廊数据容器并注册地址。
-    /// 返回注册的资产数。
-    /// </summary>
-    private static int SetupAddressablesMode()
-    {
-        // 1. 用户工作区（幂等，只建目录）
-        VNProjectPaths.EnsureWorkspaceFolders();
-
-        // 2. Addressables 注册（不存在设置时自动创建 Assets/AddressableAssetsData）
-        int count = VNAddressablesRegistrar.SyncAll();
-
-        // 3. 画廊数据容器（键与 VNProjectConfig 默认路径一致）
-        string cgKey = "VNovelizerRes/GalleryContent/CG/CGDataContainer";
-        string musicKey = "VNovelizerRes/GalleryContent/Music/MusicDataContainer";
-        string sceneKey = "VNovelizerRes/GalleryContent/Scene/SceneDataContainer";
-        if (VNProjectConfig.Instance != null)
-        {
-            if (!string.IsNullOrEmpty(VNProjectConfig.Instance.CG_DataPath)) cgKey = VNProjectConfig.Instance.CG_DataPath + "/CGDataContainer";
-            if (!string.IsNullOrEmpty(VNProjectConfig.Instance.Music_DataPath)) musicKey = VNProjectConfig.Instance.Music_DataPath + "/MusicDataContainer";
-            if (!string.IsNullOrEmpty(VNProjectConfig.Instance.Scene_DataPath)) sceneKey = VNProjectConfig.Instance.Scene_DataPath + "/SceneDataContainer";
-        }
-
-        CreateDataContainer<CGDataContainer>(VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(cgKey)) + "/CGDataContainer.asset", cgKey);
-        CreateDataContainer<MusicDataContainer>(VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(musicKey)) + "/MusicDataContainer.asset", musicKey);
-        CreateDataContainer<SceneDataContainer>(VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(sceneKey)) + "/SceneDataContainer.asset", sceneKey);
-
-        return count;
-    }
-
     // ==================== 场景注册 ====================
 
     /// <summary>
-    /// 场景注册：本地副本（Assets/Scenes）优先——存量用户可能已自定义场景；
-    /// 无本地副本时直接注册包内场景到 Build Settings（不再复制场景文件）。
+    /// 场景注册（零复制）：本地副本（Assets/Scenes，存量用户可能已自定义）存在则注册副本，
+    /// 否则直接注册包内场景到 Build Settings（按名加载行为不变）。
     /// </summary>
-    private static void RegisterScenes(string assetsRoot, string packageName, string packagePath, bool legacyMode)
+    private static void RegisterScenes(string assetsRoot, string packageName)
     {
-        // 本地副本优先（存量用户可能已自定义）
-        if (legacyMode || File.Exists(Path.Combine(assetsRoot, "Scenes/VNMainMenu.unity")))
+        if (File.Exists(Path.Combine(assetsRoot, "Scenes/VNMainMenu.unity")))
         {
-            if (legacyMode)
-            {
-                // 旧流程：复制包内场景到 Assets/Scenes（已存在的文件跳过，保留用户定制）
-                CreateDir(assetsRoot, "Scenes");
-                string sceneSource = Path.Combine(packagePath, "Runtime/Scenes");
-                string sceneDest = Path.Combine(assetsRoot, "Scenes");
-                if (Directory.Exists(sceneSource))
-                {
-                    CopyDirectory(sceneSource, sceneDest);
-                }
-            }
             AddSceneToBuildSettings("Assets/Scenes/VNMainMenu.unity");
             AddSceneToBuildSettings("Assets/Scenes/VNGamePlay.unity");
             AddSceneToBuildSettings("Assets/Scenes/VNDebugScene.unity");
             return;
         }
 
-        // 新流程：直接注册包内场景（不复制文件）
-        if (string.IsNullOrEmpty(packageName)) return;
         string sceneRoot = $"Packages/{packageName}/Runtime/Scenes";
         AddSceneToBuildSettings(sceneRoot + "/VNMainMenu.unity");
         AddSceneToBuildSettings(sceneRoot + "/VNGamePlay.unity");
@@ -260,7 +167,7 @@ public class VNovelizerSetup : EditorWindow
 
     /// <summary>
     /// 确保 VNProjectConfig 存在（Assets/Resources/VNProjectConfig.asset，全项目唯一的 Resources 引导资产）。
-    /// Addressables 模式下顺带为 Excel 工作流填入工作区默认文件夹引用。
+    /// 顺带为 Excel 工作流填入工作区默认文件夹引用（仅在用户未配置时）。
     /// </summary>
     private static string EnsureProjectConfig(string assetsRoot)
     {
@@ -275,25 +182,21 @@ public class VNovelizerSetup : EditorWindow
             Debug.Log("[VNovelizer Setup] 已创建默认配置文件: " + configPath);
         }
 
-        // 新模式：为剧本工作流填默认文件夹引用（工作区；仅在用户未配置时）
-        if (!VNProjectPaths.IsLegacyMode)
+        var loadedConfig = AssetDatabase.LoadAssetAtPath<VNProjectConfig>(configPath);
+        if (loadedConfig != null)
         {
-            var config = AssetDatabase.LoadAssetAtPath<VNProjectConfig>(configPath);
-            if (config != null)
+            bool dirty = false;
+            if (loadedConfig.ExcelSourceFolder == null)
             {
-                bool dirty = false;
-                if (config.ExcelSourceFolder == null)
-                {
-                    config.ExcelSourceFolder = AssetDatabase.LoadAssetAtPath<DefaultAsset>(VNProjectPaths.ExcelFolder);
-                    dirty = true;
-                }
-                if (config.CsvOutputFolder == null)
-                {
-                    config.CsvOutputFolder = AssetDatabase.LoadAssetAtPath<DefaultAsset>(VNProjectPaths.ScriptsFolder);
-                    dirty = true;
-                }
-                if (dirty) EditorUtility.SetDirty(config);
+                loadedConfig.ExcelSourceFolder = AssetDatabase.LoadAssetAtPath<DefaultAsset>(VNProjectPaths.ExcelFolder);
+                dirty = true;
             }
+            if (loadedConfig.CsvOutputFolder == null)
+            {
+                loadedConfig.CsvOutputFolder = AssetDatabase.LoadAssetAtPath<DefaultAsset>(VNProjectPaths.ScriptsFolder);
+                dirty = true;
+            }
+            if (dirty) EditorUtility.SetDirty(loadedConfig);
         }
 
         return configPath;
@@ -305,7 +208,7 @@ public class VNovelizerSetup : EditorWindow
         if (!Directory.Exists(path)) Directory.CreateDirectory(path);
     }
 
-    /// <summary>创建数据容器（已存在则跳过）。resourceKey 非空时注册进 Addressables（Addressables 模式）。</summary>
+    /// <summary>创建数据容器（已存在则跳过）并注册进 Addressables。</summary>
     private static void CreateDataContainer<T>(string path, string resourceKey) where T : ScriptableObject
     {
         if (AssetDatabase.LoadAssetAtPath<T>(path) == null)
@@ -313,46 +216,10 @@ public class VNovelizerSetup : EditorWindow
             var so = ScriptableObject.CreateInstance<T>();
             AssetDatabase.CreateAsset(so, path);
             Debug.Log($"[VNovelizer Setup] 新建数据容器: {path}");
-
-            if (!string.IsNullOrEmpty(resourceKey))
-                VNAddressablesRegistrar.RegisterAssetAtPath(path, resourceKey);
-        }
-    }
-
-    private static void CopyDirectory(string sourceDir, string destDir)
-    {
-        DirectoryInfo dir = new DirectoryInfo(sourceDir);
-        if (!dir.Exists) return;
-
-        if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
-
-        foreach (FileInfo file in dir.GetFiles())
-        {
-            if (file.Extension == ".meta") continue;
-
-            // 排除原始字体文件
-            if (file.Extension == ".ttf" || file.Extension == ".otf") continue;
-
-            // 排除 .asset 文件（仅排除 DataContainer 和 Config，TMP SDF 字体正常复制）
-            if (file.Extension == ".asset")
-            {
-                string fileName = Path.GetFileNameWithoutExtension(file.Name);
-                if (fileName.Contains("DataContainer") || fileName == "VNProjectConfig")
-                    continue;
-            }
-
-            string tempPath = Path.Combine(destDir, file.Name);
-            if (!File.Exists(tempPath))
-            {
-                file.CopyTo(tempPath, false);
-            }
         }
 
-        foreach (DirectoryInfo subdir in dir.GetDirectories())
-        {
-            string tempPath = Path.Combine(destDir, subdir.Name);
-            CopyDirectory(subdir.FullName, tempPath);
-        }
+        // 无论新建还是已存在都确保注册（存量项目的容器首次纳入地址管理）
+        VNAddressablesRegistrar.RegisterAssetAtPath(path, resourceKey);
     }
 
     private static void AddSceneToBuildSettings(string scenePath)
@@ -370,7 +237,7 @@ public class VNovelizerSetup : EditorWindow
         EditorBuildSettings.scenes = newSettings;
     }
 
-    // ===== 6. 初始化包依赖（manifest.json） =====
+    // ===== 包依赖（manifest.json） =====
     private static void EnsureManifestDependencies()
     {
         string manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
@@ -394,13 +261,8 @@ public class VNovelizerSetup : EditorWindow
 
         if (needRegistry)
         {
-            // manifest.json 固定结构：
-            //   { "dependencies": { ... } }  ← 无 scopedRegistries
-            // 或 { "dependencies": { ... }, "scopedRegistries": [...] }
-            //
-            // 目标：在根对象最末的 } 前插入 scopedRegistries
-            // 方法：找到最后一个 \n} 并替换为 ,\n  "scopedRegistries":[...]\n}
-            string registryJson =
+            // 在 dependencies 块闭合后追加 scopedRegistries（保持根对象为合法 JSON）
+            string regJson =
                 ",\n" +
                 "  \"scopedRegistries\": [\n" +
                 "    {\n" +
@@ -413,28 +275,13 @@ public class VNovelizerSetup : EditorWindow
                 "  ]\n" +
                 "}";
 
-            // 找最后一个 } 的位置（root 对象结尾）
             int lastIdx = content.LastIndexOf('}');
             if (lastIdx >= 0)
             {
-                // 找倒数第二个 }（dependencies 块的闭合括号）的位置
                 int depCloseIdx = content.LastIndexOf('}', lastIdx - 1);
                 if (depCloseIdx >= 0)
                 {
-                    // 在 dependencies } 后插入逗号，然后插入 scopedRegistries，然后接 root }
-                    string before   = content.Substring(0, depCloseIdx + 1); // 包含 dependencies 的 }
-                    string regJson  =
-                        ",\n" +
-                        "  \"scopedRegistries\": [\n" +
-                        "    {\n" +
-                        "      \"name\": \"npm\",\n" +
-                        "      \"url\": \"https://registry.npmjs.org\",\n" +
-                        "      \"scopes\": [\n" +
-                        "        \"com.kyrylokuzyk\"\n" +
-                        "      ]\n" +
-                        "    }\n" +
-                        "  ]\n" +
-                        "}";
+                    string before = content.Substring(0, depCloseIdx + 1); // 包含 dependencies 的 }
                     content = before + regJson;
                     File.WriteAllText(manifestPath, content);
                     Debug.Log("[Setup] 已添加 scoped registry: npm (com.kyrylokuzyk)");
@@ -465,7 +312,7 @@ public class VNovelizerSetup : EditorWindow
         }
     }
 
-    // ===== 7. 导入 TMP Essential Resources =====
+    // ===== TMP Essential Resources =====
     private static void ImportTMPEssentialResources()
     {
         var tmpSettings = AssetDatabase.LoadAssetAtPath<Object>("Assets/Resources/TMP Settings.asset");
@@ -490,11 +337,8 @@ public class VNovelizerSetup : EditorWindow
         }
     }
 
-    // ===== 8. 配置 Input System 为 Both 模式 =====
-    /// <summary>
-    /// 切换 Active Input Handling 为 "Both"，需重启 Editor 生效。
-    /// </summary>
-    /// <returns>true 表示做了修改（需要重启）</returns>
+    // ===== Input System 为 Both 模式 =====
+    /// <summary>切换 Active Input Handling 为 "Both"，需重启 Editor 生效。返回 true 表示做了修改。</summary>
     private static bool ConfigureInputSystemBoth()
     {
         string projectSettingsPath = Path.Combine(Application.dataPath, "..", "ProjectSettings", "ProjectSettings.asset");

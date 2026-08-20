@@ -76,11 +76,45 @@ namespace VNovelizer.Core.Theater
             cam.cullingMask = ~LayerMask.GetMask("UI");
             cam.tag = "Untagged"; // 不占用 MainCamera 标签，避免干扰 Camera.main 语义
 
-            // 自定义预制体可能携带 AudioListener，剧场相机不需要
-            var listener = cam.GetComponent<AudioListener>();
-            if (listener != null) Object.Destroy(listener);
+            // 保证场景恰有一个"耳朵"：BGM/SFX/Voice 发声的前提（见方法注释）
+            EnsureSceneHasAudioListener(cam);
 
             WarnAboutLegacyCameras(cam);
+        }
+
+        /// <summary>
+        /// 保证场景中恰有一个启用的 AudioListener（BGM/SFX/Voice 能被听到的前提）。
+        /// - 场景其他位置已有启用的 listener（如 Main Camera）→ 保持现状；
+        ///   剧场相机上如有（自定义预制体携带）则移除，避免双 listener 警告；
+        /// - 全场景没有任何启用的 listener（如用户按建议删除了遗留 Main Camera、
+        ///   或场景副本中相机被禁用）→ 剧场相机自动补挂兜底，
+        ///   消除 "There are no audio listeners in the scene" 与"BGM 无声"问题。
+        /// </summary>
+        private static void EnsureSceneHasAudioListener(Camera cam)
+        {
+            var own = cam.GetComponent<AudioListener>();
+            bool othersEnabled = false;
+            var listeners = Object.FindObjectsByType<AudioListener>(FindObjectsSortMode.None);
+            foreach (var l in listeners)
+            {
+                if (l == null || l == own) continue;
+                if (l.isActiveAndEnabled) { othersEnabled = true; break; }
+            }
+
+            if (othersEnabled)
+            {
+                // 场景已有"耳朵"：剧场相机不得再带（双 listener 会被 Unity 警告）
+                if (own != null) Object.Destroy(own);
+                return;
+            }
+
+            // 全场景无"耳朵"：剧场相机兜底（自定义预制体带来的 listener 保留复用）
+            if (own == null)
+            {
+                cam.gameObject.AddComponent<AudioListener>();
+                Debug.Log("[SceneCameraManager] 场景中没有启用的 AudioListener，已在剧场相机上自动补齐" +
+                          "（BGM/SFX/Voice 依赖它发声；此前若被删除的 Main Camera 带 listener，现在无需手动恢复）");
+            }
         }
 
         /// <summary>
@@ -97,7 +131,8 @@ namespace VNovelizer.Core.Theater
                 if ((c.cullingMask & 1) == 0) continue; // 不渲染 Default 层（bit 0），无冲突
 
                 Debug.LogWarning($"[SceneCameraManager] 检测到遗留相机 '{c.name}' 仍在渲染 Default 层，" +
-                                 "其画面会被剧场相机覆盖（浪费渲染）。建议删除该相机（UI 已全部 Overlay，不再需要场景相机）");
+                                 "其画面会被剧场相机覆盖（浪费渲染）。建议删除该相机（UI 已全部 Overlay，不再需要场景相机）。" +
+                                 "若该相机带有 AudioListener，删除后剧场相机会自动补齐，不影响音频。");
             }
         }
 

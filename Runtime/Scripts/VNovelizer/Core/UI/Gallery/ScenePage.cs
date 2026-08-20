@@ -100,9 +100,10 @@ public class ScenePage : MonoBehaviour
     /// </summary>
     private void LoadSceneDataContainer()
     {
-        string path = VNProjectConfig.Instance.Scene_DataPath + "/SceneDataContainer";
+        // 模板覆写优先（八、UI 模板覆写），fallback 经资源服务链；键即默认地址
+        string path = VNUIPrefabKeys.SceneDataContainer;
         
-        sceneDataContainer = ResourcesManager.GetInstance().Load<SceneDataContainer>(path);
+        sceneDataContainer = VNUIPrefabs.LoadAsset<SceneDataContainer>(VNUIPrefabKeys.SceneDataContainer, VNUIPrefabKeys.SceneDataContainer);
         
         if (sceneDataContainer == null)
         {
@@ -128,11 +129,10 @@ public class ScenePage : MonoBehaviour
             return;
         }
         
-        // 加载场景槽位预制体
+        // 加载场景槽位预制体（模板覆写优先，fallback 经资源服务链；键即默认地址）
         if (sceneSlotPrefab == null)
         {
-            string loadPath = VNProjectConfig.Instance.UI_GalleryPath + "/Scene";
-            sceneSlotPrefab = ResourcesManager.GetInstance().Load<GameObject>(loadPath + "/SceneSlot");
+            sceneSlotPrefab = VNUIPrefabs.Load(VNUIPrefabKeys.SceneSlot, VNUIPrefabKeys.SceneSlot);
         }
         
         if (sceneSlotPrefab == null)

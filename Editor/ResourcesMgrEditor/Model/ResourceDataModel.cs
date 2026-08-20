@@ -23,10 +23,14 @@ public struct ResourceItem
 {
     public UnityEngine.Object Asset;     // 资源引用（视频为 null）
     public string Name;                  // 不含扩展名的文件名
+    public string LogicalName;           // 逻辑名（Excel/剧本索引名：Addressables 托管模式 = 地址尾段；文件夹模式 = 文件名）
     public string AssetPath;             // 完整 Asset 路径
     public string FullPath;              // 系统绝对路径
     public long FileSize;                // 字节
     public DateTime LastModified;        // 最后修改时间
+
+    /// <summary>显示名：优先逻辑名（剧本作者看到什么，Excel 里就写什么）</summary>
+    public string DisplayName => string.IsNullOrEmpty(LogicalName) ? Name : LogicalName;
 
     public string FormattedSize
     {

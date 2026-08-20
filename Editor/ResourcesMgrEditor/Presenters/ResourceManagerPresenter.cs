@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 /// <summary>
 /// 资源管理器 Presenter - 协调 Model、View、Service。
@@ -54,6 +55,7 @@ public class ResourceManagerPresenter
 
         _content.OnItemMouseDown += HandleItemMouseDown;
         _content.OnItemPlay += HandleItemPlay;
+        _content.OnItemContextMenu += HandleItemContextMenu;
     }
 
     // ===================== 初始化 =====================
@@ -117,21 +119,26 @@ public class ResourceManagerPresenter
     // ===================== 刷新 =====================
     public void RefreshContent()
     {
+        // Addressables 托管模式：数据源是组内条目（物理位置无关），无文件夹存在性要求
+        bool managed = VNAddressablesRegistrar.IsManagedMode && _state.currentType != ResType.Video;
         string path = ResourceAssetService.GetPathFromConfig(_state.currentType);
 
-        if (string.IsNullOrEmpty(path))
+        if (!managed)
         {
-            _content.ShowEmpty("未配置路径", "请检查 VNProjectConfig 中的资源路径设置。");
-            UpdateStatusBar();
-            return;
-        }
+            if (string.IsNullOrEmpty(path))
+            {
+                _content.ShowEmpty("未配置路径", "请检查 VNProjectConfig 中的资源路径设置。");
+                UpdateStatusBar();
+                return;
+            }
 
-        if (!Directory.Exists(path))
-        {
-            _content.ShowEmpty("目标文件夹不存在", $"路径：{path}\n\n点击下方按钮创建该文件夹。");
-            _content.AddEmptyButton("创建文件夹", () => CreateFolder(path));
-            UpdateStatusBar();
-            return;
+            if (!Directory.Exists(path))
+            {
+                _content.ShowEmpty("目标文件夹不存在", $"路径：{path}\n\n点击下方按钮创建该文件夹。");
+                _content.AddEmptyButton("创建文件夹", () => CreateFolder(path));
+                UpdateStatusBar();
+                return;
+            }
         }
 
         _items = ResourceAssetService.LoadAssets(_state.currentType, _state.searchKeyword);
@@ -140,7 +147,11 @@ public class ResourceManagerPresenter
         if (_items.Count == 0)
         {
             _content.ShowEmpty("暂无资源",
-                $"点击「导入文件」或拖入文件到此处。\n\n支持的格式：{UIElementBuilder.GetExtensionDescription(_state.currentType)}");
+                managed
+                    ? "把 Project 窗口中的资产拖到这里即可分配（资产可放在项目内任何位置）。\n" +
+                      "也可以直接拖入外部文件（将导入到工作区后自动注册）。\n\n" +
+                      $"支持的格式：{UIElementBuilder.GetExtensionDescription(_state.currentType)}"
+                    : $"点击「导入文件」或拖入文件到此处。\n\n支持的格式：{UIElementBuilder.GetExtensionDescription(_state.currentType)}");
             UpdateStatusBar();
             return;
         }
@@ -218,7 +229,7 @@ public class ResourceManagerPresenter
     {
         if (item.Asset is AudioClip clip)
         {
-            _audioPlayer.LoadAndPlay(clip, item.Name);
+            _audioPlayer.LoadAndPlay(clip, item.DisplayName);
             UpdateStatusBar();
         }
     }
@@ -247,11 +258,35 @@ public class ResourceManagerPresenter
     private void DeleteItems(List<ResourceItem> items)
     {
         if (items.Count == 0) return;
-        string list = string.Join("\n  ", items.ConvertAll(i => i.AssetPath));
+
+        // Addressables 托管模式：区分"移除分配"与"删除文件"
+        bool managed = VNAddressablesRegistrar.IsManagedMode && _state.currentType != ResType.Video;
+        if (managed)
+        {
+            string list = string.Join("\n  ", items.ConvertAll(i => i.DisplayName));
+            int option = EditorUtility.DisplayDialogComplex("移除资源",
+                items.Count == 1
+                    ? $"要如何移除「{items[0].DisplayName}」？"
+                    : $"要如何移除这 {items.Count} 个资源？\n\n  {list}",
+                "移除分配（保留文件）", "取消", "同时删除文件");
+
+            if (option == 1) return;
+
+            if (option == 0)
+            {
+                foreach (var item in items)
+                    VNAddressablesRegistrar.UnassignAsset(item.AssetPath);
+                RefreshContent();
+                return;
+            }
+            // option == 2：同时删除文件 → 落到下方统一删除流程（分配随资产删除自动清理）
+        }
+
+        string fileList = string.Join("\n  ", items.ConvertAll(i => i.AssetPath));
         if (EditorUtility.DisplayDialog("删除确认",
             items.Count == 1
-                ? $"确定要删除以下文件吗？\n\n{list}\n\n此操作无法撤销！"
-                : $"确定要删除以下 {items.Count} 个文件吗？\n\n  {list}\n\n此操作无法撤销！",
+                ? $"确定要删除以下文件吗？\n\n{fileList}\n\n此操作无法撤销！"
+                : $"确定要删除以下 {items.Count} 个文件吗？\n\n  {fileList}\n\n此操作无法撤销！",
             items.Count == 1 ? "删除" : "全部删除", "取消"))
         {
             foreach (var item in items)
@@ -262,6 +297,57 @@ public class ResourceManagerPresenter
             AssetDatabase.Refresh();
             RefreshContent();
         }
+    }
+
+    // ===================== 条目操作（逻辑名） =====================
+
+    /// <summary>右键菜单：托管模式下提供重命名/移除分配，全部模式提供删除文件（向 evt.menu 追加动作）</summary>
+    private void HandleItemContextMenu(ResourceItem item, DropdownMenu menu)
+    {
+        bool managed = VNAddressablesRegistrar.IsManagedMode && _state.currentType != ResType.Video;
+
+        if (managed)
+        {
+            menu.AppendAction("重命名（逻辑名，Excel 索引名）", _ => RenameItem(item));
+            menu.AppendAction("移除分配（保留文件）", _ => DeleteItems(new List<ResourceItem> { item }));
+            menu.AppendSeparator();
+        }
+        menu.AppendAction("删除文件", _ => DeleteItemsManagedBypass(new List<ResourceItem> { item }));
+    }
+
+    /// <summary>跳过"移除分配"分支，直接进入删除文件确认（右键菜单"删除文件"专用）</summary>
+    private void DeleteItemsManagedBypass(List<ResourceItem> items)
+    {
+        string fileList = string.Join("\n  ", items.ConvertAll(i => i.AssetPath));
+        if (EditorUtility.DisplayDialog("删除确认",
+            $"确定要删除以下文件吗？\n\n{fileList}\n\n此操作无法撤销！", "删除", "取消"))
+        {
+            foreach (var item in items)
+            {
+                AssetDatabase.DeleteAsset(item.AssetPath);
+                _selected.Remove(item.AssetPath);
+            }
+            AssetDatabase.Refresh();
+            RefreshContent();
+        }
+    }
+
+    /// <summary>重命名逻辑名（改 Addressables 地址尾段，不影响文件名）</summary>
+    private void RenameItem(ResourceItem item)
+    {
+        VNInputDialogue.Show("重命名逻辑名",
+            $"剧本/Excel 中索引该资源所用的名字（原文件名不受影响）。\n当前：{item.DisplayName}",
+            item.DisplayName, "重命名", newName =>
+        {
+            string error = VNAddressablesRegistrar.RenameAssignment(item.AssetPath, newName);
+            if (error != null)
+            {
+                EditorUtility.DisplayDialog("重命名失败", error, "确定");
+                return;
+            }
+            Debug.Log($"[资源管理器] 逻辑名已重命名: {item.DisplayName} → {newName}（文件未改动）");
+            RefreshContent();
+        });
     }
 
     // ===================== 导入 =====================
@@ -288,6 +374,8 @@ public class ResourceManagerPresenter
         if (result.Success)
         {
             AssetDatabase.Refresh();
+            // 导入落位后注册进 Addressables（未初始化的项目自动跳过）
+            VNAddressablesRegistrar.SyncWorkspace();
             RefreshContent();
         }
     }
@@ -314,6 +402,8 @@ public class ResourceManagerPresenter
         if (count > 0)
         {
             AssetDatabase.Refresh();
+            // 导入落位后注册进 Addressables（未初始化的项目自动跳过）
+            VNAddressablesRegistrar.SyncWorkspace();
             RefreshContent();
             Debug.Log($"[资源管理器] 已导入 {count} 个文件");
         }
@@ -323,6 +413,56 @@ public class ResourceManagerPresenter
         }
     }
 
+    /// <summary>
+    /// 拖放统一入口（双模式分流）：
+    /// - Project 窗口资产（路径在 Assets/ 下）→ 拖放分配：注册进 Addressables，
+    ///   赋逻辑名（Excel 索引名）——文件留在原位，不复制任何内容；
+    /// - OS 外部文件/文件夹 → 导入复制（托管模式下导入到工作区并自动注册）。
+    /// </summary>
+    public void HandleDroppedPaths(string[] paths)
+    {
+        if (paths == null || paths.Length == 0) return;
+
+        var toAssign = new List<string>();
+        var toImport = new List<string>();
+        foreach (var p in paths)
+        {
+            bool isProjectAsset = p != null
+                && (p.StartsWith("Assets/", System.StringComparison.OrdinalIgnoreCase)
+                 || p.StartsWith("Packages/", System.StringComparison.OrdinalIgnoreCase));
+            if (isProjectAsset) toAssign.Add(p);
+            else toImport.Add(p);
+        }
+
+        if (toAssign.Count > 0) AssignDroppedAssets(toAssign);
+        if (toImport.Count > 0) ImportDroppedFiles(toImport.ToArray());
+    }
+
+    /// <summary>拖放分配：把项目内资产纳入当前类别（文件不移动）</summary>
+    private void AssignDroppedAssets(List<string> assetPaths)
+    {
+        int ok = 0;
+        var errors = new List<string>();
+        foreach (var path in assetPaths)
+        {
+            string error = VNAddressablesRegistrar.AssignToCategory(_state.currentType, path);
+            if (error == null) ok++;
+            else errors.Add($"{System.IO.Path.GetFileName(path)}: {error}");
+        }
+
+        if (ok > 0)
+        {
+            Debug.Log($"[资源管理器] 已分配 {ok} 个资产到「{UIElementBuilder.GetTypeDisplayName(_state.currentType)}」类别（文件保留原位）");
+            RefreshContent();
+        }
+        if (errors.Count > 0)
+        {
+            EditorUtility.DisplayDialog("部分资产分配失败",
+                string.Join("\n", errors), "确定");
+        }
+    }
+
+    /// <summary>旧入口：外部文件/文件夹导入（托管模式导入后自动注册）</summary>
     public void ImportDroppedFiles(string[] paths)
     {
         if (paths == null || paths.Length == 0) return;
@@ -341,6 +481,8 @@ public class ResourceManagerPresenter
         if (imported > 0)
         {
             AssetDatabase.Refresh();
+            // 导入的文件落位后注册进 Addressables（未初始化的项目自动跳过）
+            VNAddressablesRegistrar.SyncWorkspace();
             RefreshContent();
             Debug.Log($"[资源管理器] 已导入 {imported} 个文件");
         }

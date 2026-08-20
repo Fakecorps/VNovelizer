@@ -105,10 +105,11 @@ public class CGPage : MonoBehaviour
     /// </summary>
     private void LoadCGDataContainer()
     {
-        string path = VNProjectConfig.Instance.CG_DataPath + "/CGDataContainer";
+        // 模板覆写优先（八、UI 模板覆写），fallback 经资源服务链；键即默认地址
+        string path = VNUIPrefabKeys.CGDataContainer;
         Debug.Log(path);
         
-        cgDataContainer = ResourcesManager.GetInstance().Load<CGDataContainer>(path);
+        cgDataContainer = VNUIPrefabs.LoadAsset<CGDataContainer>(VNUIPrefabKeys.CGDataContainer, VNUIPrefabKeys.CGDataContainer);
         
         if (cgDataContainer == null)
         {
@@ -134,11 +135,10 @@ public class CGPage : MonoBehaviour
             return;
         }
         
-        // 加载CG槽位预制体
+        // 加载CG槽位预制体（模板覆写优先，fallback 经资源服务链；键即默认地址）
         if (cgSlotPrefab == null)
         {
-            string loadPath = VNProjectConfig.Instance.UI_GalleryPath + "/CG";
-            cgSlotPrefab = ResourcesManager.GetInstance().Load<GameObject>(loadPath + "/CGSlot");
+            cgSlotPrefab = VNUIPrefabs.Load(VNUIPrefabKeys.CGSlot, VNUIPrefabKeys.CGSlot);
         }
         
         if (cgSlotPrefab == null)

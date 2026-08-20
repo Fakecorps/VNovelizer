@@ -127,8 +127,8 @@ public class VNGameplayPanel : BasePanel
             continueIcon = transform.Find("UIRoot/DialogueBox/ContinueIcon")?.GetComponent<Image>();
 
         if (promptContainer == null) promptContainer = transform.Find("PromptLayer");
-        //记得要添加路径
-        promptPrefab = ResourcesManager.GetInstance().Load<GameObject>(VNProjectConfig.Instance.UI_PromptPath + "/PromptItem");
+        // 加载提示项预制体（模板覆写优先，fallback 经资源服务链；键即默认地址）
+        promptPrefab = VNUIPrefabs.Load(VNUIPrefabKeys.PromptItem, VNUIPrefabKeys.PromptItem);
         // 获取功能按钮
         autoButton = GetControl<Button>("Auto");
         skipButton = GetControl<Button>("Skip");

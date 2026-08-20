@@ -223,7 +223,9 @@ namespace VNovelizer.Core.Theater
         }
 
         /// <summary>解析背景 Sprite：主路径 + 兜底路径（与旧 OnChangeBackground 一致）。
-        /// 经 VNResourceService 提供者链加载（Addressables → Resources）。</summary>
+        /// 经 VNResourceService 提供者链加载（Addressables → Resources）。
+        /// 含纹理形态兜底：资产已注册但按 Sprite 类型未解析时（Addressables 在 Fast 模式
+        /// 按 Texture2D 登记类型），按 Texture2D 加载并就地构造 Sprite。</summary>
         private IEnumerator LoadBackgroundSprite(string bgName, SpriteHolder holder)
         {
             string primary = $"{VNProjectConfig.Instance.BackgroundResPath}/{bgName}";
@@ -231,13 +233,34 @@ namespace VNovelizer.Core.Theater
             while (!opPrimary.IsDone) yield return null;
             if (opPrimary.Asset != null) { holder.value = opPrimary.Asset; yield break; }
 
+            // 纹理形态兜底（同步，通常已在提供者缓存中）
+            Sprite texSprite = LoadTextureAsSprite(primary);
+            if (texSprite != null) { holder.value = texSprite; yield break; }
+
             // 兜底：Backgrounds/ 子目录
             string fallback = "Backgrounds/" + bgName;
             var opFallback = VNResourceService.LoadAsync<Sprite>(fallback);
             while (!opFallback.IsDone) yield return null;
             if (opFallback.Asset != null) { holder.value = opFallback.Asset; yield break; }
 
+            Sprite texSprite2 = LoadTextureAsSprite(fallback);
+            if (texSprite2 != null) { holder.value = texSprite2; yield break; }
+
             Debug.LogError($"[TheaterManager] 背景加载失败: {bgName}（尝试路径: {primary} / {fallback}）");
+        }
+
+        /// <summary>
+        /// 纹理形态兜底：按 Texture2D 加载并构造 Sprite（pixelsPerUnit=100 与 TextureImporter
+        /// 默认值一致）。用于"资产存在且已注册、但按 Sprite 类型未解析"的 Addressables 类型差异。
+        /// </summary>
+        private static Sprite LoadTextureAsSprite(string key)
+        {
+            var texture = VNResourceService.Load<Texture2D>(key);
+            if (texture == null) return null;
+            var sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height),
+                new Vector2(0.5f, 0.5f), 100f);
+            sprite.name = texture.name;
+            return sprite;
         }
 
         /// <summary>即时应用背景（cover-fit 铺满参考分辨率，保持纵横比）</summary>
@@ -567,8 +590,15 @@ namespace VNovelizer.Core.Theater
             if (state.kind == ActorKind.Background)
             {
                 // 同步加载（ApplyState 为重建路径，通常资源已加载过），经资源服务链
-                Sprite sprite = VNResourceService.Load<Sprite>($"{VNProjectConfig.Instance.BackgroundResPath}/{state.appearance}");
-                if (sprite == null) sprite = VNResourceService.Load<Sprite>("Backgrounds/" + state.appearance);
+                string primary = $"{VNProjectConfig.Instance.BackgroundResPath}/{state.appearance}";
+                Sprite sprite = VNResourceService.Load<Sprite>(primary);
+                if (sprite == null) sprite = LoadTextureAsSprite(primary); // 纹理形态兜底
+                if (sprite == null)
+                {
+                    string fallback = "Backgrounds/" + state.appearance;
+                    sprite = VNResourceService.Load<Sprite>(fallback);
+                    if (sprite == null) sprite = LoadTextureAsSprite(fallback);
+                }
                 if (sprite != null) return new ActorAppearance(state.appearance, sprite);
             }
             return null;

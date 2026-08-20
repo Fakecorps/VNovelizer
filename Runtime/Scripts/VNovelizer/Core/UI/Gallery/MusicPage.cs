@@ -213,8 +213,9 @@ public class MusicPage : MonoBehaviour
     /// </summary>
     private void LoadMusicDataContainer()
     {
-        string path = VNProjectConfig.Instance.Music_DataPath + "/MusicDataContainer";
-        musicDataContainer = ResourcesManager.GetInstance().Load<MusicDataContainer>(path);
+        // 模板覆写优先（八、UI 模板覆写），fallback 经资源服务链；键即默认地址
+        string path = VNUIPrefabKeys.MusicDataContainer;
+        musicDataContainer = VNUIPrefabs.LoadAsset<MusicDataContainer>(VNUIPrefabKeys.MusicDataContainer, VNUIPrefabKeys.MusicDataContainer);
         
         if (musicDataContainer == null)
         {
@@ -240,11 +241,10 @@ public class MusicPage : MonoBehaviour
             return;
         }
         
-        // 加载音乐槽位预制体
+        // 加载音乐槽位预制体（模板覆写优先，fallback 经资源服务链；键即默认地址）
         if (musicSlotPrefab == null)
         {
-            string loadPath = VNProjectConfig.Instance.UI_GalleryPath + "/Music";
-            musicSlotPrefab = ResourcesManager.GetInstance().Load<GameObject>(loadPath + "/MusicSlot");
+            musicSlotPrefab = VNUIPrefabs.Load(VNUIPrefabKeys.MusicSlot, VNUIPrefabKeys.MusicSlot);
         }
         
         if (musicSlotPrefab == null)

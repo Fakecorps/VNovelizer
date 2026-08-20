@@ -14,8 +14,8 @@ public class ChoicePanel : BasePanel
     {
         base.Awake();
         container = transform.Find("ChoiceContainer");
-        // 记得把路径配置到 VNProjectConfig 或者硬编码
-        choiceItemPrefab = ResourcesManager.GetInstance().Load<GameObject>(VNProjectConfig.Instance.UI_ChoicePath + "/ChoiceItem");
+        // 加载选项预制体（模板覆写优先，fallback 经资源服务链；键即默认地址）
+        choiceItemPrefab = VNUIPrefabs.Load(VNUIPrefabKeys.ChoiceItem, VNUIPrefabKeys.ChoiceItem);
     }
 
     /// <summary>

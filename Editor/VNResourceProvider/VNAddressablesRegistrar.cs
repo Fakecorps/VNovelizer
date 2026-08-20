@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
@@ -68,11 +69,17 @@ public static class VNAddressablesRegistrar
     }
 
     /// <summary>
-    /// 同步全部（包内默认资源 + 用户工作区）。不存在 Addressables 设置时自动创建。
-    /// 返回处理的条目数。
+    /// 同步全部（用户内容 + 默认资源）。不存在 Addressables 设置时自动创建。返回处理的条目数。
+    ///
+    /// 默认资源注册源（二选一，避免同地址重复条目）：
+    /// - 存量项目（存在旧版 Assets/Resources/VNovelizerRes）→ 注册用户副本
+    ///   （副本可能被用户改过，且与 Resources 兜底所见一致）；
+    /// - 新项目 → 注册包内 Runtime/PackageDefault/VNovelizerRes（不复制文件）。
+    /// 工作区（Assets/VNovelizer）始终纳入扫描。
     /// </summary>
     public static int SyncAll()
     {
+        if (Application.isPlaying) return 0; // Play 模式中绝不执行（SaveAssets/Reset 会干扰运行时）
         var settings = AddressableAssetSettingsDefaultObject.GetSettings(true);
         if (settings == null)
         {
@@ -81,8 +88,19 @@ public static class VNAddressablesRegistrar
         }
 
         var group = EnsureGroup(settings);
+        if (group == null) return 0;
+
         int count = 0;
-        count += RegisterFolderTree(group, GetPackageDefaultFsRoot(), GetPackageDefaultAssetRoot());
+        if (Directory.Exists(VNProjectPaths.LegacyRoot))
+        {
+            // 存量项目：注册旧目录副本（不注册包内原件，避免同地址重复）
+            count += RegisterFolderTree(group, VNProjectPaths.LegacyRoot, VNProjectPaths.LegacyRoot);
+        }
+        else
+        {
+            // 新项目：注册包内默认资源（文件本体留在包里）
+            count += RegisterFolderTree(group, GetPackageDefaultFsRoot(), GetPackageDefaultAssetRoot());
+        }
         count += RegisterFolderTree(group, VNProjectPaths.WorkspaceRoot, VNProjectPaths.WorkspaceRoot);
 
         AssetDatabase.SaveAssets();
@@ -100,6 +118,7 @@ public static class VNAddressablesRegistrar
     /// </summary>
     public static void SyncWorkspace()
     {
+        if (Application.isPlaying) return; // Play 模式中绝不执行（SaveAssets/Reset 会干扰运行时）
         if (!HasAddressablesData()) return; // 未初始化的项目（如旧版兼容模式）不做任何事
         var settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
         if (settings == null) return;
@@ -123,6 +142,7 @@ public static class VNAddressablesRegistrar
     /// </summary>
     public static void RegisterAssetAtPath(string assetPath, string resourceKey)
     {
+        if (Application.isPlaying) return; // Play 模式中绝不执行
         if (!HasAddressablesData()) return;
         if (string.IsNullOrEmpty(assetPath) || string.IsNullOrEmpty(resourceKey)) return;
         if (!File.Exists(assetPath)) return;
@@ -218,5 +238,192 @@ public static class VNAddressablesRegistrar
             entry.SetLabel(label, true);
 
         return true;
+    }
+
+    // ==================== 拖放分配（资源管理器工作流，见 Docs/VNResourceProviderRefactoring.md） ====================
+
+    /// <summary>
+    /// 是否处于 Addressables 托管模式（设置资产与 VNovelizer 组均存在）。
+    /// 托管模式下资源管理器的数据源是组内条目，而非文件夹扫描。
+    /// </summary>
+    public static bool IsManagedMode
+    {
+        get
+        {
+            if (!HasAddressablesData()) return false;
+            var settings = AddressableAssetSettingsDefaultObject.Settings;
+            return settings != null && settings.FindGroup(VNResourceKeys.GroupName) != null;
+        }
+    }
+
+    /// <summary>资源管理器分页 → 类别资源键（Excel 索引名所挂靠的逻辑前缀）。视频为 StreamingAssets 特例，返回 null。</summary>
+    public static string GetCategoryKey(ResType type)
+    {
+        var config = VNProjectConfig.Instance;
+        if (config == null) return null;
+        switch (type)
+        {
+            case ResType.Background: return config.BackgroundResPath;
+            case ResType.BGM: return config.BgmResPath;
+            case ResType.SFX: return config.SFXResPath;
+            case ResType.Voice: return config.VoiceResPath;
+            default: return null; // Video：StreamingAssets 文件，不经 Addressables
+        }
+    }
+
+    /// <summary>枚举类别下全部已分配条目（组内按类别 Label 过滤）</summary>
+    public static IEnumerable<AddressableAssetEntry> GetCategoryEntries(string category)
+    {
+        if (string.IsNullOrEmpty(category) || !IsManagedMode) yield break;
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        var group = settings.FindGroup(VNResourceKeys.GroupName);
+        string label = VNResourceKeys.CategoryToLabel(category);
+        foreach (var entry in group.entries)
+        {
+            if (entry != null && entry.labels.Contains(label))
+                yield return entry;
+        }
+    }
+
+    /// <summary>
+    /// 拖放分配：把项目内任意位置的资产纳入类别（地址 = 类别/逻辑名，物理位置从此无关）。
+    /// 含类型校验、图片导入设置自动修正、同名冲突检测。
+    /// 返回 null 表示成功，否则为用户可读的错误信息。
+    /// </summary>
+    public static string AssignToCategory(ResType type, string assetPath, string logicalName = null)
+    {
+        string category = GetCategoryKey(type);
+        if (category == null)
+            return "视频资源不走 Addressables，请直接拖入窗口（将复制到 StreamingAssets）";
+
+        // 类型校验（按类别）
+        string typeError = ValidateAssetType(type, assetPath);
+        if (typeError != null) return typeError;
+
+        // 图片导入设置自动修正：LoadAsync<Sprite> 需要 Sprite 类型，替用户省掉头号坑
+        if (type == ResType.Background) EnsureSpriteImport(assetPath);
+
+        // 逻辑名（默认文件名去扩展名）
+        if (string.IsNullOrEmpty(logicalName))
+            logicalName = Path.GetFileNameWithoutExtension(assetPath);
+
+        var settings = AddressableAssetSettingsDefaultObject.GetSettings(true);
+        var group = EnsureGroup(settings);
+        if (group == null) return "无法创建 Addressables 组";
+
+        // 同名冲突：同类别下已有相同逻辑名的条目
+        string address = $"{category}/{logicalName}";
+        foreach (var entry in GetCategoryEntries(category))
+        {
+            if (entry.address == address && !string.Equals(entry.AssetPath, assetPath, StringComparison.OrdinalIgnoreCase))
+                return $"逻辑名 \"{logicalName}\" 已被同类别其他资源占用，请先重命名";
+        }
+
+        string guid = AssetDatabase.AssetPathToGUID(assetPath);
+        if (string.IsNullOrEmpty(guid)) return "资产尚未导入（GUID 不存在）";
+
+        // 显式分配是用户意图：已在其他组也移入本组
+        var target = settings.CreateOrMoveEntry(guid, group);
+        if (target == null) return "注册条目失败";
+
+        target.SetAddress(address);
+        target.SetLabel(VNResourceKeys.CategoryToLabel(category), true);
+        // 清掉可能残留的旧类别标签（资产从别的类别重新分配时）
+        CleanupStaleLabels(target, category);
+
+        AssetDatabase.SaveAssets();
+        VNResourceService.Reset();
+        return null;
+    }
+
+    /// <summary>移除分配：从 VNovelizer 组移除条目（文件原地保留，只是不再被剧本索引）</summary>
+    public static bool UnassignAsset(string assetPath)
+    {
+        if (!IsManagedMode) return false;
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        string guid = AssetDatabase.AssetPathToGUID(assetPath);
+        var entry = settings.FindAssetEntry(guid);
+        if (entry == null || entry.parentGroup == null || entry.parentGroup.Name != VNResourceKeys.GroupName)
+            return false;
+
+        settings.RemoveAssetEntry(guid);
+        AssetDatabase.SaveAssets();
+        VNResourceService.Reset();
+        return true;
+    }
+
+    /// <summary>重命名逻辑名（改地址尾段，不动文件名）。返回 null 表示成功，否则为错误信息。</summary>
+    public static string RenameAssignment(string assetPath, string newLogicalName)
+    {
+        if (string.IsNullOrEmpty(newLogicalName)) return "名称不能为空";
+        if (newLogicalName.Contains("/")) return "名称不能包含 '/'";
+
+        if (!IsManagedMode) return "当前不是 Addressables 托管模式";
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        string guid = AssetDatabase.AssetPathToGUID(assetPath);
+        var entry = settings.FindAssetEntry(guid);
+        if (entry == null || entry.address == null || !entry.address.Contains("/"))
+            return "该资源未被分配逻辑名";
+
+        string category = entry.address.Substring(0, entry.address.LastIndexOf('/'));
+        string newAddress = $"{category}/{newLogicalName}";
+
+        // 同类别重名检测
+        foreach (var other in GetCategoryEntries(category))
+        {
+            if (other.address == newAddress && !string.Equals(other.AssetPath, assetPath, StringComparison.OrdinalIgnoreCase))
+                return $"逻辑名 \"{newLogicalName}\" 已被同类别其他资源占用";
+        }
+
+        entry.SetAddress(newAddress);
+        AssetDatabase.SaveAssets();
+        VNResourceService.Reset();
+        return null;
+    }
+
+    /// <summary>类别类型校验：返回 null = 通过</summary>
+    private static string ValidateAssetType(ResType type, string assetPath)
+    {
+        var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+        if (asset == null) return "无法加载资产（可能是文件夹或尚未导入）";
+
+        switch (type)
+        {
+            case ResType.Background:
+                if (!(asset is Texture2D) && !(asset is Sprite))
+                    return $"背景需要图片资产（png/jpg 等），当前类型: {asset.GetType().Name}";
+                break;
+            case ResType.BGM:
+            case ResType.SFX:
+            case ResType.Voice:
+                if (!(asset is AudioClip))
+                    return $"音频类别需要 AudioClip，当前类型: {asset.GetType().Name}";
+                break;
+        }
+        return null;
+    }
+
+    /// <summary>图片导入设置自动修正为 Sprite（仅背景类别；幂等）</summary>
+    private static void EnsureSpriteImport(string assetPath)
+    {
+        var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+        if (importer == null || importer.textureType == TextureImporterType.Sprite) return;
+        importer.textureType = TextureImporterType.Sprite;
+        importer.SaveAndReimport();
+    }
+
+    /// <summary>清理资产残留的旧类别标签（跨类别重新分配时）</summary>
+    private static void CleanupStaleLabels(AddressableAssetEntry entry, string currentCategory)
+    {
+        string currentLabel = VNResourceKeys.CategoryToLabel(currentCategory);
+        // 所有 VNovelizerRes_* 形态的标签中，不属于当前类别的移除
+        var stale = new List<string>();
+        foreach (var label in entry.labels)
+        {
+            if (label.StartsWith(VNResourceKeys.RootPrefix + "_", StringComparison.Ordinal) && label != currentLabel)
+                stale.Add(label);
+        }
+        foreach (var label in stale)
+            entry.SetLabel(label, false);
     }
 }

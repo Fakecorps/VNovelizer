@@ -86,12 +86,18 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         };
         _presenter.Initialize(_state);
 
-        // 6. 拖放支持
-        rightContainer.RegisterCallback<DragUpdatedEvent>(evt => DragAndDrop.visualMode = DragAndDropVisualMode.Copy);
+        // 6. 拖放支持（双模式：Project 窗口资产 → 拖放分配；OS 外部文件 → 导入复制）
+        rightContainer.RegisterCallback<DragUpdatedEvent>(evt =>
+        {
+            // Project 窗口拖入的资产用 Link 光标（分配语义，不复制文件）；外部文件用 Copy
+            bool fromProject = DragAndDrop.paths != null && DragAndDrop.paths.Length > 0
+                && DragAndDrop.paths[0].StartsWith("Assets/", System.StringComparison.OrdinalIgnoreCase);
+            DragAndDrop.visualMode = fromProject ? DragAndDropVisualMode.Link : DragAndDropVisualMode.Copy;
+        });
         rightContainer.RegisterCallback<DragPerformEvent>(evt =>
         {
             DragAndDrop.AcceptDrag();
-            _presenter?.ImportDroppedFiles(DragAndDrop.paths);
+            _presenter?.HandleDroppedPaths(DragAndDrop.paths);
         });
 
         // 7. 键盘快捷键

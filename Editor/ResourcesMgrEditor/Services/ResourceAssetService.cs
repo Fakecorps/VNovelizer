@@ -31,20 +31,26 @@ public static class ResourceAssetService
         }
     }
 
-    /// <summary>加载指定路径下的所有资源（不依赖路径是否已存在）</summary>
+    /// <summary>
+    /// 加载分类下全部资源（双模型数据源，见 Docs/VNResourceProviderRefactoring.md）：
+    /// - Addressables 托管模式：枚举 VNovelizer 组内该类别 Label 的条目——资产的物理位置无关紧要，
+    ///   逻辑名（Excel 索引名）= 条目地址尾段，由拖放分配指定；
+    /// - 文件夹模式（旧版/未初始化 Addressables）：扫描类别文件夹（旧行为），
+    ///   逻辑名 = 文件名。
+    /// </summary>
     public static List<ResourceItem> LoadAssets(ResType type, string searchKeyword)
     {
         var result = new List<ResourceItem>();
-        string path = GetPathFromConfig(type);
-        if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return result;
-
         string kw = (searchKeyword ?? "").ToLower().Trim();
 
+        // 视频始终是 StreamingAssets 原始文件（不经 Addressables）
         if (type == ResType.Video)
         {
-            // 视频是 StreamingAssets 中的原始文件
+            string videoPath = GetPathFromConfig(type);
+            if (string.IsNullOrEmpty(videoPath) || !Directory.Exists(videoPath)) return result;
+
             string[] videoExt = { ".mp4", ".mov", ".webm", ".avi", ".asf", ".wmv" };
-            var files = Directory.GetFiles(path, "*.*", SearchOption.TopDirectoryOnly)
+            var files = Directory.GetFiles(videoPath, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(f => videoExt.Contains(Path.GetExtension(f).ToLower()));
             foreach (var filePath in files)
             {
@@ -54,24 +60,82 @@ public static class ResourceAssetService
                 var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
                 result.Add(BuildItem(asset, fileName, assetPath, filePath));
             }
+            return result;
         }
-        else
+
+        // Addressables 托管模式：组内条目（物理位置无关）
+        string category = VNAddressablesRegistrar.GetCategoryKey(type);
+        if (VNAddressablesRegistrar.IsManagedMode && !string.IsNullOrEmpty(category))
         {
-            string filter = UIElementBuilder.GetSearchFilter(type);
-            string[] guids = AssetDatabase.FindAssets(filter, new[] { path });
-            foreach (var guid in guids)
+            foreach (var entry in VNAddressablesRegistrar.GetCategoryEntries(category))
             {
-                string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                string fileName = Path.GetFileNameWithoutExtension(assetPath);
-                if (!string.IsNullOrEmpty(kw) && !fileName.ToLower().Contains(kw)) continue;
+                string logicalName = GetLogicalName(entry.address, category);
+                if (string.IsNullOrEmpty(logicalName)) continue;
+                if (!string.IsNullOrEmpty(kw) && !logicalName.ToLower().Contains(kw)) continue;
+
+                string assetPath = entry.AssetPath;
                 var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
                 if (asset == null) continue;
                 string fullPath = Path.Combine(Directory.GetCurrentDirectory(), assetPath);
-                result.Add(BuildItem(asset, fileName, assetPath, fullPath));
+                var item = BuildItem(asset, Path.GetFileNameWithoutExtension(assetPath), assetPath, fullPath);
+                item.LogicalName = logicalName;
+                result.Add(item);
             }
+
+            // 合并类别文件夹中"尚未分配"的资产（旧项目残留/外部导入未注册等混合状态），
+            // 按 AssetPath 去重：已注册条目优先（用其逻辑名）
+            string folderPath = GetPathFromConfig(type);
+            if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
+            {
+                var assignedPaths = new HashSet<string>(result.ConvertAll(i => i.AssetPath), StringComparer.OrdinalIgnoreCase);
+                string folderFilter = UIElementBuilder.GetSearchFilter(type);
+                foreach (var guid in AssetDatabase.FindAssets(folderFilter, new[] { folderPath }))
+                {
+                    string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                    if (assignedPaths.Contains(assetPath)) continue;
+                    string fileName = Path.GetFileNameWithoutExtension(assetPath);
+                    if (!string.IsNullOrEmpty(kw) && !fileName.ToLower().Contains(kw)) continue;
+                    var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                    if (asset == null) continue;
+                    string fullPath = Path.Combine(Directory.GetCurrentDirectory(), assetPath);
+                    var item = BuildItem(asset, fileName, assetPath, fullPath);
+                    item.LogicalName = fileName; // 未分配：逻辑名 = 文件名（文件夹兜底语义）
+                    result.Add(item);
+                }
+            }
+            return result;
+        }
+
+        // 文件夹模式（旧行为）：扫描类别文件夹
+        string path = GetPathFromConfig(type);
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return result;
+
+        string filter = UIElementBuilder.GetSearchFilter(type);
+        string[] guids = AssetDatabase.FindAssets(filter, new[] { path });
+        foreach (var guid in guids)
+        {
+            string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            string fileName = Path.GetFileNameWithoutExtension(assetPath);
+            if (!string.IsNullOrEmpty(kw) && !fileName.ToLower().Contains(kw)) continue;
+            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+            if (asset == null) continue;
+            string fullPath = Path.Combine(Directory.GetCurrentDirectory(), assetPath);
+            var item = BuildItem(asset, fileName, assetPath, fullPath);
+            item.LogicalName = fileName; // 文件夹模式：逻辑名 = 文件名
+            result.Add(item);
         }
 
         return result;
+    }
+
+    /// <summary>地址 → 逻辑名（剥掉类别前缀；格式不符返回 null——非本注册器托管的条目）</summary>
+    private static string GetLogicalName(string address, string category)
+    {
+        if (string.IsNullOrEmpty(address)) return null;
+        string prefix = category + "/";
+        if (!address.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        string name = address.Substring(prefix.Length);
+        return string.IsNullOrEmpty(name) ? null : name;
     }
 
     private static ResourceItem BuildItem(UnityEngine.Object asset, string name, string assetPath, string fullPath)
@@ -100,15 +164,15 @@ public static class ResourceAssetService
         };
     }
 
-    /// <summary>排序资源列表</summary>
+    /// <summary>排序资源列表（按逻辑名——剧本作者视角的名字）</summary>
     public static List<ResourceItem> Sort(List<ResourceItem> items, SortMode mode)
     {
         switch (mode)
         {
             case SortMode.NameAsc:
-                return items.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
+                return items.OrderBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
             case SortMode.NameDesc:
-                return items.OrderByDescending(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
+                return items.OrderByDescending(i => i.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
             case SortMode.DateNewest:
                 return items.OrderByDescending(i => i.LastModified).ToList();
             case SortMode.DateOldest:
@@ -118,22 +182,38 @@ public static class ResourceAssetService
         }
     }
 
-    /// <summary>统计指定分类的资源数量</summary>
+    /// <summary>统计指定分类的资源数量（与 LoadAssets 同一双模型：组条目 ∪ 未分配文件夹资产，按路径去重）</summary>
     public static int CountAssets(ResType type)
     {
-        string path = GetPathFromConfig(type);
-        if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return 0;
-
         if (type == ResType.Video)
         {
+            string videoPath = GetPathFromConfig(type);
+            if (string.IsNullOrEmpty(videoPath) || !Directory.Exists(videoPath)) return 0;
             string[] ext = { ".mp4", ".mov", ".webm", ".avi", ".asf", ".wmv" };
-            return Directory.GetFiles(path, "*.*", SearchOption.TopDirectoryOnly)
+            return Directory.GetFiles(videoPath, "*.*", SearchOption.TopDirectoryOnly)
                 .Count(f => ext.Contains(Path.GetExtension(f).ToLower()));
         }
-        else
+
+        string category = VNAddressablesRegistrar.GetCategoryKey(type);
+        if (VNAddressablesRegistrar.IsManagedMode && !string.IsNullOrEmpty(category))
         {
-            string filter = UIElementBuilder.GetSearchFilter(type);
-            return AssetDatabase.FindAssets(filter, new[] { path }).Length;
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in VNAddressablesRegistrar.GetCategoryEntries(category))
+                paths.Add(entry.AssetPath);
+
+            string folderPath = GetPathFromConfig(type);
+            if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
+            {
+                foreach (var guid in AssetDatabase.FindAssets(UIElementBuilder.GetSearchFilter(type), new[] { folderPath }))
+                    paths.Add(AssetDatabase.GUIDToAssetPath(guid));
+            }
+            return paths.Count;
         }
+
+        // 文件夹模式
+        string path = GetPathFromConfig(type);
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return 0;
+        string filter = UIElementBuilder.GetSearchFilter(type);
+        return AssetDatabase.FindAssets(filter, new[] { path }).Length;
     }
 }

@@ -22,7 +22,7 @@ public enum EUILayer
 }
 
 /// <summary>
-/// 面板规格：注册表条目。面板的路径、层级、排序、生命周期策略集中声明，
+/// 面板规格：注册表条目。面板的键、层级、排序、生命周期策略集中声明，
 /// 调用方只需要类型（UIManager.Show&lt;T&gt;()），不再传路径/层级字符串。
 /// </summary>
 public sealed class PanelSpec
@@ -30,8 +30,18 @@ public sealed class PanelSpec
     /// <summary>面板名（须与 prefab 名及面板类名一致，作为注册键）</summary>
     public string Name;
 
-    /// <summary>Resources 路径（延迟解析：首次 Show 时才取值，适配配置初始化时序）</summary>
+    /// <summary>
+    /// 自定义路径解析器（目录，不含面板名）：兼容用户经 RegisterPanel 注册的
+    /// 自定义面板。内置面板不再使用（PrefabKey 即完整 fallback 地址）。
+    /// </summary>
     public Func<string> PathResolver;
+
+    /// <summary>
+    /// 模板键（VNUIPrefabKeys 常量）：Show 时先查 VNProjectConfig"八、UI 模板覆写"，
+    /// 用户指派了自定义模板则直接实例化引用；否则按本键（= 完整 fallback 地址）
+    /// 经资源服务链加载包内默认模板。
+    /// </summary>
+    public string PrefabKey;
 
     /// <summary>层级（决定 sortingOrder 的基数带）</summary>
     public EUILayer Layer = EUILayer.Scene;
@@ -112,21 +122,21 @@ public class UIManager : BaseManager<UIManager>
             Layer = EUILayer.Scene,
             Order = 0,
             LoadingTaskWeight = 0.6f,   // VNManager 注册 ui_VNGameplayPanel 任务，加载进度跟踪
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_VNGamePlayPath : null
+            PrefabKey = VNUIPrefabKeys.VNGameplayPanel
         });
         Register(new PanelSpec
         {
             Name = "MainMenuPanel",
             Layer = EUILayer.Scene,
             Order = 0,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_MainMenuPath : null
+            PrefabKey = VNUIPrefabKeys.MainMenuPanel
         });
         Register(new PanelSpec
         {
             Name = "GalleryPanel",
             Layer = EUILayer.Scene,
             Order = 1,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_GalleryPath : null
+            PrefabKey = VNUIPrefabKeys.GalleryPanel
         });
 
         // --- Overlay 层（常规覆盖） ---
@@ -135,35 +145,35 @@ public class UIManager : BaseManager<UIManager>
             Name = "PausePanel",
             Layer = EUILayer.Overlay,
             Order = 0,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_PausePath : null
+            PrefabKey = VNUIPrefabKeys.PausePanel
         });
         Register(new PanelSpec
         {
             Name = "HistoryPanel",
             Layer = EUILayer.Overlay,
             Order = 1,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_HistoryPath : null
+            PrefabKey = VNUIPrefabKeys.HistoryPanel
         });
         Register(new PanelSpec
         {
             Name = "SaveLoadPanel",
             Layer = EUILayer.Overlay,
             Order = 2,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_SaveLoadPath : null
+            PrefabKey = VNUIPrefabKeys.SaveLoadPanel
         });
         Register(new PanelSpec
         {
             Name = "SettingsPanel",
             Layer = EUILayer.Overlay,
             Order = 3,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_SettingsPath : null
+            PrefabKey = VNUIPrefabKeys.SettingsPanel
         });
         Register(new PanelSpec
         {
             Name = "ChoicePanel",
             Layer = EUILayer.Overlay,
             Order = 5,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_ChoicePath : null
+            PrefabKey = VNUIPrefabKeys.ChoicePanel
         });
 
         // --- Popup 层（模态弹窗） ---
@@ -172,7 +182,7 @@ public class UIManager : BaseManager<UIManager>
             Name = "ConfirmPanel",
             Layer = EUILayer.Popup,
             Order = 0,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_ConfirmPath : null
+            PrefabKey = VNUIPrefabKeys.ConfirmPanel
         });
 
         // --- Loading 层（全局常驻） ---
@@ -182,7 +192,7 @@ public class UIManager : BaseManager<UIManager>
             Layer = EUILayer.Loading,
             Order = 0,
             Persistent = true,
-            PathResolver = () => VNProjectConfig.Instance != null ? VNProjectConfig.Instance.UI_LoadingPath : null
+            PrefabKey = VNUIPrefabKeys.LoadingProgressPanel
         });
     }
 
@@ -237,15 +247,24 @@ public class UIManager : BaseManager<UIManager>
             return;
         }
 
-        string path = spec.PathResolver?.Invoke();
-        if (string.IsNullOrEmpty(path))
+        // fallback 地址：
+        // - 自定义面板（RegisterPanel）：PathResolver 返回目录 + 面板名；
+        // - 内置面板：PrefabKey 本身即完整默认地址（键 = 包内默认资源路径）。
+        string fullPath;
+        if (spec.PathResolver != null)
         {
-            Debug.LogError($"[UIManager] 面板 {name} 的路径解析失败（检查 VNProjectConfig / PathResolver）");
-            return;
+            string dir = spec.PathResolver();
+            if (string.IsNullOrEmpty(dir))
+            {
+                Debug.LogError($"[UIManager] 面板 {name} 的路径解析失败（检查 PathResolver）");
+                return;
+            }
+            fullPath = dir + "/" + name;
         }
-
-        // 完整路径 = 目录 + 面板名（沿用旧 API 契约：PathResolver 返回目录）
-        string fullPath = path + "/" + name;
+        else
+        {
+            fullPath = !string.IsNullOrEmpty(spec.PrefabKey) ? spec.PrefabKey : name;
+        }
 
         // 注册加载进度任务（仅指定了权重的大面板；VNManager 后续通过 LoadingProgressPanel 等待完成）
         string loadingTaskId = null;
@@ -256,51 +275,60 @@ public class UIManager : BaseManager<UIManager>
             LoadingProgressManager.GetInstance().UpdateTaskProgress(loadingTaskId, 0.1f);
         }
 
-        ResourcesManager.GetInstance().LoadAsync<GameObject>(fullPath, (obj) =>
+        // 模板覆写优先：用户指派了自定义模板 → 直接实例化引用（零加载零寻址）；
+        // 未指派 → 按 fallback 路径经资源服务链加载包内默认模板（Addressables → Resources）。
+        // 注意：VNUIPrefabs 返回 prefab 本体，此处统一 Instantiate。
+        var loadOp = VNUIPrefabs.LoadAsync(spec.PrefabKey, fullPath);
+        loadOp.Completed += op => OnPanelPrefabLoaded(op.Asset, name, spec, fullPath, loadingTaskId, onReady);
+    }
+
+    /// <summary>面板 prefab 就绪回调：实例化 + Canvas 契约 + 入表 + 激活（覆写/默认模板共用）</summary>
+    private void OnPanelPrefabLoaded<T>(GameObject prefab, string name, PanelSpec spec, string fullPath, string loadingTaskId, Action<T> onReady) where T : BasePanel
+    {
+        if (prefab == null)
         {
-            if (obj == null)
-            {
-                Debug.LogError($"[UIManager] 面板 {name} 加载失败: {fullPath}");
-                return;
-            }
+            Debug.LogError($"[UIManager] 面板 {name} 加载失败: {fullPath}");
+            return;
+        }
 
-            // 脚本查找：契约要求在根节点；过渡期允许子节点（警告提示修 prefab）
-            T panel = obj.GetComponent<T>();
-            if (panel == null)
-            {
-                panel = obj.GetComponentInChildren<T>(true);
-                if (panel != null)
-                    Debug.LogWarning($"[UIManager] 面板 {name} 的脚本不在 prefab 根节点（契约要求根节点自带 Canvas+脚本），已在子节点找到。建议将脚本移至根节点");
-            }
-            if (panel == null)
-            {
-                Debug.LogError($"[UIManager] 面板 {name} 加载成功但未找到 {name} 组件: {fullPath}");
-                UnityEngine.Object.Destroy(obj);
-                return;
-            }
+        GameObject obj = UnityEngine.Object.Instantiate(prefab);
 
-            // 面板根 = 加载实例根（Canvas 契约与销毁都以根为准，避免脚本在子节点时残留 prefab 拆片）
-            GameObject go = obj;
-            go.name = name;
+        // 脚本查找：契约要求在根节点；过渡期允许子节点（警告提示修 prefab）
+        T panel = obj.GetComponent<T>();
+        if (panel == null)
+        {
+            panel = obj.GetComponentInChildren<T>(true);
+            if (panel != null)
+                Debug.LogWarning($"[UIManager] 面板 {name} 的脚本不在 prefab 根节点（契约要求根节点自带 Canvas+脚本），已在子节点找到。建议将脚本移至根节点");
+        }
+        if (panel == null)
+        {
+            Debug.LogError($"[UIManager] 面板 {name} 加载成功但未找到面板组件: {fullPath}");
+            UnityEngine.Object.Destroy(obj);
+            return;
+        }
 
-            // 根对象化（脱离任何父级）+ 常驻面板跨场景
-            go.transform.SetParent(null, false);
-            if (spec.Persistent) UnityEngine.Object.DontDestroyOnLoad(go);
+        // 面板根 = 加载实例根（Canvas 契约与销毁都以根为准，避免脚本在子节点时残留 prefab 拆片）
+        GameObject go = obj;
+        go.name = name;
 
-            EnsureCanvasContract(go, spec);
+        // 根对象化（脱离任何父级）+ 常驻面板跨场景
+        go.transform.SetParent(null, false);
+        if (spec.Persistent) UnityEngine.Object.DontDestroyOnLoad(go);
 
-            _panels[name] = panel;
-            _panelRoots[name] = go;
-            if (!go.activeSelf) go.SetActive(true);
-            panel.ShowMe();
+        EnsureCanvasContract(go, spec);
 
-            // 完成加载进度任务
-            if (loadingTaskId != null && LoadingProgressManager.GetInstance() != null)
-                LoadingProgressManager.GetInstance().CompleteTask(loadingTaskId);
+        _panels[name] = panel;
+        _panelRoots[name] = go;
+        if (!go.activeSelf) go.SetActive(true);
+        panel.ShowMe();
 
-            VNDebug.LogVerbose($"[UIManager] Show {name} (Layer={spec.Layer}, sortingOrder={(int)spec.Layer + spec.Order})");
-            onReady?.Invoke(panel);
-        });
+        // 完成加载进度任务
+        if (loadingTaskId != null && LoadingProgressManager.GetInstance() != null)
+            LoadingProgressManager.GetInstance().CompleteTask(loadingTaskId);
+
+        VNDebug.LogVerbose($"[UIManager] Show {name} (Layer={spec.Layer}, sortingOrder={(int)spec.Layer + spec.Order})");
+        onReady?.Invoke(panel);
     }
 
     /// <summary>
@@ -502,12 +530,14 @@ public class UIManager : BaseManager<UIManager>
             return;
         }
 
-        _eventSystemGameObject = ResourcesManager.GetInstance().Load<GameObject>("VNovelizerRes/VNPrefabs/UI/EventSystem");
-        if (_eventSystemGameObject == null)
+        // 模板覆写优先（用户自定义 EventSystem），fallback = 包内默认（键即地址）
+        GameObject prefab = VNUIPrefabs.Load(VNUIPrefabKeys.EventSystem, VNUIPrefabKeys.EventSystem);
+        if (prefab == null)
         {
             Debug.LogError("[UIManager] 无法加载 EventSystem 预制体！");
             return;
         }
+        _eventSystemGameObject = UnityEngine.Object.Instantiate(prefab);
         UnityEngine.Object.DontDestroyOnLoad(_eventSystemGameObject);
     }
 

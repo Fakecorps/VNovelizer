@@ -55,9 +55,8 @@ public class SaveLoadPanel : BasePanel
         saveDatas = new SaveData[maxSlots];
         Debug.Log($"[SaveLoadPanel] 初始化存档数据数组，最大槽位数: {maxSlots}");
 
-        // 加载存档槽位预制体
-        string loadPath = VNProjectConfig.Instance.UI_SaveLoadPath;
-        saveSlotPrefab = ResourcesManager.GetInstance().Load<GameObject>(loadPath + "/SaveSlot");
+        // 加载存档槽位预制体（模板覆写优先，fallback 经资源服务链；键即默认地址）
+        saveSlotPrefab = VNUIPrefabs.Load(VNUIPrefabKeys.SaveSlot, VNUIPrefabKeys.SaveSlot);
     }
 
     protected override void OnEnable()

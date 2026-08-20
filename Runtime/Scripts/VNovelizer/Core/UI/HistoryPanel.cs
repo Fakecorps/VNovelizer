@@ -39,7 +39,8 @@ public class HistoryPanel : BasePanel
         else
             Debug.LogError("[HistoryPanel] 找不到 ScrollRect (H_Scroll View)!");
 
-        itemResPath = VNProjectConfig.Instance.UI_HistoryPath + "/HistoryItem";
+        // 池键 = 模板键（完整默认地址，覆写由 PoolManager 内的 VNUIPrefabs 桥接处理）
+        itemResPath = VNUIPrefabKeys.HistoryItem;
         Debug.Log($"[HistoryPanel] 预制体加载路径: {itemResPath}");
     }
 

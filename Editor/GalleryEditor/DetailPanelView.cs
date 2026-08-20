@@ -121,26 +121,38 @@ public class DetailPanelView : VisualElement
 
     private void CreateContainer(string name, GalleryEditorPresenter.Mode mode)
     {
-        // 用户内容目录：工作区（新项目）或旧版 Resources 目录（存量项目），按资源键映射
+        // 运行时资源键（地址 = 类别 + 容器名，固定不变——与文件保存位置/文件名无关）
         string key;
-        if (mode == GalleryEditorPresenter.Mode.CG) key = VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.CG_DataPath) ? VNProjectConfig.Instance.CG_DataPath : "VNovelizerRes/GalleryContent/CG";
-        else if (mode == GalleryEditorPresenter.Mode.Music) key = VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.Music_DataPath) ? VNProjectConfig.Instance.Music_DataPath : "VNovelizerRes/GalleryContent/Music";
-        else key = VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.Scene_DataPath) ? VNProjectConfig.Instance.Scene_DataPath : "VNovelizerRes/GalleryContent/Scene";
-        string folder = VNProjectPaths.ResourceKeyToFolder(key);
+        if (mode == GalleryEditorPresenter.Mode.CG) key = VNUIPrefabKeys.CGDataContainer;
+        else if (mode == GalleryEditorPresenter.Mode.Music) key = VNUIPrefabKeys.MusicDataContainer;
+        else key = VNUIPrefabKeys.SceneDataContainer;
+        string defaultFolder = VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(key));
+        if (!System.IO.Directory.Exists(defaultFolder)) System.IO.Directory.CreateDirectory(defaultFolder);
 
-        if (!System.IO.Directory.Exists(folder)) System.IO.Directory.CreateDirectory(folder);
+        // 保存位置由用户自选（SaveFilePanelInProject 限定项目内）：
+        // 物理位置与运行时索引无关（注册按固定资源键写地址），默认落点是类别默认目录
+        string path = EditorUtility.SaveFilePanelInProject(
+            $"创建 {name}", name, "asset",
+            "选择数据容器的保存位置（保存在项目内任意位置均可，运行时索引不受影响）。",
+            defaultFolder);
+        if (string.IsNullOrEmpty(path)) return; // 用户取消
+
+        if (AssetDatabase.LoadAssetAtPath<Object>(path) != null)
+        {
+            EditorUtility.DisplayDialog("已存在", $"目标位置已有同名资产：\n{path}", "确定");
+            return;
+        }
 
         ScriptableObject so;
         if (name == "CGDataContainer") so = ScriptableObject.CreateInstance<CGDataContainer>();
         else if (name == "MusicDataContainer") so = ScriptableObject.CreateInstance<MusicDataContainer>();
         else so = ScriptableObject.CreateInstance<SceneDataContainer>();
 
-        string assetPath = $"{folder}/{name}.asset";
-        AssetDatabase.CreateAsset(so, assetPath);
+        AssetDatabase.CreateAsset(so, path);
         AssetDatabase.SaveAssets();
 
-        // 注册进 Addressables（资源键 = 运行时查询键；未初始化 Addressables 的项目自动跳过）
-        VNAddressablesRegistrar.RegisterAssetAtPath(assetPath, key + "/" + name);
+        // 注册进 Addressables（资源键 = 运行时查询键，固定；未初始化 Addressables 的项目自动跳过）
+        VNAddressablesRegistrar.RegisterAssetAtPath(path, key);
 
         presenter.LoadAll();
         presenter.SwitchMode(presenter.CurrentMode);

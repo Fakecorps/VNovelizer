@@ -291,21 +291,12 @@ namespace VNovelizer.Core.API
 
         public static void PlayVideo(string videoName, System.Action onComplete)
         {
-            // 1. 加载预制体
-            var config = VNProjectConfig.Instance;
-            if (config == null || string.IsNullOrEmpty(config.VideoObjPath))
-            {
-                VNDebug.LogVerboseWarning("[VNAPI] VNProjectConfig 无效或未配置 VideoObjPath");
-                onComplete?.Invoke();
-                return;
-            }
-
-            string path = config.VideoObjPath;
-            GameObject prefab = ResourcesManager.GetInstance().Load<GameObject>(path);
+            // 1. 加载预制体（模板覆写优先，fallback 经资源服务链；键即默认地址）
+            GameObject prefab = VNUIPrefabs.Load(VNUIPrefabKeys.VideoObj, VNUIPrefabKeys.VideoObj);
 
             if (prefab == null)
             {
-                Debug.LogError($"[VNAPI] 找不到视频播放器预制体: {path}");
+                Debug.LogError($"[VNAPI] 找不到视频播放器预制体: {VNUIPrefabKeys.VideoObj}");
                 onComplete?.Invoke();
                 return;
             }

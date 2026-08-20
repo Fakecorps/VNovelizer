@@ -117,11 +117,15 @@ public class PoolManager : BaseManager<PoolManager>
             // 如果对象无效（已被销毁），继续执行下面的异步加载逻辑
         }
         
-        // 对象池不存在、为空或返回了无效对象时，通过异步加载资源
-        ResourcesManager.GetInstance().LoadAsync<GameObject>(name, (o) =>
-        { 
-            if (o != null)
+        // 对象池不存在、为空或返回了无效对象时，经模板覆写机制异步加载
+        //（name 即资源路径，同时也是 VNUIPrefabKeys 覆写键——SoundObj/VideoObj/HistoryItem
+        //  等注册过的键命中覆写通道；VFX 等未注册键不命中，纯 fallback 走服务链）
+        var loadOp = VNUIPrefabs.LoadAsync(name, name);
+        loadOp.Completed += op =>
+        {
+            if (op.Asset != null)
             {
+                var o = UnityEngine.Object.Instantiate(op.Asset);
                 o.name = name;
                 callback(o);
             }
@@ -130,7 +134,7 @@ public class PoolManager : BaseManager<PoolManager>
                 Debug.LogError($"[PoolManager] 无法加载资源: {name}");
                 callback(null);
             }
-        });
+        };
     }
 
     public void PushObj(string name, GameObject obj)

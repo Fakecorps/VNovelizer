@@ -13,6 +13,19 @@ public class CharacterEditorPresenter
     /// <summary>角色资产目录：工作区（新项目）或旧版 Resources 目录（存量项目），见 VNProjectPaths</summary>
     private static string CHARACTER_PATH => VNProjectPaths.CharactersFolder;
 
+    /// <summary>
+    /// 注册角色资产进 Addressables（键 = 角色类别前缀/角色ID）。
+    /// 运行时 CharacterResManager 按 CharacterResPath 的类别 Label 批量检索——Label 由注册写入。
+    /// 未初始化 Addressables 的项目（旧版兼容模式）自动跳过。
+    /// </summary>
+    private static void RegisterCharacterAddress(string assetPath, string characterId)
+    {
+        string category = VNProjectConfig.Instance != null
+            ? VNProjectConfig.Instance.CharacterResPath
+            : "VNovelizerRes/Characters";
+        VNAddressablesRegistrar.RegisterAssetAtPath(assetPath, $"{category}/{characterId}");
+    }
+
     // --- 数据 ---
     public List<CharacterProfile> AllProfiles { get; private set; } = new List<CharacterProfile>();
     public List<CharacterProfile> FilteredProfiles { get; private set; } = new List<CharacterProfile>();
@@ -32,10 +45,27 @@ public class CharacterEditorPresenter
         AllProfiles.Clear();
         EnsureDirectory();
 
+        var seenPaths = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+        // Addressables 托管模式：类别 Label 注册条目（角色 SO 可保存在项目内任意位置，
+        // 只要注册过就出现在列表里——物理位置与索引无关）
+        string category = VNProjectConfig.Instance != null ? VNProjectConfig.Instance.CharacterResPath : null;
+        if (!string.IsNullOrEmpty(category) && VNAddressablesRegistrar.IsManagedMode)
+        {
+            foreach (var entry in VNAddressablesRegistrar.GetCategoryEntries(category))
+            {
+                var p = AssetDatabase.LoadAssetAtPath<CharacterProfile>(entry.AssetPath);
+                if (p != null && seenPaths.Add(entry.AssetPath)) AllProfiles.Add(p);
+            }
+        }
+
+        // 类别文件夹扫描（默认落点 + 未注册资产的兜底，与旧行为一致）
         string[] guids = AssetDatabase.FindAssets("t:CharacterProfile", new[] { CHARACTER_PATH });
         foreach (string guid in guids)
         {
-            var p = AssetDatabase.LoadAssetAtPath<CharacterProfile>(AssetDatabase.GUIDToAssetPath(guid));
+            string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            if (!seenPaths.Add(assetPath)) continue;
+            var p = AssetDatabase.LoadAssetAtPath<CharacterProfile>(assetPath);
             if (p != null) AllProfiles.Add(p);
         }
 
@@ -79,17 +109,33 @@ public class CharacterEditorPresenter
     {
         EnsureDirectory();
 
-        string baseName = "NewCharacter";
-        string path = AssetDatabase.GenerateUniqueAssetPath($"{CHARACTER_PATH}/{baseName}.asset");
+        // 保存位置由用户自选（SaveFilePanelInProject 限定项目内）：
+        // 物理位置与运行时索引无关（注册走 Addressables 地址/Label），默认落点仍是角色类别目录
+        string path = EditorUtility.SaveFilePanelInProject(
+            "新建角色", "NewCharacter", "asset",
+            "选择角色资产（CharacterProfile）的保存位置。\n文件名 = 角色ID（剧本 Speaker / CharLeft 等列引用的名字），\n保存在项目内任意位置均可。",
+            CHARACTER_PATH);
+        if (string.IsNullOrEmpty(path)) return; // 用户取消
 
+        if (AssetDatabase.LoadAssetAtPath<Object>(path) != null)
+        {
+            if (!EditorUtility.DisplayDialog("已存在", $"目标位置已有同名资产：\n{path}\n\n是否覆盖？", "覆盖", "取消"))
+                return;
+        }
+
+        string characterId = Path.GetFileNameWithoutExtension(path);
         CharacterProfile newProfile = ScriptableObject.CreateInstance<CharacterProfile>();
-        newProfile.CharacterID = Path.GetFileNameWithoutExtension(path);
+        newProfile.CharacterID = characterId;
         // 新建角色自带默认分组
         newProfile.ElementSpriteGroups.Add(new ElementSpriteGroup { Group = CharacterProfile.DefaultGroupName });
         newProfile.HeadSpriteGroups.Add(new ElementSpriteGroup { Group = CharacterProfile.DefaultGroupName });
 
         AssetDatabase.CreateAsset(newProfile, path);
         AssetDatabase.SaveAssets();
+
+        // 创建即注册进 Addressables（键 = 类别前缀/角色ID，与运行时 LoadAll 的 Label 检索一致；
+        // 未初始化 Addressables 的项目自动跳过，靠 Resources 兜底）
+        RegisterCharacterAddress(path, characterId);
 
         LoadAll(true);
 
@@ -117,6 +163,10 @@ public class CharacterEditorPresenter
                 copy.CharacterID = Path.GetFileNameWithoutExtension(newPath);
                 EditorUtility.SetDirty(copy);
                 AssetDatabase.SaveAssets();
+
+                // 复制出的新角色同样注册进 Addressables
+                RegisterCharacterAddress(newPath, copy.CharacterID);
+
                 LoadAll(true);
                 SelectProfile(copy);
             }

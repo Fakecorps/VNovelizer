@@ -68,6 +68,14 @@ public class MusicManager : BaseManager<MusicManager>
         string loadPath = VNProjectConfig.Instance.BgmResPath;
         ResourcesManager.GetInstance().LoadAsync<AudioClip>(loadPath +"/" + name, (clip) =>
         {
+            if (clip == null)
+            {
+                // 加载失败：不记录 currentPlayingBGM（否则后续同名播放会被"已在播放"逻辑
+                // 永久拦截，资源恢复后也无法重试），让失败可见并允许下次重试
+                Debug.LogWarning($"[MusicManager] BGM 加载失败: {loadPath}/{name}（请检查资源名与 VNProjectConfig 的 BGM 路径，" +
+                                 $"或在资源管理器音频分页确认该资源已分配/存在于旧 Resources 目录）");
+                return;
+            }
             BGM.clip = clip;
             BGM.volume = BGMVolume;
             BGM.loop = true;
@@ -106,7 +114,12 @@ public class MusicManager : BaseManager<MusicManager>
         string loadPath = VNProjectConfig.Instance.SFXResPath;
         ResourcesManager.GetInstance().LoadAsync<AudioClip>(loadPath +"/" + name, (clip) =>
         {
-            PoolManager.GetInstance().GetObj("VNovelizerRes/VNPrefabs/Gameplay/SoundObj", (obj) =>
+            if (clip == null)
+            {
+                Debug.LogWarning($"[MusicManager] SFX 加载失败: {loadPath}/{name}");
+                return;
+            }
+            PoolManager.GetInstance().GetObj(VNUIPrefabKeys.SoundObj, (obj) =>
             {
                 AudioSource source = obj.GetComponent<AudioSource>();
 
@@ -158,7 +171,8 @@ public class MusicManager : BaseManager<MusicManager>
 
                 if (sourceObj != null)
                 {
-                    PoolManager.GetInstance().PushObj("Music/SoundObj", sourceObj);
+                    // 池键与 GetObj 统一（原 "Music/SoundObj" 与取用键不一致，导致对象无法回收）
+                    PoolManager.GetInstance().PushObj(VNUIPrefabKeys.SoundObj, sourceObj);
                 }
             }
             catch (MissingReferenceException)
@@ -224,8 +238,8 @@ public class MusicManager : BaseManager<MusicManager>
                     // 再次验证对象是否有效，防止已销毁的对象被推回对象池
                     if (source != null && sourceObj != null)
                     {
-                        // 还给对象池（PushObj 内部会进行安全检查）
-                        PoolManager.GetInstance().PushObj("Music/SoundObj", sourceObj);
+                        // 还给对象池（PushObj 内部会进行安全检查；池键与取用时统一）
+                        PoolManager.GetInstance().PushObj(VNUIPrefabKeys.SoundObj, sourceObj);
                     }
                 }
                 catch (MissingReferenceException)

@@ -45,21 +45,10 @@ public class GalleryEditorPresenter
 
     public void LoadAll()
     {
-        // 经编辑器资源键解析器加载（与运行时同键空间：Addressables 地址 → 旧版 Resources → 包内默认）
-        string cgPath = "VNovelizerRes/GalleryContent/CG/CGDataContainer";
-        if (VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.CG_DataPath))
-            cgPath = VNProjectConfig.Instance.CG_DataPath + "/CGDataContainer";
-        CgContainer = VNEditorResourceResolver.LoadByKey<CGDataContainer>(cgPath);
-
-        string musicPath = "VNovelizerRes/GalleryContent/Music/MusicDataContainer";
-        if (VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.Music_DataPath))
-            musicPath = VNProjectConfig.Instance.Music_DataPath + "/MusicDataContainer";
-        MusicContainer = VNEditorResourceResolver.LoadByKey<MusicDataContainer>(musicPath);
-
-        string scenePath = "VNovelizerRes/GalleryContent/Scene/SceneDataContainer";
-        if (VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.Scene_DataPath))
-            scenePath = VNProjectConfig.Instance.Scene_DataPath + "/SceneDataContainer";
-        SceneContainer = VNEditorResourceResolver.LoadByKey<SceneDataContainer>(scenePath);
+        // 经编辑器资源键解析器加载（与运行时同键空间：覆写字段 → Addressables 地址 → 旧版 Resources → 包内默认）
+        CgContainer = VNEditorResourceResolver.LoadByKey<CGDataContainer>(VNUIPrefabKeys.CGDataContainer);
+        MusicContainer = VNEditorResourceResolver.LoadByKey<MusicDataContainer>(VNUIPrefabKeys.MusicDataContainer);
+        SceneContainer = VNEditorResourceResolver.LoadByKey<SceneDataContainer>(VNUIPrefabKeys.SceneDataContainer);
 
         previewCache.Clear();
     }

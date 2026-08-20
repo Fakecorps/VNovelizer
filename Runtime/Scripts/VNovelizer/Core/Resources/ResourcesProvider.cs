@@ -38,7 +38,15 @@ public class ResourcesProvider : IVNResourceProvider
 
         ResourceRequest request = Resources.LoadAsync<T>(key);
         op.SetProgressSource(() => request.progress);
-        request.completed += _ => op.Complete(request.asset as T);
+        // 防御：completed 事件不保证“订阅时已完成则立即回调”，先短路检查
+        if (request.isDone)
+        {
+            op.Complete(request.asset as T);
+        }
+        else
+        {
+            request.completed += _ => op.Complete(request.asset as T);
+        }
         return op;
     }
 
