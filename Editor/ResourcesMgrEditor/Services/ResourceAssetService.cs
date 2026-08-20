@@ -20,13 +20,13 @@ public static class ResourceAssetService
         if (type == ResType.Video)
             return "Assets/StreamingAssets/" + config.VideoResPath;
 
-        const string prefix = "Assets/Resources/";
+        // 用户内容目录：工作区（新项目）或旧版 Assets/Resources/VNovelizerRes（存量项目）
         switch (type)
         {
-            case ResType.Background: return prefix + config.BackgroundResPath;
-            case ResType.BGM: return prefix + config.BgmResPath;
-            case ResType.SFX: return prefix + config.SFXResPath;
-            case ResType.Voice: return prefix + config.VoiceResPath;
+            case ResType.Background: return VNProjectPaths.ResourceKeyToFolder(config.BackgroundResPath);
+            case ResType.BGM: return VNProjectPaths.ResourceKeyToFolder(config.BgmResPath);
+            case ResType.SFX: return VNProjectPaths.ResourceKeyToFolder(config.SFXResPath);
+            case ResType.Voice: return VNProjectPaths.ResourceKeyToFolder(config.VoiceResPath);
             default: return "";
         }
     }

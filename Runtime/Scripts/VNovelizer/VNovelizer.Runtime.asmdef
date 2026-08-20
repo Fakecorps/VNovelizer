@@ -9,6 +9,7 @@
         "LitJson",
         "Unity.Localization",
         "Unity.ResourceManager",
+        "Unity.Addressables",
         "PrimeTween.Runtime",
         "Alchemy"
     ],
@@ -29,6 +30,11 @@
             "name": "com.unity.localization",
             "expression": "[0.0.0,9999.9999]",
             "define": "VN_LOCALIZATION"
+        },
+        {
+            "name": "com.unity.addressables",
+            "expression": "[0.0.0,9999.9999]",
+            "define": "VN_ADDRESSABLES"
         }
     ],
     "noEngineReferences": false

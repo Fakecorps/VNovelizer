@@ -45,20 +45,21 @@ public class GalleryEditorPresenter
 
     public void LoadAll()
     {
+        // 经编辑器资源键解析器加载（与运行时同键空间：Addressables 地址 → 旧版 Resources → 包内默认）
         string cgPath = "VNovelizerRes/GalleryContent/CG/CGDataContainer";
         if (VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.CG_DataPath))
             cgPath = VNProjectConfig.Instance.CG_DataPath + "/CGDataContainer";
-        CgContainer = Resources.Load<CGDataContainer>(cgPath);
+        CgContainer = VNEditorResourceResolver.LoadByKey<CGDataContainer>(cgPath);
 
         string musicPath = "VNovelizerRes/GalleryContent/Music/MusicDataContainer";
         if (VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.Music_DataPath))
             musicPath = VNProjectConfig.Instance.Music_DataPath + "/MusicDataContainer";
-        MusicContainer = Resources.Load<MusicDataContainer>(musicPath);
+        MusicContainer = VNEditorResourceResolver.LoadByKey<MusicDataContainer>(musicPath);
 
         string scenePath = "VNovelizerRes/GalleryContent/Scene/SceneDataContainer";
         if (VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.Scene_DataPath))
             scenePath = VNProjectConfig.Instance.Scene_DataPath + "/SceneDataContainer";
-        SceneContainer = Resources.Load<SceneDataContainer>(scenePath);
+        SceneContainer = VNEditorResourceResolver.LoadByKey<SceneDataContainer>(scenePath);
 
         previewCache.Clear();
     }

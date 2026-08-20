@@ -14,7 +14,7 @@ namespace VNovelizer.Core.Commands
         {
             if (!string.IsNullOrEmpty(args))
             {
-                Debug.LogError("hide命令参数应为空");
+                Debug.LogError("exit命令参数应为空");
                 return false;
             }
             
@@ -30,8 +30,8 @@ namespace VNovelizer.Core.Commands
 
             // 加载主菜单场景
             SceneManager.LoadScene("VNMainMenu");
-        
-            Debug.Log("[PausePanel] 返回主菜单场景");
+
+            Debug.Log("[ExitCommand] 返回主菜单场景");
             return true;
         }
     }

@@ -7,6 +7,8 @@
         "Unity.Localization.Editor",
         "Unity.Localization",
         "Unity.ResourceManager",
+        "Unity.Addressables",
+        "Unity.Addressables.Editor",
         "Alchemy",
         "Alchemy.Editor"
     ],
@@ -24,6 +26,11 @@
             "name": "com.unity.localization",
             "expression": "[0.0.0,9999.9999]",
             "define": "VN_LOCALIZATION"
+        },
+        {
+            "name": "com.unity.addressables",
+            "expression": "[0.0.0,9999.9999]",
+            "define": "VN_ADDRESSABLES"
         }
     ],
     "noEngineReferences": false

@@ -249,9 +249,24 @@ public class ScriptManagerWindow : EditorWindow
         }
     }
 
+    /// <summary>
+    /// 剧本模板路径：包内模板（Editor/Templates）优先——新流程不再要求复制到 Assets；
+    /// 旧版已复制到项目的模板仍可用（兜底）。
+    /// </summary>
+    private static string GetScriptTemplatePath()
+    {
+        var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(ScriptManagerWindow).Assembly);
+        if (packageInfo != null && !string.IsNullOrEmpty(packageInfo.resolvedPath))
+        {
+            string packageTemplate = Path.Combine(packageInfo.resolvedPath, "Editor/Templates/ScriptTemplate.xlsx");
+            if (File.Exists(packageTemplate)) return packageTemplate;
+        }
+        return "Assets/Resources/VNovelizerRes/ExcelVNScripts/Templates/ScriptTemplate.xlsx";
+    }
+
     private void CreateNewScript()
     {
-        string templatePath = "Assets/Resources/VNovelizerRes/ExcelVNScripts/Templates/ScriptTemplate.xlsx";
+        string templatePath = GetScriptTemplatePath();
         if (!File.Exists(templatePath))
         {
             EditorUtility.DisplayDialog("错误", $"找不到模板文件：{templatePath}\n请创建模板。", "确定");

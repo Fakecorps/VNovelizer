@@ -68,14 +68,37 @@ namespace VNovelizer.Core.Theater
             cam.farClipPlane = 50f;
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = Color.black;
-            cam.depth = -10f; // 低于 UI 相机，先画剧场
-            // 只渲染 Default 层：UI 层（5）由 UI 相机负责，避免 UI 被画两遍
+            // depth=10：UI 已全部 Overlay（无 UI 相机），剧场相机是唯一需要"最后画"的相机。
+            // 若用户场景遗留旧 Main Camera（渲染 Default 层），必须让剧场相机后渲染覆盖之，
+            // 否则遗留相机的静止画面会盖住剧场相机的演出（相机震动等不可见）。
+            cam.depth = 10f;
+            // 只渲染 Default 层：UI 层（5）由 Overlay Canvas 负责，避免 UI 被画两遍
             cam.cullingMask = ~LayerMask.GetMask("UI");
             cam.tag = "Untagged"; // 不占用 MainCamera 标签，避免干扰 Camera.main 语义
 
             // 自定义预制体可能携带 AudioListener，剧场相机不需要
             var listener = cam.GetComponent<AudioListener>();
             if (listener != null) Object.Destroy(listener);
+
+            WarnAboutLegacyCameras(cam);
+        }
+
+        /// <summary>
+        /// 检测与剧场相机冲突的遗留相机（渲染 Default 层的其他相机）。
+        /// 这些相机通常源于旧 ScreenSpaceCamera Canvas 时代——UI 已全部 Overlay，
+        /// 它们除了白白渲染一遍剧场画面（然后被覆盖）外毫无作用，建议删除。
+        /// </summary>
+        private static void WarnAboutLegacyCameras(Camera theaterCamera)
+        {
+            var cameras = Object.FindObjectsByType<Camera>(FindObjectsSortMode.None);
+            foreach (var c in cameras)
+            {
+                if (c == null || c == theaterCamera) continue;
+                if ((c.cullingMask & 1) == 0) continue; // 不渲染 Default 层（bit 0），无冲突
+
+                Debug.LogWarning($"[SceneCameraManager] 检测到遗留相机 '{c.name}' 仍在渲染 Default 层，" +
+                                 "其画面会被剧场相机覆盖（浪费渲染）。建议删除该相机（UI 已全部 Overlay，不再需要场景相机）");
+            }
         }
 
         /// <summary>应用相机状态（推拉/平移/旋转/后处理开关）</summary>
@@ -191,14 +214,16 @@ namespace VNovelizer.Core.Theater
             _shakeRoutine = null;
         }
 
-        /// <summary>停止相机震动并归位</summary>
+        /// <summary>
+        /// 停止相机震动并归位（仅在有活动震动时生效——无震动时是 no-op，
+        /// 否则首次 BeginShake 会用字段默认值 (0,0,0) 破坏相机基准位置）
+        /// </summary>
         public void CancelShake()
         {
-            if (_shakeRoutine != null)
-            {
-                MonoManager.GetInstance().StopCoroutine(_shakeRoutine);
-                _shakeRoutine = null;
-            }
+            if (_shakeRoutine == null) return;
+
+            MonoManager.GetInstance().StopCoroutine(_shakeRoutine);
+            _shakeRoutine = null;
             if (Camera != null)
                 Camera.transform.localPosition = _shakeBasePos;
         }

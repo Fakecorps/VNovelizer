@@ -38,7 +38,8 @@ public class FlagService : BaseManager<FlagService>
     private void EnsureInit()
     {
         if (initialized) return;
-        registry = Resources.Load<FlagRegistry>(DefaultRegistryPath);
+        // 经资源服务链加载（Addressables → Resources）
+        registry = VNResourceService.Load<FlagRegistry>(DefaultRegistryPath);
         if (registry == null && !warnedNoRegistry)
         {
             warnedNoRegistry = true;

@@ -75,6 +75,7 @@ public class UIManager : BaseManager<UIManager>
 
     private GameObject _eventSystemGameObject;
     private static bool _isListeningSceneLoad;
+    private RectTransform _effectLayer;
 
     /// <summary>是否已完成 Init（供面板自检初始化时序）</summary>
     public bool IsInitialized { get; private set; } = false;
@@ -452,6 +453,38 @@ public class UIManager : BaseManager<UIManager>
 
         canvas.sortingOrder = (int)spec.Layer + spec.Order;
         canvas.overrideSorting = false; // 根 Canvas 的 sortingOrder 直接生效
+    }
+
+    /// <summary>
+    /// UI 特效层（引擎自建，取代旧"用户 prefab 内 EffectLayer"）。
+    ///
+    /// 结构：VN_EffectCanvas (Overlay, sortingOrder=5) / EffectLayer (stretch 铺满)
+    /// 层级语义：盖住剧场画面（场景相机 depth=-10），位于 Gameplay 对话框(10)之下——
+    /// 与旧结构（EffectLayer 在 panel 内 UIRoot 之前）视觉层级一致。
+    /// 幂等懒创建；场景切换不销毁（特效对象由命令层经 PoolManager 自行回收）。
+    /// </summary>
+    public Transform GetEffectLayerRoot()
+    {
+        if (_effectLayer != null && _effectLayer.gameObject != null) return _effectLayer;
+
+        var canvasGo = new GameObject("VN_EffectCanvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 5; // 剧场之上、Scene 层面板(10)之下
+        var scaler = canvasGo.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Shrink;
+
+        var layerGo = new GameObject("EffectLayer");
+        _effectLayer = layerGo.AddComponent<RectTransform>();
+        _effectLayer.SetParent(canvasGo.transform, false);
+        _effectLayer.anchorMin = Vector2.zero;
+        _effectLayer.anchorMax = Vector2.one;
+        _effectLayer.offsetMin = Vector2.zero;
+        _effectLayer.offsetMax = Vector2.zero;
+
+        return _effectLayer;
     }
 
     // ------------------------------------------------------------------

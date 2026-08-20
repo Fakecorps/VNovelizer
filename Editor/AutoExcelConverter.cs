@@ -116,6 +116,8 @@ public static class AutoExcelConverter
         if (successCount > 0)
         {
             AssetDatabase.Refresh();
+            // 工作区新增/更新的 CSV 自动注册进 Addressables（未初始化的项目自动跳过）
+            VNAddressablesRegistrar.SyncWorkspace();
             Debug.Log($"<color=green>[AutoConvert] 自动转换完成: {successCount} 个文件" +
                       (failCount > 0 ? $", 失败 {failCount} 个" : "") + "</color>");
         }

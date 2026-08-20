@@ -25,7 +25,8 @@ public static class ScriptParser
         string loadPath = configPath + "/" + fileName;
         Debug.Log($"[ScriptParser] 尝试加载剧本: {loadPath} (ConfigPath: {configPath}, FileName: {fileName})");
 
-        TextAsset csvFile = Resources.Load<TextAsset>(loadPath);
+        // 经资源服务链加载（Addressables → Resources），键 = 配置路径 + 文件名
+        TextAsset csvFile = VNResourceService.Load<TextAsset>(loadPath);
 
         if (csvFile == null)
         {

@@ -89,15 +89,17 @@ public class FlagEditorWindow : EditorWindow
 
     private void CreateRegistryAsset()
     {
-        // 优先 Assets/Resources/VNovelizerRes/（Setup Wizard 默认目录），其次 Assets/Resources/
-        string dir = "Assets/Resources/VNovelizerRes";
-        if (!AssetDatabase.IsValidFolder("Assets/Resources")) AssetDatabase.CreateFolder("Assets", "Resources");
-        if (!AssetDatabase.IsValidFolder(dir)) AssetDatabase.CreateFolder("Assets/Resources", "VNovelizerRes");
+        // 用户内容目录（工作区优先，旧版目录存在时沿用）+ 注册 Addressables
+        string dir = VNProjectPaths.ResourceKeyToFolder(VNResourceKeys.KeyToCategory(FlagService.DefaultRegistryPath));
+        VNProjectPaths.EnsureFolder(dir);
 
         string path = dir + "/VNFlagRegistry.asset";
         var asset = CreateInstance<FlagRegistry>();
         AssetDatabase.CreateAsset(asset, path);
         AssetDatabase.SaveAssets();
+
+        // 注册进 Addressables（资源键 = 运行时 FlagService 查询键；未初始化的项目自动跳过）
+        VNAddressablesRegistrar.RegisterAssetAtPath(path, FlagService.DefaultRegistryPath);
 
         registry = asset;
         registryAssetPath = path;

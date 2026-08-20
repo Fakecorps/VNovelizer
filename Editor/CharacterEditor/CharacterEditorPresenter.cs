@@ -10,7 +10,8 @@ using UnityEngine;
 /// </summary>
 public class CharacterEditorPresenter
 {
-    private const string CHARACTER_PATH = "Assets/Resources/VNovelizerRes/Characters";
+    /// <summary>角色资产目录：工作区（新项目）或旧版 Resources 目录（存量项目），见 VNProjectPaths</summary>
+    private static string CHARACTER_PATH => VNProjectPaths.CharactersFolder;
 
     // --- 数据 ---
     public List<CharacterProfile> AllProfiles { get; private set; } = new List<CharacterProfile>();

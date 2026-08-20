@@ -79,9 +79,16 @@ namespace VNovelizer.Core.Commands
             // 加载资源
             string resPath = VNProjectConfig.Instance.AnimationPath + "/" + animName;
             GameObject animObj = null;
-            PoolManager.GetInstance().GetObj(resPath, (go) => { animObj = go; });
+            bool loadFailed = false;
+            PoolManager.GetInstance().GetObj(resPath, (go) => { animObj = go; loadFailed = go == null; });
 
-            while (animObj == null) yield return null;
+            // 等待加载结果（失败时回调给 null 并置标志，避免死循环）
+            while (animObj == null && !loadFailed) yield return null;
+            if (animObj == null)
+            {
+                Debug.LogError($"[PlayAnim] 找不到动画: {resPath}");
+                yield break;
+            }
 
             // 保存引用（每实例独立，支持并行）
             entry.Obj = animObj;

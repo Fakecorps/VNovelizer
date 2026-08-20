@@ -121,16 +121,12 @@ public class DetailPanelView : VisualElement
 
     private void CreateContainer(string name, GalleryEditorPresenter.Mode mode)
     {
-        string folder = "Assets/Resources/VNovelizerRes/GalleryContent/" + mode.ToString();
-        if (VNProjectConfig.Instance != null)
-        {
-            if (mode == GalleryEditorPresenter.Mode.CG && !string.IsNullOrEmpty(VNProjectConfig.Instance.CG_DataPath))
-                folder = "Assets/Resources/" + VNProjectConfig.Instance.CG_DataPath;
-            else if (mode == GalleryEditorPresenter.Mode.Music && !string.IsNullOrEmpty(VNProjectConfig.Instance.Music_DataPath))
-                folder = "Assets/Resources/" + VNProjectConfig.Instance.Music_DataPath;
-            else if (mode == GalleryEditorPresenter.Mode.Scene && !string.IsNullOrEmpty(VNProjectConfig.Instance.Scene_DataPath))
-                folder = "Assets/Resources/" + VNProjectConfig.Instance.Scene_DataPath;
-        }
+        // 用户内容目录：工作区（新项目）或旧版 Resources 目录（存量项目），按资源键映射
+        string key;
+        if (mode == GalleryEditorPresenter.Mode.CG) key = VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.CG_DataPath) ? VNProjectConfig.Instance.CG_DataPath : "VNovelizerRes/GalleryContent/CG";
+        else if (mode == GalleryEditorPresenter.Mode.Music) key = VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.Music_DataPath) ? VNProjectConfig.Instance.Music_DataPath : "VNovelizerRes/GalleryContent/Music";
+        else key = VNProjectConfig.Instance != null && !string.IsNullOrEmpty(VNProjectConfig.Instance.Scene_DataPath) ? VNProjectConfig.Instance.Scene_DataPath : "VNovelizerRes/GalleryContent/Scene";
+        string folder = VNProjectPaths.ResourceKeyToFolder(key);
 
         if (!System.IO.Directory.Exists(folder)) System.IO.Directory.CreateDirectory(folder);
 
@@ -139,8 +135,12 @@ public class DetailPanelView : VisualElement
         else if (name == "MusicDataContainer") so = ScriptableObject.CreateInstance<MusicDataContainer>();
         else so = ScriptableObject.CreateInstance<SceneDataContainer>();
 
-        AssetDatabase.CreateAsset(so, $"{folder}/{name}.asset");
+        string assetPath = $"{folder}/{name}.asset";
+        AssetDatabase.CreateAsset(so, assetPath);
         AssetDatabase.SaveAssets();
+
+        // 注册进 Addressables（资源键 = 运行时查询键；未初始化 Addressables 的项目自动跳过）
+        VNAddressablesRegistrar.RegisterAssetAtPath(assetPath, key + "/" + name);
 
         presenter.LoadAll();
         presenter.SwitchMode(presenter.CurrentMode);

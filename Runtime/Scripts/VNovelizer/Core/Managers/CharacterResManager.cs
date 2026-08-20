@@ -29,17 +29,18 @@ public class CharacterResManager : BaseManager<CharacterResManager>
     private void LoadAllCharacterProfiles()
     {
         string loadPath = VNProjectConfig.Instance.CharacterResPath;
-        CharacterProfile[] profiles = Resources.LoadAll<CharacterProfile>(loadPath);
+        // 经资源服务链批量加载（Addressables 按类别 Label / Resources 按文件夹）
+        IList<CharacterProfile> profileList = VNResourceService.LoadAll<CharacterProfile>(loadPath);
 
-        if (profiles == null || profiles.Length == 0)
+        if (profileList == null || profileList.Count == 0)
         {
             Debug.LogError($"【严重错误】{loadPath} 文件夹是空的，或者文件夹名字写错了！(必须是复数 Characters)");
             return;
         }
 
-        Debug.Log($"【系统】在 {loadPath} 下发现了 {profiles.Length} 个配置文件");
+        Debug.Log($"【系统】在 {loadPath} 下发现了 {profileList.Count} 个配置文件");
 
-        foreach (CharacterProfile profile in profiles)
+        foreach (CharacterProfile profile in profileList)
         {
             if (profile != null)
             {

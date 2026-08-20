@@ -222,19 +222,20 @@ namespace VNovelizer.Core.Theater
             public Sprite value;
         }
 
-        /// <summary>解析背景 Sprite：主路径 + 兜底路径（与旧 OnChangeBackground 一致）</summary>
+        /// <summary>解析背景 Sprite：主路径 + 兜底路径（与旧 OnChangeBackground 一致）。
+        /// 经 VNResourceService 提供者链加载（Addressables → Resources）。</summary>
         private IEnumerator LoadBackgroundSprite(string bgName, SpriteHolder holder)
         {
             string primary = $"{VNProjectConfig.Instance.BackgroundResPath}/{bgName}";
-            ResourceRequest request = Resources.LoadAsync<Sprite>(primary);
-            yield return request;
-            if (request.asset is Sprite s) { holder.value = s; yield break; }
+            var opPrimary = VNResourceService.LoadAsync<Sprite>(primary);
+            while (!opPrimary.IsDone) yield return null;
+            if (opPrimary.Asset != null) { holder.value = opPrimary.Asset; yield break; }
 
             // 兜底：Backgrounds/ 子目录
             string fallback = "Backgrounds/" + bgName;
-            ResourceRequest request2 = Resources.LoadAsync<Sprite>(fallback);
-            yield return request2;
-            if (request2.asset is Sprite s2) { holder.value = s2; yield break; }
+            var opFallback = VNResourceService.LoadAsync<Sprite>(fallback);
+            while (!opFallback.IsDone) yield return null;
+            if (opFallback.Asset != null) { holder.value = opFallback.Asset; yield break; }
 
             Debug.LogError($"[TheaterManager] 背景加载失败: {bgName}（尝试路径: {primary} / {fallback}）");
         }
@@ -565,9 +566,9 @@ namespace VNovelizer.Core.Theater
 
             if (state.kind == ActorKind.Background)
             {
-                // 同步加载（ApplyState 为重建路径，通常资源已加载过）
-                Sprite sprite = Resources.Load<Sprite>($"{VNProjectConfig.Instance.BackgroundResPath}/{state.appearance}");
-                if (sprite == null) sprite = Resources.Load<Sprite>("Backgrounds/" + state.appearance);
+                // 同步加载（ApplyState 为重建路径，通常资源已加载过），经资源服务链
+                Sprite sprite = VNResourceService.Load<Sprite>($"{VNProjectConfig.Instance.BackgroundResPath}/{state.appearance}");
+                if (sprite == null) sprite = VNResourceService.Load<Sprite>("Backgrounds/" + state.appearance);
                 if (sprite != null) return new ActorAppearance(state.appearance, sprite);
             }
             return null;

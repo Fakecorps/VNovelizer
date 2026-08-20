@@ -74,6 +74,10 @@ public class ExcelToCsvConverter : EditorWindow
 
         // 5. 刷新资源
         AssetDatabase.Refresh();
+
+        // 6. 工作区新增/更新的 CSV 自动注册进 Addressables（未初始化 Addressables 的项目自动跳过）
+        VNAddressablesRegistrar.SyncWorkspace();
+
         Debug.Log($"<color=green>转换完成！新建: {createCount}, 更新: {updateCount}</color>");
     }
 

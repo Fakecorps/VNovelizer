@@ -23,6 +23,9 @@ public class VNProjectConfig : ScriptableObject
         {
             if (_instance == null)
             {
+                // 引导配置：始终经 Resources 加载（资源服务链初始化前即被各管理器访问，
+                // 且作为全项目唯一的 Resources 引导资产，属 Phase 2 既定决策，见
+                // Docs/VNResourceProviderRefactoring.md）
                 _instance = Resources.Load<VNProjectConfig>("VNProjectConfig");
 #if UNITY_EDITOR
                 if (_instance == null)

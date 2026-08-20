@@ -59,12 +59,13 @@ namespace VNovelizer.Core.API
         [Obsolete("立绘已迁移至剧场层，请改用 TheaterManager.GetActor 获取 IActor")]
         public static Image GetCharImage(string posCode) => null;
 
-        /// <summary>特效层（【剧场层重构】阶段 4 之前暂保留 UI 层实现：查找 VNGameplayPanel 下的 EffectLayer；阶段 4 迁移至剧场层后将移除）</summary>
+        /// <summary>
+        /// 特效层（引擎自建 VN_EffectCanvas，Overlay sortingOrder=5：剧场之上、对话框之下）。
+        /// 【UI架构v2】不再依赖用户 prefab 内的 EffectLayer——特效是演出基础设施，不是 UI 皮肤。
+        /// </summary>
         public static Transform GetEffectLayer()
         {
-            var panel = GetPanel();
-            if (panel == null) return null;
-            return panel.transform.Find("EffectLayer");
+            return UIManager.GetInstance().GetEffectLayerRoot();
         }
 
         public static float GetCharScaleX(string posCode) => VNManager.GetInstance().GetCharacterScaleX(posCode);//获取角色朝向
