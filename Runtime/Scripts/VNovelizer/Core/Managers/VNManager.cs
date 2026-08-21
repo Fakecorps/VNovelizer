@@ -59,14 +59,13 @@ public class VNManager : BaseManager<VNManager>
     private string replayEndLineID = "";
     private bool wasMainMenuVisibleBeforeReplay = false; // 记录回放前主菜单是否可见
 
-    // 跨场景数据
+    // 启动参数（StartGame → RunGameLogic 之间传递）
     private string pendingScriptName;
     private string pendingLineID;
-    private SaveData pendingSaveData; // 【新增】用于跨场景加载存档
-    private SaveData currentLoadingSaveData; // 【新增】当前正在加载的存档数据
-    private int currentLoadingTargetIndex; // 【新增】当前正在加载的目标行索引
+    private SaveData currentLoadingSaveData; // 当前正在加载的存档数据
+    private int currentLoadingTargetIndex;   // 当前正在加载的目标行索引
     private bool isListeningSceneLoad = false;
-    private UnityAction onGameStartedCallback; // 【新增】游戏启动完成后的回调
+    private UnityAction onGameStartedCallback; // 游戏启动完成后的回调
 
     // 配置
     private bool isVoiceEnabled = true;
@@ -120,22 +119,40 @@ public class VNManager : BaseManager<VNManager>
         StartGame(scriptFileName, startLineID, onGameStarted);
     }
 
+    /// <summary>
+    /// 场景切换后恢复演出界面。
+    ///
+    /// 引擎是场景无关的：剧场根、EventSystem、常驻面板跨场景存活，但普通面板
+    /// （含 VNGameplayPanel）会被 UIManager.HideAll 在场景加载时销毁。
+    /// 用户经 loadscene 命令换场景后若不重建，界面会凭空消失且无法推进。
+    ///
+    /// 延后一帧执行：UIManager 也订阅了 sceneLoaded，两个回调的先后顺序取决于
+    /// 订阅时机（不可依赖），延后一帧可确保在 HideAll 之后重建。
+    /// </summary>
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        if (scene.name == "VNGamePlay")
+        // 未在演出中（未加载剧本 / 已回主菜单）：无需恢复
+        if (StoryLines.Count == 0 || CurrentLineIndex < 0) return;
+
+        MonoManager.GetInstance().StartCoroutine(RestoreGameplayUIAfterSceneLoad());
+    }
+
+    private IEnumerator RestoreGameplayUIAfterSceneLoad()
+    {
+        yield return null; // 等 UIManager.HideAll 完成
+
+        if (StoryLines.Count == 0 || CurrentLineIndex < 0) yield break;
+        if (UIManager.GetInstance().IsShown<VNGameplayPanel>()) yield break;
+
+        UIManager.GetInstance().Show<VNGameplayPanel>(panel =>
         {
-            // 优先处理存档加载
-            if (pendingSaveData != null)
+            // 重新广播当前行的视听状态（剧场演员仍在，但对话框是新实例）
+            if (CurrentLineIndex >= 0 && CurrentLineIndex < StoryLines.Count)
             {
-                ContinueGameInternal(pendingSaveData);
-                pendingSaveData = null;
+                var line = StoryLines[CurrentLineIndex];
+                UpdateDialogue(line, ResolveLine(line));
             }
-            // 然后处理新游戏
-            else if (!string.IsNullOrEmpty(pendingScriptName))
-            {
-                RunGameLogic();
-            }
-        }
+        });
     }
 
     private void RunGameLogic()
@@ -217,161 +234,8 @@ public class VNManager : BaseManager<VNManager>
         LoadingProgressManager progressManager = LoadingProgressManager.GetInstance();
         progressManager.OnAllTasksCompleted -= OnGameLoadingCompleted;
 
-        // 取消 ClearAllTasks，等待任务队列完成再进 DelayedStartGameplay
+        // 不 ClearAllTasks：等待任务队列自然完成后再进入正式演出
         MonoManager.GetInstance().StartCoroutine(WaitLoadingQueueThenStartGameplay());
-    }
-    
-    /// <summary>
-    /// 延迟启动游戏逻辑（确保UI完全初始化）
-    /// </summary>
-    /// <summary>
-/// 延迟启动游戏逻辑（确保UI完全初始化）
-/// </summary>
-
-    
-    private void RunGameLogic_OLD()
-    {
-        // 此方法已废弃，保留作为参考
-        VNDebug.LogVerbose($"[VNManager] RunGameLogic 开始。剧本: {pendingScriptName}, 目标行: {pendingLineID}");
-
-        InitializeManager();
-        
-        // 【新增】跨剧本加载时清空历史记录（新游戏或切换剧本）
-        // 在设置新剧本名之前，检查是否是切换剧本
-        string previousScriptName = this.currentScriptName;
-        bool isNewScript = string.IsNullOrEmpty(previousScriptName) || previousScriptName != pendingScriptName;
-        
-        if (isNewScript)
-        {
-            // 新游戏或切换剧本，清空历史记录
-            ClearHistoryLog();
-            VNDebug.LogVerbose($"[VNManager] 检测到新剧本或首次启动，已清空历史记录。旧剧本: {previousScriptName}, 新剧本: {pendingScriptName}");
-        }
-        
-        this.currentScriptName = pendingScriptName;
-
-        // 1. 加载剧本数据 (纯数据操作)
-        CommandManager.GetInstance().ExecuteCommand($"loadscript({pendingScriptName})");
-        
-        ResetState();
-
-        // 2. 计算目标行索引 (暂不预演，只算位置)
-        int targetIndex = 0;
-        if (!string.IsNullOrEmpty(pendingLineID))
-        {
-            string cleanID = pendingLineID.Trim();
-            if (LineIDIndexMap.ContainsKey(cleanID))
-            {
-                targetIndex = LineIDIndexMap[cleanID];
-            }
-            else
-            {
-                Debug.LogError($"[VNManager] 找不到指定的行号 ID: {cleanID}，将从头开始。");
-                targetIndex = 0;
-            }
-        }
-        // 3. 显示 UI (异步过程)
-        if (StoryLines.Count > 0)
-        {
-            UIManager.GetInstance().Show<VNGameplayPanel>((panel) =>
-            {
-                // 【修复】确保游戏状态设置为 Gameplay（场景回放时需要）
-                GameStateManager.GetInstance().SetState(GameState.Gameplay);
-                
-                // A. 强力清理 UI 现场
-                VNAPI.ClearAllEffects(); // 确保 EffectLayer 是空的
-                EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Left");
-                EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidLeft");
-                EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Mid");
-                EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidRight");
-                EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Right");
-
-                // 【修复】快进到目标行，如果遇到 choice 命令则停止
-                bool encounteredChoice = false;
-                if (targetIndex > 0)
-                {
-                    VNDebug.LogVerbose($"[VNManager] UI就绪，开始预演至索引: {targetIndex}");
-                    encounteredChoice = FastForwardToLine(targetIndex);
-                }
-
-                // C. 设置当前行（如果遇到 choice，FastForwardToLine 已经设置了 CurrentLineIndex，不需要覆盖）
-                if (!encounteredChoice)
-                {
-                    CurrentLineIndex = targetIndex;
-                }
-
-                // D. 同步立绘显示 (FastForward 更新了 currentCharacters 数据，现在应用到 UI)
-                foreach (var kvp in currentCharacters)
-                {
-                    string[] parts = kvp.Value.Split('#');
-                    if (parts.Length == 3)
-                    {
-                        Dictionary<string, string> info = new Dictionary<string, string>
-                        {
-                            { "position", kvp.Key }, { "characterID", parts[0] }, { "group", parts[1] }, { "emotion", parts[2] }
-                        };
-                        EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
-                        
-                        // 【修复】同步翻转状态：如果该位置有保存的翻转状态，应用完整的scale（考虑profile.scale和翻转状态）
-                        string posCode = NormalizePositionCode(kvp.Key);
-                        if (currentCharactersScaleX.ContainsKey(posCode))
-                        {
-                            float savedScaleX = currentCharactersScaleX[posCode];
-                            
-                            // 获取角色的CharacterProfile，以获取profile.scale
-                            string characterID = parts[0];
-                            CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
-                            
-                            if (profile != null)
-                            {
-                                // 计算正确的scale：profile.scale * savedScaleX
-                                float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
-                                Vector3 scale = Vector3.one * profileScale;
-                                scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
-
-                                // 【剧场层重构】立绘 RectTransform 已迁移至 IActor，翻转与缩放由 TheaterManager.SetFlip/SetScale 表达
-                                VNDebug.LogVerbose($"[VNManager] 同步位置 {kvp.Key}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
-                            }
-                            else
-                            {
-                                // 【剧场层重构】同上，立绘变换由 IActor 表达
-                                VNDebug.LogVerboseWarning($"[VNManager] 找不到角色 {characterID} 的Profile，翻转状态: {savedScaleX}");
-                            }
-                        }
-                    }
-                }
-
-                // E. 同步背景显示
-                if (!string.IsNullOrEmpty(currentBG))
-                {
-                    EventCenter.GetInstance().EventTrigger(VNGameEvents.ChangeBackground, currentBG);
-                }
-
-                // F. 正式播放
-                PlayCurrentLine();
-
-                // G. 【新增】调用游戏启动完成回调
-                if (onGameStartedCallback != null)
-                {
-                    onGameStartedCallback.Invoke();
-                    onGameStartedCallback = null; // 调用后清空，避免重复调用
-                }
-            });
-        }
-        else
-        {
-            Debug.LogError("[VNManager] 剧本加载失败，无法启动游戏。");
-            // 即使失败也调用回调，让用户知道启动失败
-            if (onGameStartedCallback != null)
-            {
-                onGameStartedCallback.Invoke();
-                onGameStartedCallback = null;
-            }
-        }
-
-        // 清理参数
-        pendingScriptName = null;
-        pendingLineID = null;
     }
 
     private void InitializeManager()
@@ -423,6 +287,62 @@ public class VNManager : BaseManager<VNManager>
     {
         GlobalDataManager.GetInstance().ClearHistoryLog();
         VNDebug.LogVerbose("[VNManager] 已清空历史记录");
+    }
+
+    /// <summary>
+    /// 退出演出、返回主菜单（场景无关：主菜单是面板，不切换场景）。
+    ///
+    /// 这是唯一的"回主菜单"入口——PausePanel 的退出按钮与 exit() 命令都经此，
+    /// 保证清理动作不遗漏。此前两条路径各写一份，都漏掉了剧场清场，
+    /// 导致回到主菜单后立绘与背景仍留在屏幕上。
+    /// </summary>
+    public void ReturnToMainMenu()
+    {
+        // 1. 中断演出：协程、命令、动画、特效、对象池
+        if (_flowCoroutine != null)
+        {
+            MonoManager.GetInstance().StopCoroutine(_flowCoroutine);
+            _flowCoroutine = null;
+        }
+        if (_autoPlayCoroutine != null)
+        {
+            MonoManager.GetInstance().StopCoroutine(_autoPlayCoroutine);
+            _autoPlayCoroutine = null;
+        }
+        CommandManager.GetInstance().InterruptAll();
+        AnimationCompat.StopAll();
+        VNAPI.ClearAllEffects();
+        PoolManager.GetInstance().Clear();
+
+        // 2. 停止音频（BGM / SFX / 语音）
+        MusicManager.GetInstance().StopBGM();
+        MusicManager.GetInstance().ClearAllSFX();
+        VoiceManager.GetInstance()?.StopVoice();
+
+        // 3. 清空剧场（立绘、背景、相机）——否则主菜单会叠在演出画面上
+        TheaterManager.GetInstance().ClearTheater();
+
+        // 4. 复位演出状态（含 Time.timeScale，防止快进中退出后主菜单卡在加速状态）
+        ResetState();
+        isAutoPlaying = false;
+        isSkipping = false;
+        isTextDisplaying = false;
+        isReplayMode = false;
+        replayEndLineID = "";
+        CurrentLineIndex = -1;
+        Time.timeScale = 1f;
+
+        // 5. 恢复状态机（暂停/设置等嵌套面板栈一并回到 Gameplay 基线）
+        var stateManager = GameStateManager.GetInstance();
+        if (stateManager != null && stateManager.CurrentState != GameState.Gameplay)
+            stateManager.SetState(GameState.Gameplay);
+
+        // 6. 切换界面
+        UIManager.GetInstance().HidePanel("PausePanel");
+        UIManager.GetInstance().HidePanel("VNGameplayPanel");
+        UIManager.GetInstance().Show<MainMenuPanel>();
+
+        Debug.Log("[VNManager] 已退出演出并返回主菜单");
     }
 
     /// <summary>
@@ -741,17 +661,18 @@ public class VNManager : BaseManager<VNManager>
         }
     }
 
-    // 位置代码转换工具函数
+    /// <summary>
+    /// 位置代码归一化（L/ML/M/MR/R）。
+    ///
+    /// 委托给 <see cref="TheaterManager.NormalizePosCode"/>，保证"槽位别名表"只有一份——
+    /// 此前 VNManager 与 TheaterManager 各维护一份，新增槽位时极易漏改其中之一。
+    /// 差异保留：本方法对未知输入返回原值（VNManager 的字典键容忍全名），
+    /// 而剧场层返回 null（命令层需要据此报错）。
+    /// </summary>
     private string NormalizePositionCode(string pos)
     {
         if (string.IsNullOrEmpty(pos)) return pos;
-        string upper = pos.ToUpper();
-        if (upper == "LEFT" || upper == "L") return "L";
-        if (upper == "ML" || upper == "MIDLEFT" || upper == "MID_LEFT" || upper == "CHARMID_LEFT" || upper == "CHARMIDLEFT") return "ML";
-        if (upper == "MID" || upper == "MIDDLE" || upper == "M") return "M";
-        if (upper == "MR" || upper == "MIDRIGHT" || upper == "MID_RIGHT" || upper == "CHARMID_RIGHT" || upper == "CHARMIDRIGHT") return "MR";
-        if (upper == "RIGHT" || upper == "R") return "R";
-        return pos; // 未知格式，原样返回
+        return TheaterManager.NormalizePosCode(pos) ?? pos;
     }
 
     // 特效状态管理 API
@@ -971,12 +892,13 @@ public class VNManager : BaseManager<VNManager>
         // [Confirm 出口] 进入新行：出口段重新可用
         _confirmExitConsumed = false;
 
-        ApplyInheritance(currentLine);
+        var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
 
-        UpdateVisualState(currentLine);
-        UpdateAudioState(currentLine);
-        UpdateDialogue(currentLine);
+        UpdateVisualState(resolved);
+        UpdateCharacterSlots(currentLine);
+        UpdateAudioState(resolved);
+        UpdateDialogue(currentLine, resolved);
 
         GlobalDataManager.GetInstance().AddReadLineID(currentLine.ID);
 
@@ -1164,12 +1086,13 @@ public class VNManager : BaseManager<VNManager>
         // [Confirm 出口] 进入新行：出口段重新可用
         _confirmExitConsumed = false;
 
-        ApplyInheritance(currentLine);
+        var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
 
-        UpdateVisualState(currentLine);
-        UpdateAudioState(currentLine);
-        UpdateDialogue(currentLine);
+        UpdateVisualState(resolved);
+        UpdateCharacterSlots(currentLine);
+        UpdateAudioState(resolved);
+        UpdateDialogue(currentLine, resolved);
         EventCenter.GetInstance().EventTrigger(VNGameEvents.DisplayAllText);
 
         GlobalDataManager.GetInstance().AddReadLineID(currentLine.ID);
@@ -1190,73 +1113,116 @@ public class VNManager : BaseManager<VNManager>
         }
     }
 
-    private void ApplyInheritance(StoryLine currentLine)
+    /// <summary>
+    /// 一行的"解析结果"：继承与自动补全后的最终取值。
+    ///
+    /// 为什么需要它：StoryLines 里的 StoryLine 是**共享且长期存活**的剧本数据。
+    /// 旧实现把继承结果直接写回 currentLine.Background / currentLine.Voice，
+    /// 等于把"当次播放时的运行时状态"永久烙进剧本行——同一行被二次经过时
+    /// （jump 回跳、场景回放、读档到不同状态后再走到该行），继承来的旧背景/
+    /// 旧语音路径会顶掉本应继承的新状态。解析结果与剧本数据必须分离。
+    /// </summary>
+    private struct ResolvedLine
     {
-        // Speaker / Text / HeadProfile / 立绘三槽：不继承，以本行 CSV 为准（立绘空槽在 UpdateCharacter 中视为隐藏）。
+        public string Background;
+        public string BGM;
+        public string Voice;
+        public string Speaker;
+        public string Text;
+        public string HeadProfile;
+    }
 
-        // 背景、BGM 相关：仍继承 Manager 当前状态（空单元格沿用上一有效背景）。
-        if (string.IsNullOrEmpty(currentLine.Background))
-            currentLine.Background = this.currentBG;
+    /// <summary>
+    /// 计算本行的最终取值（不修改剧本数据）。
+    /// - Background：空 = 继承当前状态；
+    /// - BGM：按 CSV 原值（空 = 不动，由 UpdateAudioState 判定）；
+    /// - Voice：空且启用语音时按 ID 自动生成路径；"false" 关闭语音开关；
+    /// - Speaker / Text / HeadProfile：不继承，原样透传。
+    /// </summary>
+    private ResolvedLine ResolveLine(StoryLine currentLine)
+    {
+        var resolved = new ResolvedLine
+        {
+            Background = currentLine.Background,
+            BGM = currentLine.BGM,
+            Voice = currentLine.Voice,
+            Speaker = currentLine.Speaker,
+            Text = currentLine.Text,
+            HeadProfile = currentLine.HeadProfile,
+        };
 
-        // 语音：未填时仍按 isVoiceEnabled 自动生成路径（与「场景氛围继承」策略一致，减轻配音表负担）
-        // 逻辑：没填->自动生成；填false->关；填其他->开
-        if (string.IsNullOrEmpty(currentLine.Voice))
+        // 背景：空单元格沿用上一有效背景（唯一的继承列）
+        if (string.IsNullOrEmpty(resolved.Background))
+            resolved.Background = this.currentBG;
+
+        // 语音：未填时按 isVoiceEnabled 自动生成路径（减轻配音表负担）
+        // 逻辑：没填 -> 自动生成；填 false -> 关；填其他 -> 开
+        if (string.IsNullOrEmpty(resolved.Voice))
         {
             if (!isVoiceEnabled)
             {
-                currentLine.Voice = "";
+                resolved.Voice = "";
             }
-            else
+            else if (!string.IsNullOrEmpty(currentLine.ID))
             {
                 // 只有当有 ID 时才自动生成，防止空行报错
-                if (!string.IsNullOrEmpty(currentLine.ID))
-                    currentLine.Voice = Path.GetDirectoryName(currentLine.ID) + "/" + currentLine.ID + ".mp3";
+                string dir = Path.GetDirectoryName(currentLine.ID);
+                resolved.Voice = string.IsNullOrEmpty(dir)
+                    ? currentLine.ID + ".mp3"
+                    : dir.Replace('\\', '/') + "/" + currentLine.ID + ".mp3";
             }
         }
-        else if (currentLine.Voice.ToLower() == "false")
+        else if (resolved.Voice.Trim().ToLower() == "false")
         {
             isVoiceEnabled = false;
-            currentLine.Voice = "";
+            resolved.Voice = "";
         }
         else
         {
             isVoiceEnabled = true; // 有明确设置语音文件名，则开启
         }
+
+        return resolved;
     }
 
-    private void UpdateVisualState(StoryLine currentLine)
+    private void UpdateVisualState(ResolvedLine line)
     {
-        if (!string.IsNullOrEmpty(currentLine.Background) && currentLine.Background != "hide" && currentLine.Background != "black")
+        string bg = line.Background;
+        if (!string.IsNullOrEmpty(bg) && bg != "hide" && bg != "black")
         {
-            currentBG = currentLine.Background;
-            EventCenter.GetInstance().EventTrigger(VNGameEvents.ChangeBackground, currentLine.Background);
+            currentBG = bg;
+            EventCenter.GetInstance().EventTrigger(VNGameEvents.ChangeBackground, bg);
         }
-        else if (currentLine.Background == "black")
+        else if (bg == "black")
         {
             currentBG = "black";
             EventCenter.GetInstance().EventTrigger(VNGameEvents.ChangeBackground, "black");
         }
-        else if (currentLine.Background == "hide")
+        else if (bg == "hide")
         {
             currentBG = "hide";
             EventCenter.GetInstance().EventTrigger(VNGameEvents.HideBackground);
         }
+    }
 
-        string ResolveCharForSlot(string csvValue, string slotKey)
-        {
-            if (!string.IsNullOrEmpty(csvValue)) return csvValue;
-            if (_usePersistedCharacterSlotsWhenCsvCharCellsEmpty &&
-                currentCharacters.TryGetValue(slotKey, out var persisted) &&
-                !string.IsNullOrEmpty(persisted))
-                return persisted;
-            return csvValue;
-        }
-
+    /// <summary>五槽位立绘同步（读档首帧允许用存档槽位补空，见字段注释）</summary>
+    private void UpdateCharacterSlots(StoryLine currentLine)
+    {
         UpdateCharacter("Left", ResolveCharForSlot(currentLine.CharLeft, "Left"));
         UpdateCharacter("MidLeft", ResolveCharForSlot(currentLine.CharMid_Left, "MidLeft"));
         UpdateCharacter("Mid", ResolveCharForSlot(currentLine.CharMid, "Mid"));
         UpdateCharacter("MidRight", ResolveCharForSlot(currentLine.CharMid_Right, "MidRight"));
         UpdateCharacter("Right", ResolveCharForSlot(currentLine.CharRight, "Right"));
+    }
+
+    private string ResolveCharForSlot(string csvValue, string slotKey)
+    {
+        if (!string.IsNullOrEmpty(csvValue)) return csvValue;
+        if (_usePersistedCharacterSlotsWhenCsvCharCellsEmpty &&
+            currentCharacters.TryGetValue(slotKey, out var persisted) &&
+            !string.IsNullOrEmpty(persisted))
+            return persisted;
+        return csvValue;
     }
 
     private void UpdateCharacter(string position, string charData)
@@ -1265,105 +1231,69 @@ public class VNManager : BaseManager<VNManager>
         if (string.IsNullOrEmpty(charData) || charData == "hide")
         {
             EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, position);
-            if (this.currentCharacters.ContainsKey(position))
-                this.currentCharacters.Remove(position);
+            this.currentCharacters.Remove(position);
             // 隐藏时不清除翻转状态，保持状态以便后续恢复
+            return;
         }
-        else if (!string.IsNullOrEmpty(charData))
-        {
-            string[] parts = charData.Split('#');
-            if (parts.Length == 3)
-            {
-                this.currentCharacters[position] = charData;
-                Dictionary<string, string> info = new Dictionary<string, string>
-                {
-                    { "position", position }, { "characterID", parts[0] }, { "group", parts[1] }, { "emotion", parts[2] }
-                };
-                EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
-                
-                // 【修复】如果该位置有保存的翻转状态，应用完整的scale（考虑profile.scale和翻转状态）
-                string posCode = NormalizePositionCode(position);
-                if (currentCharactersScaleX.ContainsKey(posCode))
-                {
-                    float savedScaleX = currentCharactersScaleX[posCode];
-                    
-                    // 获取角色的CharacterProfile，以获取profile.scale
-                    string characterID = parts[0];
-                    CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
-                    
-                    if (profile != null)
-                    {
-                        // 计算正确的scale：profile.scale * savedScaleX
-                        float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
-                        Vector3 scale = Vector3.one * profileScale;
-                        scale.x = savedScaleX * profileScale; // 翻转时也要应用profile的scale
 
-                        // 【剧场层重构】立绘 RectTransform 已迁移至 IActor，翻转与缩放由 TheaterManager 表达
-                        VNDebug.LogVerbose($"[VNManager] 应用位置 {position}({posCode}) 的完整scale - ProfileScale: {profileScale}, Flip: {savedScaleX}, FinalScale: {scale}");
-                    }
-                    else
-                    {
-                        // 【剧场层重构】同上，立绘变换由 IActor 表达
-                        VNDebug.LogVerboseWarning($"[VNManager] 找不到角色 {characterID} 的Profile，翻转状态: {savedScaleX}");
-                    }
-                }
+        string[] parts = charData.Split('#');
+        if (parts.Length != 3)
+        {
+            Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。新格式为 CharacterID#分组#表情（如 Amy#uniform#Smile），旧格式 ID_表情 已不再支持");
+            return;
+        }
+
+        this.currentCharacters[position] = charData;
+
+        // 翻转状态在剧场层由 TheaterManager.OnShowCharacter 直接读取
+        // VNManager.GetCharacterScaleX(posCode) 应用，此处只需广播登台事件。
+        var info = new Dictionary<string, string>
+        {
+            { "position", position }, { "characterID", parts[0] }, { "group", parts[1] }, { "emotion", parts[2] }
+        };
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
+    }
+
+    private void UpdateAudioState(ResolvedLine line)
+    {
+        string bgm = line.BGM;
+        if (!string.IsNullOrEmpty(bgm))
+        {
+            if (bgm == "stop") { MusicManager.GetInstance().StopBGM(); currentBGM = ""; }
+            else if (bgm == "pause") MusicManager.GetInstance().PauseBGM();
+            else if (bgm == "resume") MusicManager.GetInstance().PlayBGM(currentBGM);
+            else if (bgm != currentBGM)
+            {
+                // 同名 BGM 不重播，避免行间断续
+                MusicManager.GetInstance().PlayBGM(bgm);
+                currentBGM = bgm;
             }
             else
             {
-                Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。新格式为 CharacterID#分组#表情（如 Amy#uniform#Smile），旧格式 ID_表情 已不再支持");
+                VNDebug.LogVerbose($"[VNManager] BGM {bgm} 已在播放，跳过重复播放");
             }
         }
+
+        if (string.IsNullOrEmpty(line.Voice)) return;
+
+        if (VoiceManager.GetInstance() == null)
+        {
+            Debug.LogWarning("[VNManager] VoiceManager未初始化，无法播放语音");
+            return;
+        }
+
+        // 语音路径合法性：不接受 URL 形式
+        string voicePath = line.Voice.Trim();
+        if (voicePath.Length > 0 && !voicePath.Contains("://"))
+            VoiceManager.GetInstance().PlayVoice(voicePath);
+        else
+            Debug.LogWarning($"[VNManager] 无效的语音路径: {voicePath}");
     }
 
-    private void UpdateAudioState(StoryLine currentLine)
+    private void UpdateDialogue(StoryLine currentLine, ResolvedLine line)
     {
-        if (!string.IsNullOrEmpty(currentLine.BGM))
-        {
-            if (currentLine.BGM == "stop") { MusicManager.GetInstance().StopBGM(); currentBGM = ""; }
-            else if (currentLine.BGM == "pause") MusicManager.GetInstance().PauseBGM();
-            else if (currentLine.BGM == "resume") MusicManager.GetInstance().PlayBGM(currentBGM);
-            else 
-            { 
-                // 【修复】如果新 BGM 和当前 BGM 相同，跳过播放，避免重复播放导致不连贯
-                if (currentLine.BGM != currentBGM)
-                {
-                    MusicManager.GetInstance().PlayBGM(currentLine.BGM); 
-                    currentBGM = currentLine.BGM;
-                }
-                else
-                {
-                    VNDebug.LogVerbose($"[VNManager] BGM {currentLine.BGM} 已在播放，跳过重复播放");
-                }
-            }
-        }
-
-        if (!string.IsNullOrEmpty(currentLine.Voice))
-        {
-            // 检查VoiceManager是否已初始化
-            if (VoiceManager.GetInstance() != null)
-            {
-                // 检查语音路径是否有效（不包含无效字符）
-                string voicePath = currentLine.Voice.Trim();
-                if (!string.IsNullOrEmpty(voicePath) && !voicePath.Contains("://"))
-                {
-                    VoiceManager.GetInstance().PlayVoice(voicePath);
-                }
-                else
-                {
-                    Debug.LogWarning($"[VNManager] 无效的语音路径: {voicePath}");
-                }
-            }
-            else
-            {
-                Debug.LogWarning("[VNManager] VoiceManager未初始化，无法播放语音");
-            }
-        }
-    }
-
-    private void UpdateDialogue(StoryLine currentLine)
-    {
-        string finalSpeaker = currentLine.Speaker;
-        string finalText = currentLine.Text;
+        string finalSpeaker = line.Speaker;
+        string finalText = line.Text;
 
         // 启用本地化：每行独立解析，不在行与行之间继承译文（空/缺失则按配置回退 CSV）
         if (VNLocalizationService.IsEnabled())
@@ -1387,12 +1317,12 @@ public class VNManager : BaseManager<VNManager>
         EventCenter.GetInstance().EventTrigger(VNGameEvents.UpdateDialogue, _dialogueEventScratch);
 
         _headProfileEventScratch.Clear();
-        _headProfileEventScratch[VNGameEvents.KeyHeadProfile] = string.IsNullOrEmpty(currentLine.HeadProfile) ? "hide" : currentLine.HeadProfile;
+        _headProfileEventScratch[VNGameEvents.KeyHeadProfile] = string.IsNullOrEmpty(line.HeadProfile) ? "hide" : line.HeadProfile;
         _headProfileEventScratch[VNGameEvents.KeySpeaker] = finalSpeaker;
         EventCenter.GetInstance().EventTrigger(VNGameEvents.UpdateHeadProfile, _headProfileEventScratch);
 
         isTextDisplaying = true;
-        AddHistoryEntry(finalSpeaker, finalText, currentLine.Voice);
+        AddHistoryEntry(finalSpeaker, finalText, line.Voice);
     }
 
     public void UpdateCurrentBG_OnlyData(string bgName)
@@ -1712,79 +1642,65 @@ public class VNManager : BaseManager<VNManager>
         }
         else
         {
+            // 静默归零会让"行 ID 打错"表现为"莫名从头开始"，必须报错
+            Debug.LogError($"[VNManager] 找不到指定的行号 ID: {cleanID}，将从剧本开头开始播放");
             targetIndex = 0;
         }
     }
+
     // 确保游戏状态设置为 Gameplay
     GameStateManager.GetInstance().SetState(GameState.Gameplay);
-// 强力清理 UI 现场
+
+    // 强力清理演出现场（特效 + 五槽立绘），避免上一次演出残留
     VNAPI.ClearAllEffects();
     EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Left");
     EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidLeft");
     EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Mid");
     EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "MidRight");
     EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, "Right");
-// 快进到目标行，如果遇到 choice 命令则停止
+
+    // 快进到目标行，如果遇到 choice 命令则停止
     bool encounteredChoice = false;
     if (targetIndex > 0)
     {
         VNDebug.LogVerbose($"[VNManager] UI就绪，开始预演至索引: {targetIndex}");
         encounteredChoice = FastForwardToLine(targetIndex);
     }
-    // 设置当前行
+
+    // 设置当前行（遇到 choice 时 FastForwardToLine 已写入正确索引，不可覆盖）
     if (!encounteredChoice)
     {
         CurrentLineIndex = targetIndex;
     }
-// 同步立绘显示
-foreach (var kvp in currentCharacters)
-{
-    string[] parts = kvp.Value.Split('#');
-    if (parts.Length == 3)
+
+    // 同步立绘显示：把 Simulate 阶段积累的槽位状态登台
+    // （翻转/缩放由 TheaterManager.OnShowCharacter 读取 GetCharacterScaleX 应用，此处无需重复计算）
+    foreach (var kvp in currentCharacters)
     {
-        // 【修复】事件契约类型为 Dictionary<string,string>（EventCenter 按泛型类型分发），
-        // 旧代码用 Dictionary<string,object> 触发会被静默丢弃
-        Dictionary<string, string> info = new Dictionary<string, string>
-            {
-                { "position", kvp.Key },
-                { "characterID", parts[0] },
-                { "group", parts[1] },
-                { "emotion", parts[2] }
-            };
+        string[] parts = kvp.Value.Split('#');
+        if (parts.Length != 3) continue;
 
-            EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
-
-            string posCode = NormalizePositionCode(kvp.Key);
-            if (currentCharactersScaleX.ContainsKey(posCode))
-            {
-                float savedScaleX = currentCharactersScaleX[posCode];
-                string characterID = parts[0];
-                CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
-
-                if (profile != null)
-                {
-                    float profileScale = profile.scale > 0 ? profile.scale : 1.0f;
-                                    Vector3 scale = Vector3.one * profileScale;
-                                    scale.x = savedScaleX * profileScale;
-
-                                    // 【剧场层重构】立绘 RectTransform 已迁移至 IActor，立绘变换由 TheaterManager 表达
-                                    VNDebug.LogVerbose($"[VNManager] FastForwardToLine scale - ProfileScale: {profileScale}, Flip: {savedScaleX}");
-                                }
-                                else
-                                {
-                                    // 【剧场层重构】同上
-                                    VNDebug.LogVerboseWarning($"[VNManager] FastForwardToLine profile missing, flip: {savedScaleX}");
-                                }
-            }
-        }
+        // 事件契约类型为 Dictionary<string,string>（EventCenter 按泛型类型分发），
+        // 用 Dictionary<string,object> 触发会被静默丢弃
+        var info = new Dictionary<string, string>
+        {
+            { "position", kvp.Key },
+            { "characterID", parts[0] },
+            { "group", parts[1] },
+            { "emotion", parts[2] }
+        };
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
     }
+
     // 同步背景显示
     if (!string.IsNullOrEmpty(currentBG))
     {
         EventCenter.GetInstance().EventTrigger(VNGameEvents.ChangeBackground, currentBG);
     }
-// 正式播放
+
+    // 正式播放
     PlayCurrentLine();
+
     // 启动完成回调
     if (onGameStartedCallback != null)
     {

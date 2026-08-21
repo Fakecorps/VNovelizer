@@ -7,16 +7,16 @@ namespace VNovelizer.Core.Theater
     /// <summary>
     /// 场景相机管理：负责剧场专用相机的创建/装配与相机状态应用。
     ///
-    /// 双相机栈契约：
-    /// - 场景相机（本类管理）：正交 Size = 5.4（19.2x10.8 世界单位 = 1920x1080 僧图像素），
-    ///   位于 (0,0,-10) 朝 +Z，depth 低于 UI 相机，只渲染 Default 层（不渲染 UI 层）；
-    /// - UI 相机：维持现状（ScreenSpaceCamera Canvas 绑定的相机），渲染全部 UI。
+    /// 单相机契约（UI 全 Overlay 后）：
+    /// - 剧场相机（本类管理）：正交 Size = 5.4（19.2x10.8 世界单位 = 1920x1080 剧本像素），
+    ///   位于 (0,0,-10) 朝 +Z，只渲染 Default 层（UI 层由 Overlay Canvas 负责）；
+    /// - 无 UI 相机：所有面板 Canvas 均为 ScreenSpaceOverlay，天然压在剧场画面之上。
     ///
-    /// 相机名固定为 <see cref="CameraName"/>；UIManager 的相机查找逻辑会按此名跳过本相机。
+    /// 相机名固定为 <see cref="CameraName"/>（诊断与去重用）。
     /// </summary>
     public class SceneCameraManager : BaseManager<SceneCameraManager>
     {
-        /// <summary>剧场相机固定名称（UIManager 按此名排除）</summary>
+        /// <summary>剧场相机固定名称</summary>
         public const string CameraName = "VN_TheaterCamera";
 
         /// <summary>默认正交尺寸：1080 / 2 / 100 = 5.4（画面高度恰好铺满）</summary>
@@ -186,13 +186,28 @@ namespace VNovelizer.Core.Theater
             var components = Camera.GetComponents<Component>();
             for (int i = 0; i < components.Length; i++)
             {
-                var comp = components[i];
-                var behaviour = comp as Behaviour;
-                if (behaviour == null || comp is Camera || comp is Transform) continue;
+                if (!(components[i] is Behaviour behaviour)) continue;
+                if (!IsManagedFxComponent(behaviour)) continue;
 
                 bool on = enabledNames != null && enabledNames.Contains(behaviour.GetType().Name);
                 if (behaviour.enabled != on) behaviour.enabled = on;
             }
+        }
+
+        /// <summary>
+        /// 是否属于"由剧场状态托管开关"的后处理组件。
+        ///
+        /// 关键排除项（不可省略）：Camera / Transform 是相机本体；
+        /// <see cref="AudioListener"/> 与 <see cref="AudioSource"/> 同为 Behaviour，
+        /// 一旦被当作后处理组件统一关闭，会直接导致全局静音
+        /// （剧场相机是场景 AudioListener 的兜底宿主，见 EnsureSceneHasAudioListener）。
+        /// </summary>
+        private static bool IsManagedFxComponent(Behaviour behaviour)
+        {
+            if (behaviour is Camera) return false;
+            if (behaviour is AudioListener) return false;
+            if (behaviour is AudioSource) return false;
+            return true;
         }
 
         /// <summary>相机与全部后处理组件恢复默认（剧场清空时调用）</summary>
@@ -206,12 +221,8 @@ namespace VNovelizer.Core.Theater
             Camera.orthographic = true;
             Camera.orthographicSize = BaseOrthoSize;
 
-            var components = Camera.GetComponents<Component>();
-            for (int i = 0; i < components.Length; i++)
-            {
-                if (components[i] is Behaviour b && !(components[i] is Camera) && !(components[i] is Transform))
-                    b.enabled = false;
-            }
+            // 关闭全部托管后处理组件（AudioListener/AudioSource 已被排除，见 IsManagedFxComponent）
+            ApplyFxComponents(null);
         }
 
         #region 相机震动（shake screen 分支）

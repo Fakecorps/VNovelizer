@@ -20,7 +20,12 @@ namespace VNovelizer.Core.Commands
             if (string.IsNullOrEmpty(args)) return false;
 
             string[] parts = args.Split(',');
-            string posCode = parts[0].Trim();
+            string posCode = TheaterManager.NormalizePosCode(parts[0]);
+            if (posCode == null)
+            {
+                Debug.LogError($"[CharFlip] 未知位置: {parts[0].Trim()}（可用 L/ML/M/MR/R 或全名）");
+                return false;
+            }
 
             var vnManager = VNManager.GetInstance();
             var theater = TheaterManager.GetInstance();
@@ -67,7 +72,8 @@ namespace VNovelizer.Core.Commands
             if (string.IsNullOrEmpty(args)) return;
 
             string[] parts = args.Split(',');
-            string posCode = parts[0].Trim();
+            string posCode = TheaterManager.NormalizePosCode(parts[0]);
+            if (posCode == null) return;
 
             string charData = VNManager.GetInstance().GetCharacterData(posCode);
             if (string.IsNullOrEmpty(charData) || charData == "hide")

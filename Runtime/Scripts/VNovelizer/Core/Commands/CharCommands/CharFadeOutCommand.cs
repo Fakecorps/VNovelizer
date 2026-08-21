@@ -29,7 +29,12 @@ namespace VNovelizer.Core.Commands
             if (string.IsNullOrEmpty(args)) yield break;
 
             string[] parts = args.Split(',');
-            string posCode = parts[0].Trim();
+            string posCode = TheaterManager.NormalizePosCode(parts[0]);
+            if (posCode == null)
+            {
+                Debug.LogError($"[CharFadeOut] 未知位置: {parts[0].Trim()}（可用 L/ML/M/MR/R 或全名）");
+                yield break;
+            }
             float duration = defaultDuration;
             if (parts.Length > 1) float.TryParse(parts[1].Trim(), out duration);
 

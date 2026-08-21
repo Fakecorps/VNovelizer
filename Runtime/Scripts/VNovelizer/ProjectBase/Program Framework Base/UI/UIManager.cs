@@ -83,6 +83,14 @@ public class UIManager : BaseManager<UIManager>
     /// <summary>面板注册表（键 = PanelSpec.Name）</summary>
     private readonly Dictionary<string, PanelSpec> _specs = new Dictionary<string, PanelSpec>();
 
+    /// <summary>
+    /// 正在异步加载中的面板 → 等待回调队列（键 = PanelSpec.Name）。
+    /// 面板 prefab 经资源服务链异步加载，同一面板在加载完成前被再次 Show 时
+    /// 若不去重就会实例化出多份（表现为对话框重影、输入被上层面板吞掉）。
+    /// </summary>
+    private readonly Dictionary<string, List<Action<BasePanel>>> _pendingShows =
+        new Dictionary<string, List<Action<BasePanel>>>();
+
     private GameObject _eventSystemGameObject;
     private static bool _isListeningSceneLoad;
     private RectTransform _effectLayer;
@@ -90,16 +98,16 @@ public class UIManager : BaseManager<UIManager>
     /// <summary>是否已完成 Init（供面板自检初始化时序）</summary>
     public bool IsInitialized { get; private set; } = false;
 
-    /// <summary>面板根 RectTransform 未铺满时是否强制修正为 stretch（契约执行，默认开启）</summary>
-    private static bool _forceStretch = true;
-
     // ------------------------------------------------------------------
     // 初始化
     // ------------------------------------------------------------------
 
     public void Init()
     {
-        RegisterBuiltinPanels();
+        // 内置注册表只建一次：Init 被 StartGame/ContinueGame/各面板 Awake 反复调用，
+        // 若每次都重注册，用户经 Register 覆盖内置面板的自定义规格会被静默覆盖回默认值。
+        if (_specs.Count == 0) RegisterBuiltinPanels();
+
         EnsureEventSystem();
 
         if (!_isListeningSceneLoad)
@@ -223,7 +231,7 @@ public class UIManager : BaseManager<UIManager>
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// 显示面板（幂等：已存在则直接 ShowMe 并回调）。
+    /// 显示面板（幂等：已存在则直接 ShowMe 并回调；加载中则并入等待队列）。
     /// 未注册的面板会报错——新面板必须先经 Register 声明元数据。
     /// </summary>
     public void Show<T>(Action<T> onReady = null) where T : BasePanel
@@ -239,6 +247,13 @@ public class UIManager : BaseManager<UIManager>
             return;
         }
         _panels.Remove(name); // 清理已销毁的残留键
+
+        // 加载中：并入等待队列，绝不重复实例化
+        if (_pendingShows.TryGetValue(name, out var waiting))
+        {
+            if (onReady != null) waiting.Add(p => onReady(p as T));
+            return;
+        }
 
         var spec = GetSpec(name);
         if (spec == null)
@@ -275,16 +290,23 @@ public class UIManager : BaseManager<UIManager>
             LoadingProgressManager.GetInstance().UpdateTaskProgress(loadingTaskId, 0.1f);
         }
 
+        var pending = new List<Action<BasePanel>>();
+        if (onReady != null) pending.Add(p => onReady(p as T));
+        _pendingShows[name] = pending;
+
         // 模板覆写优先：用户指派了自定义模板 → 直接实例化引用（零加载零寻址）；
         // 未指派 → 按 fallback 路径经资源服务链加载包内默认模板（Addressables → Resources）。
         // 注意：VNUIPrefabs 返回 prefab 本体，此处统一 Instantiate。
         var loadOp = VNUIPrefabs.LoadAsync(spec.PrefabKey, fullPath);
-        loadOp.Completed += op => OnPanelPrefabLoaded(op.Asset, name, spec, fullPath, loadingTaskId, onReady);
+        loadOp.Completed += op => OnPanelPrefabLoaded(op.Asset, name, typeof(T), spec, fullPath, loadingTaskId);
     }
 
     /// <summary>面板 prefab 就绪回调：实例化 + Canvas 契约 + 入表 + 激活（覆写/默认模板共用）</summary>
-    private void OnPanelPrefabLoaded<T>(GameObject prefab, string name, PanelSpec spec, string fullPath, string loadingTaskId, Action<T> onReady) where T : BasePanel
+    private void OnPanelPrefabLoaded(GameObject prefab, string name, Type panelType, PanelSpec spec, string fullPath, string loadingTaskId)
     {
+        _pendingShows.TryGetValue(name, out var waiters);
+        _pendingShows.Remove(name);
+
         if (prefab == null)
         {
             Debug.LogError($"[UIManager] 面板 {name} 加载失败: {fullPath}");
@@ -294,10 +316,10 @@ public class UIManager : BaseManager<UIManager>
         GameObject obj = UnityEngine.Object.Instantiate(prefab);
 
         // 脚本查找：契约要求在根节点；过渡期允许子节点（警告提示修 prefab）
-        T panel = obj.GetComponent<T>();
+        BasePanel panel = obj.GetComponent(panelType) as BasePanel;
         if (panel == null)
         {
-            panel = obj.GetComponentInChildren<T>(true);
+            panel = obj.GetComponentInChildren(panelType, true) as BasePanel;
             if (panel != null)
                 Debug.LogWarning($"[UIManager] 面板 {name} 的脚本不在 prefab 根节点（契约要求根节点自带 Canvas+脚本），已在子节点找到。建议将脚本移至根节点");
         }
@@ -328,7 +350,13 @@ public class UIManager : BaseManager<UIManager>
             LoadingProgressManager.GetInstance().CompleteTask(loadingTaskId);
 
         VNDebug.LogVerbose($"[UIManager] Show {name} (Layer={spec.Layer}, sortingOrder={(int)spec.Layer + spec.Order})");
-        onReady?.Invoke(panel);
+
+        if (waiters == null) return;
+        for (int i = 0; i < waiters.Count; i++)
+        {
+            try { waiters[i]?.Invoke(panel); }
+            catch (Exception e) { Debug.LogError($"[UIManager] 面板 {name} 的 onReady 回调异常: {e}"); }
+        }
     }
 
     /// <summary>
@@ -342,6 +370,9 @@ public class UIManager : BaseManager<UIManager>
     /// <summary>按名隐藏（内部及少量旧调用点使用）</summary>
     public void HidePanel(string panelName)
     {
+        // 加载中被要求隐藏：作废等待队列，避免加载完成后又冒出来
+        _pendingShows.Remove(panelName);
+
         if (!_panels.TryGetValue(panelName, out var panel) || panel == null) return;
 
         var spec = GetSpec(panelName);
@@ -376,6 +407,9 @@ public class UIManager : BaseManager<UIManager>
     /// </summary>
     public void HideAll()
     {
+        // 在飞行中的 Show 一并作废：否则场景切换后加载完成的面板会凭空实例化出来
+        _pendingShows.Clear();
+
         var toRemove = new List<string>();
         foreach (var kv in _panels)
         {
@@ -471,7 +505,8 @@ public class UIManager : BaseManager<UIManager>
         if (go.GetComponent<GraphicRaycaster>() == null)
             go.AddComponent<GraphicRaycaster>();
 
-        if (_forceStretch && rect != null)
+        // 契约执行：面板根必须 stretch 铺满，否则 prefab 里的锚点残留会让整屏 UI 偏移
+        if (rect != null)
         {
             rect.anchorMin = Vector2.zero;
             rect.anchorMax = Vector2.one;
@@ -487,15 +522,17 @@ public class UIManager : BaseManager<UIManager>
     /// UI 特效层（引擎自建，取代旧"用户 prefab 内 EffectLayer"）。
     ///
     /// 结构：VN_EffectCanvas (Overlay, sortingOrder=5) / EffectLayer (stretch 铺满)
-    /// 层级语义：盖住剧场画面（场景相机 depth=-10），位于 Gameplay 对话框(10)之下——
+    /// 层级语义：盖住剧场画面（剧场相机），位于 Gameplay 对话框(10)之下——
     /// 与旧结构（EffectLayer 在 panel 内 UIRoot 之前）视觉层级一致。
-    /// 幂等懒创建；场景切换不销毁（特效对象由命令层经 PoolManager 自行回收）。
+    /// 幂等懒创建；与剧场根一致 DontDestroyOnLoad（引擎场景无关，
+    /// 特效对象由命令层经 PoolManager 自行回收）。
     /// </summary>
     public Transform GetEffectLayerRoot()
     {
-        if (_effectLayer != null && _effectLayer.gameObject != null) return _effectLayer;
+        if (_effectLayer != null) return _effectLayer;
 
         var canvasGo = new GameObject("VN_EffectCanvas");
+        UnityEngine.Object.DontDestroyOnLoad(canvasGo);
         var canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 5; // 剧场之上、Scene 层面板(10)之下
@@ -565,12 +602,6 @@ public class UIManager : BaseManager<UIManager>
         Show<MainMenuPanel>();
     }
 
-    ~UIManager()
-    {
-        if (_isListeningSceneLoad)
-        {
-            SceneManager.sceneLoaded -= OnSceneLoaded;
-            _isListeningSceneLoad = false;
-        }
-    }
+    // 注意：此处不设终结器。BaseManager 单例与 SceneManager.sceneLoaded 订阅同为进程级生命周期，
+    // 且终结器运行在 GC 线程上——在其中调用 Unity API（SceneManager 事件解绑）属未定义行为。
 }

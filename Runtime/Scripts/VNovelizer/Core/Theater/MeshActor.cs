@@ -39,10 +39,15 @@ namespace VNovelizer.Core.Theater
         private bool _visible = true;
 
         // 活动动画句柄与终值（Interrupt 时瞬间到终态）
+        // 注意：终值初值必须与视觉初值一致——否则"未播过动画就 Interrupt"会把演员
+        // 打到 alpha=0（不可见）或原点，这类回跳极难排查。
         private Coroutine _fadeRoutine;
-        private float _pendingFadeTarget;
+        private float _pendingFadeTarget = 1f;
         private Coroutine _moveRoutine;
-        private Vector2 _pendingMoveTargetPx;
+        private Vector2 _pendingMoveTargetPx = Vector2.zero;
+
+        /// <summary>本演员自建的网格（换外观时需显式销毁，否则运行时 Mesh 泄漏）</summary>
+        private Mesh _ownedMesh;
 
         private static Shader _cachedShader;
 
@@ -53,7 +58,7 @@ namespace VNovelizer.Core.Theater
 
             _go = new GameObject($"Actor_{kind}_{actorId}");
             _go.transform.SetParent(parent, false);
-            _go.layer = 0; // Default 层（场景相机渲染；UI 层由 UI 相机负责）
+            _go.layer = 0; // Default 层（剧场相机渲染；UI 层由 Overlay Canvas 负责）
 
             _meshFilter = _go.AddComponent<MeshFilter>();
             _renderer = _go.AddComponent<MeshRenderer>();
@@ -76,23 +81,37 @@ namespace VNovelizer.Core.Theater
 
             if (appearance?.sprite != null)
             {
-                _meshFilter.sharedMesh = BuildQuadMesh(appearance.sprite);
+                AssignMesh(BuildQuadMesh(appearance.sprite));
                 _material.mainTexture = appearance.sprite.texture;
             }
             else if (appearance?.texture != null)
             {
-                _meshFilter.sharedMesh = BuildQuadMesh(appearance.texture.width, appearance.texture.height, Vector2.one * 0.5f);
+                AssignMesh(BuildQuadMesh(appearance.texture.width, appearance.texture.height, Vector2.one * 0.5f));
                 _material.mainTexture = appearance.texture;
             }
             else
             {
                 // 无外观：清空网格（保持对象存活，仅不渲染）
-                _meshFilter.sharedMesh = null;
+                AssignMesh(null);
                 if (!string.IsNullOrEmpty(appearance?.id))
                     Debug.LogWarning($"[MeshActor] {ActorId} 外观 '{appearance.id}' 无可用 Sprite/Texture");
             }
 
             ApplyTransform();
+        }
+
+        /// <summary>
+        /// 挂载新网格并销毁上一张自建网格。
+        /// 运行时 new Mesh() 不会被 GC 自动回收（需 Resources.UnloadUnusedAssets），
+        /// 每次换表情都会残留一张网格，长剧本累积可观——必须显式销毁。
+        /// </summary>
+        private void AssignMesh(Mesh mesh)
+        {
+            if (_ownedMesh != null && _ownedMesh != mesh)
+                Object.Destroy(_ownedMesh);
+
+            _ownedMesh = mesh;
+            _meshFilter.sharedMesh = mesh;
         }
 
         #endregion
@@ -120,6 +139,7 @@ namespace VNovelizer.Core.Theater
         public void SetDepth(int zOrder)
         {
             _zOrder = zOrder;
+            if (!IsValid) return;
             var pos = _go.transform.localPosition;
             pos.z = zOrder * DepthStep;
             _go.transform.localPosition = pos;
@@ -127,6 +147,7 @@ namespace VNovelizer.Core.Theater
 
         private void SetLocalXY(float x, float y)
         {
+            if (!IsValid) return;
             var pos = _go.transform.localPosition;
             pos.x = x;
             pos.y = y;
@@ -359,6 +380,7 @@ namespace VNovelizer.Core.Theater
         public void Dispose()
         {
             Interrupt();
+            if (_ownedMesh != null) { Object.Destroy(_ownedMesh); _ownedMesh = null; }
             if (_go != null) Object.Destroy(_go);
             if (_material != null) Object.Destroy(_material);
         }

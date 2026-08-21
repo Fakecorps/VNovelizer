@@ -37,7 +37,12 @@ namespace VNovelizer.Core.Commands
                 yield break;
             }
 
-            string posCode = parts[0].Trim();
+            string posCode = TheaterManager.NormalizePosCode(parts[0]);
+            if (posCode == null)
+            {
+                Debug.LogError($"[CharMove] 未知位置: {parts[0].Trim()}（可用 L/ML/M/MR/R 或全名）");
+                yield break;
+            }
             if (!float.TryParse(parts[1].Trim(), out float targetX))
             {
                 Debug.LogError($"[CharMove] 无法解析目标位置X: {parts[1]}");

@@ -29,7 +29,12 @@ namespace VNovelizer.Core.Commands
             if (string.IsNullOrEmpty(args)) yield break;
 
             string[] parts = args.Split(',');
-            string posCode = parts[0].Trim();
+            string posCode = TheaterManager.NormalizePosCode(parts[0]);
+            if (posCode == null)
+            {
+                Debug.LogError($"[CharFadeIn] 未知位置: {parts[0].Trim()}（可用 L/ML/M/MR/R 或全名）");
+                yield break;
+            }
             float duration = defaultDuration;
             if (parts.Length > 1) float.TryParse(parts[1].Trim(), out duration);
 
@@ -52,6 +57,9 @@ namespace VNovelizer.Core.Commands
             finally
             {
                 _activeFades.Remove(posCode);
+                // 终态回写状态字典：FadeAsync 只驱动渲染对象的 alpha，
+                // 不回写会让 state.alpha 停在 0，导致存档/快进重建时角色隐形。
+                theater.SetAlpha(posCode, 1f);
             }
         }
 

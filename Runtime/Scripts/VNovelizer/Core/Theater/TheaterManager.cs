@@ -65,8 +65,12 @@ namespace VNovelizer.Core.Theater
         public readonly CameraState Camera = new CameraState();
 
         // --- 背景异步加载与交叉淡化状态 ---
+        // _bgRequestToken 由"瞬时切换"与"交叉淡化"两条路径共享：任一路径开始时自增，
+        // 使上一条路径已在飞行中的异步加载结果作废。
+        // 必须共享——否则同一行内 "背景列继承触发 ChangeBackground(旧图)" 与
+        // "bgfade(新图)" 会互相覆盖，出现"画面是新图、状态是旧图"的存档错位。
         private Coroutine _bgLoadRoutine;
-        private int _bgLoadToken;
+        private int _bgRequestToken;
         private Coroutine _bgFadeRoutine;
         private int _bgFadeToken;
         private MeshActor _bgFadeTemp;
@@ -184,21 +188,34 @@ namespace VNovelizer.Core.Theater
         {
             if (string.IsNullOrEmpty(backgroundPath)) return;
 
-            if (backgroundPath == "black")
+            if (backgroundPath == "black" || backgroundPath == "hide")
             {
-                // 黑幕：移除背景演员，露出相机 Clear Color（黑）
+                // 黑幕/隐藏：移除背景演员，露出相机 Clear Color（黑）
                 RemoveActor(MainBackgroundId);
                 return;
             }
 
+            // 交叉淡化正在进行且目标就是本图：淡化协程自己会写入终态，此处不得插手
+            // （否则瞬时应用会在淡化中途把主演员换成同一张图，破坏渐变观感）
+            if (_bgFadeRoutine != null && GetState(MainBackgroundId)?.appearance == backgroundPath)
+                return;
+
             // 异步加载后即时应用（与旧 OnChangeBackground 行为一致）
             if (_bgLoadRoutine != null) MonoManager.GetInstance().StopCoroutine(_bgLoadRoutine);
-            int token = ++_bgLoadToken;
+            int token = ++_bgRequestToken;
             _bgLoadRoutine = MonoManager.GetInstance().StartCoroutine(LoadAndSetBackground(backgroundPath, token));
         }
 
         private void OnHideBackground()
         {
+            // 作废在飞行中的背景请求，避免隐藏后异步结果又把背景装回来
+            _bgRequestToken++;
+            if (_bgLoadRoutine != null)
+            {
+                MonoManager.GetInstance().StopCoroutine(_bgLoadRoutine);
+                _bgLoadRoutine = null;
+            }
+            CancelBackgroundFade();
             RemoveActor(MainBackgroundId);
         }
 
@@ -206,7 +223,8 @@ namespace VNovelizer.Core.Theater
         {
             var holder = new SpriteHolder();
             yield return LoadBackgroundSprite(bgName, holder);
-            if (token != _bgLoadToken) yield break; // 已有更新的背景请求，丢弃本次结果
+            _bgLoadRoutine = null;
+            if (token != _bgRequestToken) yield break; // 已有更新的背景请求（含 bgfade），丢弃本次结果
             if (holder.value == null) yield break;  // 加载失败已打印日志
 
             ApplyBackground(holder.value, bgName);
@@ -222,13 +240,30 @@ namespace VNovelizer.Core.Theater
             public Sprite value;
         }
 
+        /// <summary>背景资源类别前缀（配置缺失时退化为无前缀，避免空引用）</summary>
+        private static string BackgroundRoot
+        {
+            get
+            {
+                var cfg = VNProjectConfig.Instance;
+                return cfg != null ? cfg.BackgroundResPath : null;
+            }
+        }
+
+        /// <summary>背景资源键：类别前缀 + 资源名（前缀为空时退化为裸名）</summary>
+        private static string BuildBackgroundKey(string bgName)
+        {
+            string root = BackgroundRoot;
+            return string.IsNullOrEmpty(root) ? bgName : $"{root}/{bgName}";
+        }
+
         /// <summary>解析背景 Sprite：主路径 + 兜底路径（与旧 OnChangeBackground 一致）。
         /// 经 VNResourceService 提供者链加载（Addressables → Resources）。
         /// 含纹理形态兜底：资产已注册但按 Sprite 类型未解析时（Addressables 在 Fast 模式
         /// 按 Texture2D 登记类型），按 Texture2D 加载并就地构造 Sprite。</summary>
         private IEnumerator LoadBackgroundSprite(string bgName, SpriteHolder holder)
         {
-            string primary = $"{VNProjectConfig.Instance.BackgroundResPath}/{bgName}";
+            string primary = BuildBackgroundKey(bgName);
             var opPrimary = VNResourceService.LoadAsync<Sprite>(primary);
             while (!opPrimary.IsDone) yield return null;
             if (opPrimary.Asset != null) { holder.value = opPrimary.Asset; yield break; }
@@ -295,6 +330,15 @@ namespace VNovelizer.Core.Theater
 
             // 令牌：防止被取消/取代的旧协程在清理时误伤新协程的字段
             int token = ++_bgFadeToken;
+
+            // 同时作废"瞬时切换"路径在飞行中的加载结果（共享请求令牌）：
+            // 否则同一行内的 ChangeBackground(旧图) 会在淡化开始后落地，把状态改回旧图
+            _bgRequestToken++;
+            if (_bgLoadRoutine != null)
+            {
+                MonoManager.GetInstance().StopCoroutine(_bgLoadRoutine);
+                _bgLoadRoutine = null;
+            }
 
             // 重入保护（与旧 BgFadeCommand 语义一致）
             if (_bgFadeRoutine != null)
@@ -511,6 +555,13 @@ namespace VNovelizer.Core.Theater
         /// <summary>清空剧场：全部演员退场、背景切换强制完成、相机归位</summary>
         public void ClearTheater()
         {
+            // 作废并停止在飞行中的背景加载（否则清场后异步结果会把背景装回来）
+            _bgRequestToken++;
+            if (_bgLoadRoutine != null)
+            {
+                MonoManager.GetInstance().StopCoroutine(_bgLoadRoutine);
+                _bgLoadRoutine = null;
+            }
             CancelBackgroundFade();
 
             foreach (var posCode in new List<string>(_activeShakes.Keys))
@@ -590,7 +641,7 @@ namespace VNovelizer.Core.Theater
             if (state.kind == ActorKind.Background)
             {
                 // 同步加载（ApplyState 为重建路径，通常资源已加载过），经资源服务链
-                string primary = $"{VNProjectConfig.Instance.BackgroundResPath}/{state.appearance}";
+                string primary = BuildBackgroundKey(state.appearance);
                 Sprite sprite = VNResourceService.Load<Sprite>(primary);
                 if (sprite == null) sprite = LoadTextureAsSprite(primary); // 纹理形态兜底
                 if (sprite == null)

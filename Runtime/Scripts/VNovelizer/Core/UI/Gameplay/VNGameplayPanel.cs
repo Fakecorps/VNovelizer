@@ -62,7 +62,6 @@ public class VNGameplayPanel : BasePanel
     private float textSpeed;
     private float currentBaseSpeed;
     private float autoSpeed;
-    private bool useNewInputSystem = true; // 默认使用新系统
     private float _lastSkipAdvanceUnscaledTime;
 
     //Notification
@@ -179,9 +178,8 @@ public class VNGameplayPanel : BasePanel
 
         // 注册事件
         EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.UpdateDialogue, OnUpdateDialogue);
-        // 【剧场层重构】舞台事件（ChangeBackground/ShowCharacter/HideCharacter）已改由 TheaterManager 消费，
-        // 面板不再监听，避免 UGUI 与剧场双渲染。下方 OnChangeBackground/OnShowCharacter/OnHideCharacter
-        // 方法保留待阶段 3 清理（当前为死代码）。
+        // 【剧场层重构】舞台事件（ChangeBackground / HideBackground / ShowCharacter / HideCharacter）
+        // 已改由 TheaterManager 独家消费，面板不再监听，避免 UGUI 与剧场双渲染。
         EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.UpdateHeadProfile, OnUpdateHeadProfile);
         EventCenter.GetInstance().AddEventListener("TextSpeedChanged", OnTextSpeedChanged);
         EventCenter.GetInstance().AddEventListener("AutoSpeedChanged", OnAutoSpeedChanged);
@@ -285,9 +283,6 @@ public class VNGameplayPanel : BasePanel
                 VNManager.GetInstance().NextLine();
             }
         }
-
-        if (!useNewInputSystem)
-            UpdateInputFallback();
     }
 
     /// <summary>在触发确认时检测指针是否在 UI 上；触屏使用 primaryTouch 的 pointerId，鼠标使用 -1。</summary>
@@ -309,15 +304,12 @@ public class VNGameplayPanel : BasePanel
     // 初始化新版输入系统
     private void InitializeInputSystem()
     {
-        // 1. 实例化生成的 C# 类
-        // 这会自动读取 .inputactions 里的配置
+        // 实例化生成的 C# 类（自动读取 .inputactions 里的配置）
         if (inputActions == null)
         {
             inputActions = new VNInputActions();
         }
 
-        // 标记使用新系统，防止 Update 里跑旧逻辑
-        useNewInputSystem = true;
         VNDebug.LogVerbose("[VNGameplayPanel] Input System Initialized via C# Class");
     }
 
@@ -596,83 +588,6 @@ public class VNGameplayPanel : BasePanel
     private void OnPauseButtonClick()
     {
         OnPause(new InputAction.CallbackContext());
-    }
-    #endregion
-
-    #region 旧版输入系统备选方案 (保留但默认不使用)
-    private void UpdateInputFallback()
-    {
-        if (useNewInputSystem) return;
-
-        // 检测鼠标点击
-        if (Input.GetMouseButtonDown(0)) OnConfirmFallback();
-
-        // 检测键盘输入
-        if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.Return)) OnConfirmFallback();
-        if (Input.GetKeyDown(KeyCode.A)) OnAutoFallback();
-        if (Input.GetKeyDown(KeyCode.H)) OnHideFallback();
-        if (Input.GetKeyDown(KeyCode.L)) OnLogFallback();
-
-        if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
-            OnSkipFallback();
-        else
-            OnSkipCanceledFallback();
-    }
-
-    private void OnConfirmFallback()
-    {
-        if (!GameStateManager.GetInstance().CanInteractGameplay())
-            return;
-        if (IsPointerOverGameObjectNow())
-            return;
-        if (!isAutoPlaying && !isUIHidden)
-        {
-            if (isTextTyping) CompleteTextTyping();
-            else VNManager.GetInstance().NextLine();
-        }
-    }
-
-    private void OnSkipFallback()
-    {
-        if (!isSkipping)
-        {
-            // 互斥：开启快进前，先关闭自动播放
-            StopAutoPlay();
-            isSkipping = true;
-            UpdateSkipButtonState();
-            Time.timeScale = 10f;
-        }
-    }
-
-    private void OnSkipCanceledFallback()
-    {
-        if (isSkipping)
-        {
-            isSkipping = false;
-            UpdateSkipButtonState();
-            Time.timeScale = 1f;
-        }
-    }
-
-    private void OnAutoFallback()
-    {
-        // 互斥：开启自动播放前，先关闭快进
-        if (!isAutoPlaying)
-        {
-            StopSkip();
-        }
-        isAutoPlaying = !isAutoPlaying;
-        UpdateAutoButtonState();
-    }
-
-    private void OnHideFallback()
-    {
-        ToggleUI();
-    }
-
-    private void OnLogFallback()
-    {
-        UIManager.GetInstance().Show<HistoryPanel>();
     }
     #endregion
 
@@ -1158,6 +1073,17 @@ public class VNGameplayPanel : BasePanel
         EventCenter.GetInstance().RemoveEventListener("TextSpeedChanged", OnTextSpeedChanged);
         EventCenter.GetInstance().RemoveEventListener("AutoSpeedChanged", OnAutoSpeedChanged);
 
+        // 释放输入资源：VNInputActions 持有原生（非托管）内存，
+        // 面板销毁后不 Dispose 会在反复进出演出时累积泄漏。
+        if (inputActions != null)
+        {
+            inputActions.Dispose();
+            inputActions = null;
+        }
+
+        // 打字机/图标动画句柄一并终止，避免动画回调持有已销毁组件
+        if (_typewriterTween.isAlive) _typewriterTween.Stop();
+        if (_iconSequence.isAlive) _iconSequence.Stop();
 
         // 恢复正常TimeScale
         Time.timeScale = 1f;

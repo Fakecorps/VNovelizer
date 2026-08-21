@@ -118,7 +118,13 @@ public class MainMenuPanel : BasePanel
     public override void ShowMe()
     {
         gameObject.SetActive(true);
-        
+
+        // 重新显示时复位"开始游戏中"闭锁：MainMenuPanel 是常驻实例（退出演出后
+        // 再次 Show 的是同一个对象），若不复位，上次点击"新游戏"时禁用的按钮
+        // 会永久保持不可交互，玩家回到主菜单后彻底点不动任何按钮。
+        _isStartingGame = false;
+        SetMenuInteractable(true);
+
         // 刷新存档按钮状态
         RefreshSaveButtonState();
     }
@@ -137,46 +143,9 @@ public class MainMenuPanel : BasePanel
     #endregion
     
     #region 按钮事件处理
-    
+
     /// <summary>
-    /// 新游戏按钮点击
-    /// </summary>
-    // private void OnNewGameBtnClick() //你没协程啊？
-    // {
-    //     if (VNManager.GetInstance() == null)
-    //     {
-    //         Debug.LogError("[MainMenuPanel] VNManager 未初始化！");
-    //         return;
-    //     }
-    //     
-    //     // 从配置中读取默认剧本名称和行ID
-    //     string defaultScriptName = "Test101"; // 默认值
-    //     string defaultLineID = ""; // 默认从开头开始
-    //     
-    //     if (VNProjectConfig.Instance != null)
-    //     {
-    //         defaultScriptName = string.IsNullOrEmpty(VNProjectConfig.Instance.DefaultScriptName) 
-    //             ? "Test101" 
-    //             : VNProjectConfig.Instance.DefaultScriptName;
-    //         defaultLineID = VNProjectConfig.Instance.DefaultLineID ?? "";
-    //     }
-    //     else
-    //     {
-    //         Debug.LogWarning("[MainMenuPanel] VNProjectConfig 未找到，使用默认值");
-    //     }
-    //     
-    //     // 隐藏主菜单（VNManager.StartGame() 会自动显示游戏面板）
-    //     UIManager.GetInstance().HidePanel("MainMenuPanel");
-    //     
-    //     // 启动游戏（VNManager.StartGame() 内部会调用 ShowPanel<VNGameplayPanel>）
-    //     VNManager.GetInstance().StartGame(defaultScriptName, defaultLineID);
-    //     
-    //     Debug.Log($"[MainMenuPanel] 开始新游戏: 剧本={defaultScriptName}, 行ID={defaultLineID}");
-    // }
-    
-    
-    /// <summary>
-    /// 游戏按钮点击
+    /// 开始新游戏按钮点击
     /// </summary>
     private void OnNewGameBtnClick()
     {
