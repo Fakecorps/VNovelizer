@@ -843,6 +843,7 @@ GameObject:
   - component: {fileID: 8532362269571867717}
   - component: {fileID: 587924988976105610}
   - component: {fileID: 2628433882058665654}
+  - component: {fileID: 7984294414220717632}
   m_Layer: 5
   m_Name: VNGamePlayPanel
   m_TagString: Untagged
@@ -1932,3 +1933,20 @@ RectTransform:
   m_AnchoredPosition: {x: 689, y: -246}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &7984294414220717632
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3724834257082230424}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dc42784cf147c0c48a680349fa168899, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.GraphicRaycaster
+  m_IgnoreReversedGraphics: 1
+  m_BlockingObjects: 0
+  m_BlockingMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
