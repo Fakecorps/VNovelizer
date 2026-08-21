@@ -29,6 +29,38 @@ internal static class VNResourceEditorProbe
     {
         AddressablesProvider.EditorAvailabilityProbe = CheckVNovelizerGroup;
         AddressablesProvider.LabelProbe = CheckLabelHasEntries;
+        AddressablesProvider.KeyProbe = CheckKeyRegistered;
+    }
+
+    /// <summary>
+    /// 键存在性探针：任意组内是否有条目使用该地址（用户可能把 VN 资产归入自己的组，
+    /// 故扫描全部组而非仅 VNovelizer 组）。直接线性扫描编辑器设置——
+    /// 与运行时初始化状态无关，无"locator 预检"的自锁问题；
+    /// 条目量级小、调用频率低（非逐帧热路径），线性扫描无需缓存。
+    /// </summary>
+    private static bool CheckKeyRegistered(string address)
+    {
+        if (string.IsNullOrEmpty(address)) return false;
+        try
+        {
+            var settings = AddressableAssetSettingsDefaultObject.Settings;
+            if (settings == null) return false;
+            foreach (var group in settings.groups)
+            {
+                if (group == null) continue;
+                foreach (var entry in group.entries)
+                {
+                    if (entry != null && entry.address == address)
+                        return true;
+                }
+            }
+            return false;
+        }
+        catch (Exception)
+        {
+            // 设置不可读：返回 false（跳过 Addressables 加载 → Resources 兜底，安全方向）
+            return false;
+        }
     }
 
     /// <summary>

@@ -14,7 +14,7 @@ using UnityEngine;
 /// 与用户工作区资源（Assets/VNovelizer）注册进 "VNovelizer" 组：
 /// - 地址 = 资源键（"VNovelizerRes/..."，与运行时 VNResourceService 查询键一致）；
 /// - Label = 类别（VNResourceKeys.CategoryToLabel，供运行时 LoadAll 检索）；
-/// - 组内条目的地址/Label 由注册器托管（参照 Naninovel：组内条目自动重建，勿手动编辑）；
+/// - 组内条目的地址/Label 由注册器托管（组内条目勿手动编辑：手动改的地址会被同步时覆盖）；
 /// - 已被用户归入其他组的条目不动（尊重手动组织）。
 ///
 /// 注意：包内资产的资产路径是虚拟路径（Packages/{包名}/...），不是文件系统路径，
@@ -57,16 +57,9 @@ public static class VNAddressablesRegistrar
         return Directory.Exists(fsRoot) ? fsRoot : null;
     }
 
-    [MenuItem("VNovelizer/资源管理(Addressables)/同步全部资源注册 (Sync All)", false, 58)]
-    public static void SyncAllMenu()
-    {
-        int count = SyncAll();
-        EditorUtility.DisplayDialog("VNovelizer Addressables 同步",
-            $"同步完成：{count} 个资产已注册进 {VNResourceKeys.GroupName} 组。\n\n" +
-            "提醒：构建游戏（File → Build Settings → Build）之前，请先执行\n" +
-            "Window → Asset Management → Addressables → Groups → Build → New Build → Default Build Script，\n" +
-            "否则 Addressables 内容不会进入构建包。", "好的");
-    }
+    // 注：原"资源管理(Addressables)/同步全部资源注册"菜单已移除——初始化向导
+    // 内部已调用 SyncAll 完成注册；如需手动重新同步，使用资源管理器窗口或
+    // 菜单"VNovelizer → 资源管理器"中的同步入口。
 
     /// <summary>
     /// 同步全部（用户内容 + 默认资源）。不存在 Addressables 设置时自动创建。返回处理的条目数。
@@ -101,7 +94,7 @@ public static class VNAddressablesRegistrar
             // 新项目：注册包内默认资源（文件本体留在包里）
             count += RegisterFolderTree(group, GetPackageDefaultFsRoot(), GetPackageDefaultAssetRoot());
         }
-        count += RegisterFolderTree(group, VNProjectPaths.WorkspaceRoot, VNProjectPaths.WorkspaceRoot);
+        count += RegisterWorkspaceTree(group);
 
         AssetDatabase.SaveAssets();
 
@@ -124,15 +117,16 @@ public static class VNAddressablesRegistrar
         if (settings == null) return;
         var group = EnsureGroup(settings);
         if (group == null) return;
-        int count = RegisterFolderTree(group, VNProjectPaths.WorkspaceRoot, VNProjectPaths.WorkspaceRoot);
+        int count = RegisterWorkspaceTree(group);
 
         AssetDatabase.SaveAssets();
 
         // 重建运行时提供者链，使编辑器可用性检查（组存在性）重新评估
         VNResourceService.Reset();
 
-        if (count > 0)
-            Debug.Log($"[VNAddressablesRegistrar] 工作区同步完成：{count} 个资产");
+        // 无论是否有新增，都输出同步结果（便于确认同步执行过）
+        Debug.Log($"[VNAddressablesRegistrar] 工作区同步完成：{count} 个新增/更新条目" +
+                  (count == 0 ? "（全部已是最新，无变更）" : ""));
     }
 
     /// <summary>
@@ -157,6 +151,56 @@ public static class VNAddressablesRegistrar
             AssetDatabase.SaveAssets();
             VNResourceService.Reset();
         }
+    }
+
+    /// <summary>
+    /// 自动登记（资产导入/移动钩子用，见 VNWorkspaceAssetPostprocessor）：
+    /// 只登记"从未进过任何组"的资产——已在 VNovelizer 组（地址已由注册器/拖放分配托管）
+    /// 或被用户手动归入其他组的资产一律不动；地址已被其他资产占用时警告并跳过
+    /// （防固定键如 VNFlagRegistry 被重复资产静默劫持）。
+    /// 返回 true 表示本次完成了新登记。
+    /// </summary>
+    public static bool TryAutoRegister(string assetPath, string resourceKey)
+    {
+        if (Application.isPlaying) return false; // Play 模式中绝不执行
+        if (!HasAddressablesData()) return false;
+        if (string.IsNullOrEmpty(assetPath) || string.IsNullOrEmpty(resourceKey)) return false;
+
+        var settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
+        if (settings == null) return false;
+
+        string guid = AssetDatabase.AssetPathToGUID(assetPath);
+        if (string.IsNullOrEmpty(guid)) return false;
+
+        // 已在任何组中（含本组）：地址已被托管，保持现状（移动/改名不影响寻址）
+        if (settings.FindAssetEntry(guid) != null) return false;
+
+        // 地址冲突：同地址已被其他资产占用（如存在多份 FlagRegistry）
+        foreach (var g in settings.groups)
+        {
+            if (g == null) continue;
+            foreach (var e in g.entries)
+            {
+                if (e != null && e.address == resourceKey)
+                {
+                    Debug.LogWarning($"[VNAddressablesRegistrar] 自动登记跳过：地址 \"{resourceKey}\" 已被 {e.AssetPath} 占用，" +
+                                     $"{assetPath} 未登记。如需更换占用者，请先移除旧条目。");
+                    return false;
+                }
+            }
+        }
+
+        var group = EnsureGroup(settings);
+        if (group == null) return false;
+
+        if (RegisterAsset(settings, group, assetPath, resourceKey))
+        {
+            AssetDatabase.SaveAssets();
+            VNResourceService.Reset();
+            Debug.Log($"[VNAddressablesRegistrar] 自动登记: {assetPath} → \"{resourceKey}\"");
+            return true;
+        }
+        return false;
     }
 
     /// <summary>确保 VNovelizer 组存在（含打包 Schema；BundleMode = Pack Separately，释放即卸载，内存最优）</summary>
@@ -186,10 +230,121 @@ public static class VNAddressablesRegistrar
     }
 
     /// <summary>
-    /// 递归注册 folderRoot 下全部资产。资源键 = "VNovelizerRes/" + folderRoot 内相对路径（去扩展名）。
-    /// fsRoot：文件系统路径（枚举文件）；assetRoot：资产路径（AssetDatabase/GUID 用）。
-    /// 两者对工作区相同，对包内默认资源不同（Packages/ 为虚拟路径）。
+    /// 注册用户工作区资产（**类别锚定地址**，核心设计，见 Docs/VNResourceProviderRefactoring.md）：
+    ///
+    /// 地址 = 匹配的类别前缀（Config）+ 剩余相对路径，而**非物理路径推导**——
+    /// 保证"运行时查询地址（Config 前缀 + 资源名）与注册地址"必然一致，
+    /// 工作区文件夹名的单复数/大小写差异不再影响寻址（宽松匹配）。
+    ///
+    /// 例：Assets/VNovelizer/VNScript/NewChapter.csv（用户文件夹为单数）
+    ///   → 注册地址 = VNovelizerRes/VNScripts/NewChapter（按 Config 的复数类别锚定）
+    ///   → 运行时 ScriptParser 查询 VNovelizerRes/VNScripts/NewChapter 直接命中。
+    /// 未匹配到任何类别的文件按物理路径推导注册（兜底保持可寻址）。
     /// </summary>
+    private static int RegisterWorkspaceTree(AddressableAssetGroup group)
+    {
+        if (group == null) return 0;
+        if (!AssetDatabase.IsValidFolder(VNProjectPaths.WorkspaceRoot)) return 0;
+
+        var settings = group.Settings;
+        var categories = GetKnownCategories();
+        string[] files = Directory.GetFiles(VNProjectPaths.WorkspaceRoot, "*.*", SearchOption.AllDirectories);
+        int count = 0;
+
+        foreach (string file in files)
+        {
+            string ext = Path.GetExtension(file).ToLowerInvariant();
+            if (ExcludedExtensions.Contains(ext)) continue;
+
+            string assetPath = file.Replace('\\', '/');
+            string relative = assetPath.Substring(VNProjectPaths.WorkspaceRoot.Length).TrimStart('/');
+            string resourceKey = BuildCategoryAnchoredKey(relative, categories);
+
+            if (RegisterAsset(settings, group, assetPath, resourceKey)) count++;
+        }
+        return count;
+    }
+
+    /// <summary>已知类别全集（Config 前缀优先，缺省回退默认值）</summary>
+    private static List<string> GetKnownCategories()
+    {
+        VNProjectConfig.TryGetInstance(out var config);
+        var list = new List<string>();
+        void Add(string path) { if (!string.IsNullOrEmpty(path) && !list.Contains(path)) list.Add(path); }
+
+        Add(config != null ? config.VNScriptResPath : "VNovelizerRes/VNScripts");
+        Add(config != null ? config.BackgroundResPath : "VNovelizerRes/Backgrounds");
+        Add(config != null ? config.CharacterResPath : "VNovelizerRes/Characters");
+        Add(config != null ? config.ParticalEffectPath : "VNovelizerRes/VFX/Partical");
+        Add(config != null ? config.AnimationPath : "VNovelizerRes/VFX/Animation");
+        Add(config != null ? config.BgmResPath : "VNovelizerRes/Audio/Music/BGM");
+        Add(config != null ? config.SFXResPath : "VNovelizerRes/Audio/SFX");
+        Add(config != null ? config.VoiceResPath : "VNovelizerRes/Audio/Voice");
+        Add("VNovelizerRes/ExcelVNScripts");
+        Add("VNovelizerRes/GalleryContent/CG");
+        Add("VNovelizerRes/GalleryContent/Music");
+        Add("VNovelizerRes/GalleryContent/Scene");
+        return list;
+    }
+
+    /// <summary>路径段归一化：小写 + 去尾部复数 s（宽松匹配用）</summary>
+    private static string NormalizeSegment(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        s = s.ToLowerInvariant();
+        if (s.Length > 1 && s.EndsWith("s")) s = s.Substring(0, s.Length - 1);
+        return s;
+    }
+
+    /// <summary>
+    /// 工作区相对路径 → 类别锚定资源键。逐段宽松匹配（单复数/大小写不敏感）已知类别，
+    /// 命中则地址 = 类别原样路径 + 剩余目录段 + 文件名（去扩展名）；未命中按物理路径推导兜底。
+    /// </summary>
+    private static string BuildCategoryAnchoredKey(string relativePath, List<string> categories)
+    {
+        string[] segments = relativePath.Split('/');
+        string fileName = segments[segments.Length - 1];
+        string ext = Path.GetExtension(fileName);
+        string fileNameNoExt = fileName.Substring(0, fileName.Length - ext.Length);
+
+        string[] dirSegments = new string[segments.Length - 1];
+        System.Array.Copy(segments, dirSegments, dirSegments.Length);
+
+        // 从最长目录前缀开始尝试匹配（嵌套类别如 Audio/Music/BGM 优先于短前缀）
+        for (int take = dirSegments.Length; take >= 1; take--)
+        {
+            var rest = new string[dirSegments.Length - take];
+            System.Array.Copy(dirSegments, take, rest, 0, rest.Length);
+
+            foreach (var cat in categories)
+            {
+                // 类别去掉根前缀后的目录段
+                string catRelative = cat.StartsWith(VNResourceKeys.RootPrefix + "/", StringComparison.Ordinal)
+                    ? cat.Substring(VNResourceKeys.RootPrefix.Length + 1)
+                    : cat;
+                string[] catSegs = catRelative.Split('/');
+                if (catSegs.Length != take) continue;
+
+                bool match = true;
+                for (int i = 0; i < take; i++)
+                {
+                    if (NormalizeSegment(catSegs[i]) != NormalizeSegment(dirSegments[i])) { match = false; break; }
+                }
+                if (!match) continue;
+
+                // 命中：地址 = 类别原样路径 + 剩余目录段（保留用户命名）+ 文件名
+                var parts = new List<string> { cat };
+                parts.AddRange(rest);
+                parts.Add(fileNameNoExt);
+                return string.Join("/", parts);
+            }
+        }
+
+        // 未命中任何类别：物理路径推导（RootPrefix + 相对路径）——保持可寻址兜底
+        return $"{VNResourceKeys.RootPrefix}/{relativePath.Substring(0, relativePath.Length - ext.Length)}";
+    }
+
+
     private static int RegisterFolderTree(AddressableAssetGroup group, string fsRoot, string assetRoot)
     {
         if (group == null || string.IsNullOrEmpty(fsRoot) || !Directory.Exists(fsRoot)) return 0;
@@ -219,7 +374,14 @@ public static class VNAddressablesRegistrar
         string guid = AssetDatabase.AssetPathToGUID(assetPath);
         if (string.IsNullOrEmpty(guid))
         {
-            Debug.LogWarning($"[VNAddressablesRegistrar] 资产尚未导入，跳过: {assetPath}");
+            // 【修复时序问题】AssetDatabase.Refresh() 是异步的，新文件可能尚未完成导入（GUID 未就绪）。
+            // 主动调用 ImportAsset 强制同步导入，再重试一次获取 GUID，消除"转换→注册"之间的竞争窗口。
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);
+            guid = AssetDatabase.AssetPathToGUID(assetPath);
+        }
+        if (string.IsNullOrEmpty(guid))
+        {
+            Debug.LogWarning($"[VNAddressablesRegistrar] 资产导入后 GUID 仍不存在，跳过: {assetPath}");
             return false;
         }
 
@@ -233,9 +395,12 @@ public static class VNAddressablesRegistrar
 
         entry.SetAddress(resourceKey);
 
-        string label = VNResourceKeys.CategoryToLabel(VNResourceKeys.KeyToCategory(resourceKey));
+        string category = VNResourceKeys.KeyToCategory(resourceKey);
+        string label = VNResourceKeys.CategoryToLabel(category);
         if (!string.IsNullOrEmpty(label))
             entry.SetLabel(label, true);
+        // 清掉该资产残留的旧类别标签（地址曾随配置/目录变迁漂移过时，旧 Label 会永久残留）
+        CleanupStaleLabels(entry, category);
 
         return true;
     }

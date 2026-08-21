@@ -10,7 +10,9 @@ using UnityEngine;
 /// </summary>
 public class FlagService : BaseManager<FlagService>
 {
-    /// <summary>注册表默认 Resources 路径（Setup 后位于 Assets/Resources/VNovelizerRes/）</summary>
+    /// <summary>注册表资源键（Addressables 地址 / 旧版 Resources 相对路径）。
+    /// 注册表资产可保存在项目内任意位置——创建或导入时由注册器按本键写入地址，
+    /// 物理位置与运行时索引无关。</summary>
     public const string DefaultRegistryPath = "VNovelizerRes/VNFlagRegistry";
 
     private FlagRegistry registry;
@@ -43,7 +45,8 @@ public class FlagService : BaseManager<FlagService>
         if (registry == null && !warnedNoRegistry)
         {
             warnedNoRegistry = true;
-            Debug.Log("[FlagService] 未找到 Flag 注册表（Resources/" + DefaultRegistryPath + "），进入兼容模式：所有 Flag 按旧全局行为处理。可通过 VNovelizer → Flag 编辑器 创建注册表。");
+            Debug.Log("[FlagService] 未找到 Flag 注册表（资源键 \"" + DefaultRegistryPath + "\"），进入兼容模式：所有 Flag 按旧全局行为处理，功能不受影响。" +
+                      "如需声明 Flag 类型/作用域，可通过 VNovelizer → Flag 编辑器 创建注册表（任意位置保存，自动注册 Addressables）。");
         }
         initialized = true;
     }

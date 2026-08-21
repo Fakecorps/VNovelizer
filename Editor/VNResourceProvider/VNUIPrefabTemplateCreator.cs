@@ -6,7 +6,7 @@ using UnityEngine;
 /// UI 模板创建器：把包内默认 UI 预制体复制为用户自定义模板，并自动填入
 /// VNProjectConfig"九、UI 模板覆写"对应字段（见 Docs/VNResourceProviderRefactoring.md）。
 ///
-/// 工作流（对标 Naninovel UI 定制）：
+/// 工作流：
 /// 选择模板 → 自选保存位置（SaveFilePanelInProject）→ 复制 prefab → 自动赋值覆写字段。
 /// 之后用户编辑自己的副本即可；清空覆写字段即恢复包内默认模板。
 /// </summary>

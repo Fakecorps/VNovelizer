@@ -12,8 +12,6 @@ using UnityEngine;
 /// 两个入口：
 /// - <see cref="Load"/>/<see cref="LoadAsync"/>：GameObject 预制体（返回本体，调用方 Instantiate）；
 /// - <see cref="LoadAsset{T}"/>：非 prefab 资产（画廊数据容器等 ScriptableObject，直接返回资产本体）。
-///
-/// 对标 Naninovel UI 定制：内置 UI 走资源系统，自定义 UI 经配置指派。
 /// </summary>
 public static class VNUIPrefabs
 {

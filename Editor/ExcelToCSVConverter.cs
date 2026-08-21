@@ -76,7 +76,9 @@ public class ExcelToCsvConverter : EditorWindow
         AssetDatabase.Refresh();
 
         // 6. 工作区新增/更新的 CSV 自动注册进 Addressables（未初始化 Addressables 的项目自动跳过）
-        VNAddressablesRegistrar.SyncWorkspace();
+        // 【修复】AssetDatabase.Refresh() 是异步的，立即调用 SyncWorkspace 时新 CSV 的 GUID 可能尚未就绪
+        //         改用 delayCall 推迟到导入管线完成后执行，避免 "资产尚未导入，跳过" 导致漏注册
+        EditorApplication.delayCall += VNAddressablesRegistrar.SyncWorkspace;
 
         Debug.Log($"<color=green>转换完成！新建: {createCount}, 更新: {updateCount}</color>");
     }

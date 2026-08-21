@@ -13,7 +13,7 @@
 public static class VNUIPrefabKeys
 {
     // ==================== 主面板 ====================
-    public const string VNGameplayPanel    = "VNovelizerRes/VNPrefabs/UI/VNGamePlay/VNGameplayPanel";
+    public const string VNGameplayPanel    = "VNovelizerRes/VNPrefabs/UI/VNGamePlay/VNGamePlayPanel";
     public const string MainMenuPanel      = "VNovelizerRes/VNPrefabs/UI/MainMenu/MainMenuPanel";
     public const string GalleryPanel       = "VNovelizerRes/VNPrefabs/UI/Gallery/GalleryPanel";
     public const string PausePanel         = "VNovelizerRes/VNPrefabs/UI/Pause/PausePanel";
@@ -37,6 +37,7 @@ public static class VNUIPrefabKeys
     public const string EventSystem        = "VNovelizerRes/VNPrefabs/UI/EventSystem";
     public const string SoundObj           = "VNovelizerRes/VNPrefabs/Gameplay/SoundObj";
     public const string VideoObj           = "VNovelizerRes/VNPrefabs/Gameplay/VideoObj";
+    public const string TransitionManagerRoot = "VNovelizerRes/VNPrefabs/UI/TransitionManagerRoot";
 
     // ==================== 画廊数据容器（SO，非 prefab） ====================
     public const string CGDataContainer    = "VNovelizerRes/GalleryContent/CG/CGDataContainer";

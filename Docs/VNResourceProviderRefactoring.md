@@ -1,7 +1,6 @@
 # VN 资源管理重构：Provider 抽象层 + Addressables
 
 > 本文档描述 VNovelizer 资源加载体系从"纯 Unity Resources + 初始化复制"向"可插拔提供者链（Addressables 优先 / Resources 兜底）"的迁移方案与实施记录。
-> 参考：Naninovel 资源提供者（Resource Providers）与内存管理（Memory Management）架构。
 > 阶段状态：**Phase 0（收口）与 Phase 1（Addressables 后端）已实施**；Phase 2/3 为规划。
 
 ---
@@ -32,16 +31,14 @@
 | **无热更/远程分发能力** | Resources 资源全部内置，无法做 DLC、MOD、远程更新 |
 | **散落的加载调用** | `Resources.Load` 直接散落在 12+ 个文件中，绕过 `ResourcesManager`，无法统一替换后端 |
 
-### 1.2 参考方案（Naninovel）
+### 1.2 参考方案
 
-Naninovel 采用**可插拔资源提供者**架构：
+现代商业 VN 引擎普遍采用**可插拔资源提供者**架构，VNovelizer 取其骨架、按本引擎体量裁剪：
 
-- 多 Provider（Addressable / Project(Resources) / Local / 自定义 `IResourceProvider`）；
-- 每个资源类别可单独配置 Provider 有序回退链（如 Addressable → Project 兜底）；
-- 引用计数 + Hold/Release 生命周期管理，Resource Policy 三策略（保守/乐观/懒惰）；
-- 编辑器端自动把资产注册进 Addressables 组（组内条目自动重建，勿手动编辑）。
-
-本方案取其骨架、按 VNovelizer 体量裁剪：**一条全局链（Addressables → Resources）+ 编辑器注册器 + 后续阶段的引用计数**。
+- 可插拔 Provider（Addressable / Resources / 自定义）；
+- 回退链设计（Addressables → Resources 兜底）；
+- 引用计数生命周期（Phase 3 规划）；
+- 编辑器端自动把资产注册进 Addressables 组（组内条目勿手动编辑）。
 
 ---
 
@@ -151,8 +148,8 @@ Assets/VNovelizer/Backgrounds/x.png   Assets/Resources/VNovelizerRes/Backgrounds
 
 ### 5.2 注册器（VNAddressablesRegistrar）
 
-- 单组 `"VNovelizer"`（参照 Naninovel 默认单组），**Pack Separately**（每资产独立成包、释放即卸载，内存行为最接近旧 Resources；资产多构建慢可改 Pack Together）；
-- 地址 = 资源键、Label = 类别；**已被用户归入其他组的条目不动**（尊重手动组织）；本组内条目地址由注册器托管，勿手动编辑（同 Naninovel）；
+- 单组 `"VNovelizer"`，**Pack Separately**（每资产独立成包、释放即卸载，内存行为最接近旧 Resources；资产多构建慢可改 Pack Together）；
+- 地址 = 资源键、Label = 类别；**已被用户归入其他组的条目不动**（尊重手动组织）；本组内条目地址由注册器托管，勿手动编辑；
 - 注册范围：包内 `Runtime/PackageDefault/VNovelizerRes` 全部资产（**只注册 GUID，不复制文件**——Addressables 直接引用包内资产是官方支持能力）+ 用户工作区 `Assets/VNovelizer`；
 - 排除 `.xlsx/.md/.txt`（编辑器工作流文件，不参与运行时）；
 - 入口：
@@ -160,11 +157,14 @@ Assets/VNovelizer/Backgrounds/x.png   Assets/Resources/VNovelizerRes/Backgrounds
   - `SyncAll()`（向导）、`SyncWorkspace()`（轻量，Excel→CSV 转换后自动调用）、`RegisterAssetAtPath(path, key)`（编辑器窗口新建单资产）；
 - **包内资产的资产路径是虚拟路径**（`Packages/{包名}/...`），枚举文件用 `PackageInfo.resolvedPath` 真实路径，注册时换算。
 
-### 5.3 工作区自动登记（VNWorkspaceAssetPostprocessor）
+### 5.3 资产自动登记（VNWorkspaceAssetPostprocessor）
 
 - `Assets/VNovelizer/**` 下的导入/移动事件 → 延迟（`delayCall`，避免导入回调内改设置的 重入问题）执行 `SyncWorkspace()`；
+- **全 Assets 范围的已知类型资产**（工作区外）→ 逐条 `TryAutoRegister`：`FlagRegistry`/画廊数据容器按运行时固定键、`CharacterProfile` 按 `CharacterResPath/角色ID`、配置 CSV 输出目录下的 `.csv` 按 `VNScriptResPath/文件名`——**任意位置创建即自动可寻址**；
+- `TryAutoRegister` 的非破坏语义：已在任何组中的资产不动（移动/改名不影响寻址）、地址被其他资产占用时警告跳过（防固定键被重复资产劫持）；
 - 仅在 Addressables 已初始化（设置资产存在）时生效——用户单纯拖放文件不会意外创建 `Assets/AddressableAssetsData`；
-- 删除资产由 Addressables 自身挂钩清理。
+- 删除资产由 Addressables 自身挂钩清理；
+- 运行时单键噪声抑制：编辑器探针注入 `KeyProbe`（直接查编辑器设置的组条目，无运行时初始化依赖），未注册键静默回退 Resources，不再打印 InvalidKeyException。
 
 ### 5.4 编辑器窗口适配
 
@@ -181,29 +181,54 @@ Assets/VNovelizer/Backgrounds/x.png   Assets/Resources/VNovelizerRes/Backgrounds
 
 ---
 
-## 6. 初始化向导新流程（统一零复制）
+## 6. 初始化向导新流程（统一零复制 + 零 Assets 写入）
 
 ```
-一键初始化（新/存量项目同一流程，全程零复制）
-  ├─ StreamingAssets/VNovelizerRes/Videos     （空目录；视频始终走 StreamingAssets）
-  ├─ VNProjectConfig（Assets/Resources，唯一引导资产；顺带填 Excel/CSV 默认文件夹）
-  ├─ EnsureWorkspaceFolders（Assets/VNovelizer 空目录骨架，不写文件）
+一键初始化（新/存量项目同一流程，零复制 + 零 Assets 写入）
   ├─ SyncAll（初始化 Addressables + 注册，不复制文件）：
-  │     ├─ 存量项目（旧目录存在）→ 注册旧目录中的用户副本（副本优先于包内原件，
-  │     │   与 Resources 兜底所见一致；不复制/不移动/不修改任何文件）
+  │     ├─ 存量项目（旧目录存在）→ 注册旧目录中的用户副本（不复制/不移动/不修改任何文件）
   │     └─ 新项目 → 注册包内默认资源（文件本体留在包里）
-  ├─ 画廊数据容器（目录按存量/新项目双模式解析；已存在则跳过并确保注册）
-  ├─ 场景：本地副本（Assets/Scenes，存量用户可能已自定义）存在则注册副本；
-  │        否则直接注册包内场景到 Build Settings（不复制）
-  └─ PrimeTween / TMP / InputSystem（不变）
+  ├─ PrimeTween / TMP / InputSystem 配置
+  └─ 完成（无任何文件写入 Assets）
 ```
 
-变化要点：
+一切用户侧资产均为**按需自动生成**（"除非用户自己创建"语义）：
 
-1. **全程零复制**：不复制任何资源到 Assets（除了用户必须拥有的 `VNProjectConfig.asset` 与画廊数据容器这两个用户数据资产）；
-2. **场景不再复制**——Build Settings 直接引用包内场景路径（`Packages/com.fakecorps.vnovelizer/Runtime/Scenes/*.unity`），按名加载（`SceneManager.LoadScene("VNGamePlay")`）行为不变；
-3. **存量项目重跑向导**：旧目录被整体注册进 Addressables（副本优先），运行时链首命中——获得与新项目一致的地址化加载，且不改动用户任何文件；
-4. 包升级带来的新默认资源：执行菜单"同步全部资源注册"即可纳入（新项目）；存量项目如需引入新默认资源，从包内 `Runtime/PackageDefault` 手动复制所需文件（明确的手动操作，不再隐式同步）。
+| 资产 | 生成时机 |
+|------|----------|
+| `VNProjectConfig.asset` | 首次打开 **Edit → Project Settings → VNovelizer**（SettingsProvider 自动创建；在此之前运行时使用内置默认值的临时实例——零配置开箱即用） |
+| 画廊数据容器（3 个 SO） | 首次打开画廊编辑器时提示"立即创建"（SaveFilePanel 自选路径） |
+| 工作区/各类文件夹 | 首次拖放分配 / 首次创建 SO 时自动建立 |
+| `Assets/Resources` 目录 | 仅当创建配置资产时 |
+
+### 6.1 场景无关架构
+
+**包内三个场景（VNMainMenu / VNGamePlay / VNDebugScene）已删除**——引擎根对象全部按需自举并跨场景常驻：
+
+| 引擎根对象 | 自举方式 |
+|-----------|----------|
+| 剧场相机 / EventSystem / AudioListener | `SceneCameraManager` / `UIManager` 按需自动创建 |
+| BGM 音源 / 语音音源 | `MusicManager` / `VoiceManager`（SingletonAutoMono/DontDestroyOnLoad） |
+| 转场根对象（TransitionManagerRoot） | `TransitionManager.Instance` getter 按需加载包内 prefab |
+| UI 面板 | UIManager `Show<T>` 动态加载（Root 对象化 + Persistent） |
+
+游戏入口（三个等价方式）：
+
+1. **任意场景挂 `VNRuntimeInitializer` 组件**：Inspector 填剧本名（可选行 ID），Play 即自动开始（替代已删除的 VNDebugScene）；
+2. **剧本管理器「试玩」按钮**：写 PlayerPrefs 标记 → 当前场景直接进入 Play → `VNRuntimeInitializer.AutoPlayOnPlayMode`（RuntimeInitializeOnLoadMethod）检测标记自动启动；
+3. **代码调用**：`VNManager.StartGame(scriptName, lineID)`——场景无关（原"切换 VNGamePlay 场景"逻辑已移除，`ContinueGame` 同理直接在当前场景恢复存档）。
+
+"返回主菜单"：`PausePanel` 显示 `MainMenuPanel` 面板（不再 `LoadScene("VNMainMenu")`），游戏面板隐藏。
+
+存量项目注意：本地副本场景（`Assets/Scenes/VN*.unity`）继续可用（引擎对其无依赖），Build Settings 中的旧场景条目由用户自行清理。
+
+### 6.2 项目配置（SettingsProvider，方案 A）
+
+对标通用 VN 引擎配置管理惯例（配置数据在 Assets 的 Resources 下，Project Settings 只是 UI 入口）：
+
+- **Edit → Project Settings → VNovelizer**：SettingsProvider 页面，复用 `VNProjectConfigEditor` 完整 UI（分组卡片 + 从模板创建按钮）；
+- 首次打开自动创建 `Assets/Resources/VNProjectConfig.asset`（用户主动行为）；
+- 运行时兜底：配置资产不存在时 `VNProjectConfig.Instance` 返回**内置默认值的临时实例**（全部默认值内置于字段初始化器，零配置可完整运行），并提示一次创建持久配置——不再报"严重错误"。
 
 ---
 
@@ -247,7 +272,7 @@ Assets/VNovelizer/Backgrounds/x.png   Assets/Resources/VNovelizerRes/Backgrounds
 
 ### 7.0.2 UI 模板覆写（Panel / 子项 / 基础设施预制体）
 
-对标 Naninovel UI 定制机制，取代旧"复制 VNPrefabs 到 Assets/Resources 供用户编辑"流程：
+对标现代 VN 引擎 UI 定制惯例，取代旧"复制 VNPrefabs 到 Assets/Resources 供用户编辑"流程：
 
 ```
 用户指派了自定义模板？ ──是──► Instantiate(直接引用)   ← 零字符串、零加载、零寻址
@@ -285,7 +310,7 @@ Config 现结构（用户可见路径字段 = 0）：
 | 分组 | 内容 |
 |------|------|
 | 一、编辑器工具路径 | Excel/CSV 工作流（直接引用 + 开关） |
-| 二、资源默认地址（引擎内部，勿改） | 9 个媒体/VFX 类别前缀，**只读**（引擎私有寻址常量，对标 Naninovel 内部地址前缀） |
+| 二、资源默认地址（引擎内部，勿改） | 9 个媒体/VFX 类别前缀，**只读**（引擎私有寻址常量） |
 | 三、UI 默认资源 | 2 个 Sprite 引用 |
 | 四~七 | 启动/本地化/加密/剧场（与路径无关） |
 | 八、UI 模板覆写 | 23 个引用字段 + "从模板创建…"按钮 |
@@ -338,7 +363,7 @@ Config 现结构（用户可见路径字段 = 0）：
 - 评估引导配置 `VNProjectConfig` 从场景引用（Bootstrap MonoBehaviour 序列化引用）加载的可行性，彻底清空 `Assets/Resources`；
 - 存量项目 → Addressables 的一键迁移工具（复制/移动 + 注册 + 清理旧目录）。
 
-### Phase 3：生命周期管理（未实施，对标 Naninovel）
+### Phase 3：生命周期管理（未实施）
 
 - 引用计数：`VNResourceService` 层跟踪"持有者"（`Hold(asset, holder)` / `Release(asset, holder)`），归零触发 `Addressables.Release` / `Resources.UnloadUnusedAssets`；
 - 策略开关（Resource Policy）：保守（剧本级预载/卸载）/ 乐观（常驻直到显式释放）/ 懒惰（即时加载、不可见即卸载）；

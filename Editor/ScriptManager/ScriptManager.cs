@@ -417,23 +417,16 @@ public class ScriptManagerWindow : EditorWindow
     {
         string scriptName = Path.GetFileNameWithoutExtension(file.Name);
 
+        // 写入试玩标记（VNRuntimeInitializer.AutoPlayOnPlayMode 在任意场景进入 Play 时检测）
         PlayerPrefs.SetString("Debug_LastScriptName", scriptName);
         PlayerPrefs.SetString("Debug_LastLineID", "");
         PlayerPrefs.SetInt("Debug_Mode", 1);
         PlayerPrefs.Save();
 
+        // 场景无关试玩：当前场景直接进入 Play 模式（无需调试场景）
         if (!EditorApplication.isPlaying)
         {
-            string scenePath = "Assets/Scenes/VNDebugScene.unity";
-            if (System.IO.File.Exists(scenePath))
-            {
-                UnityEditor.SceneManagement.EditorSceneManager.OpenScene(scenePath);
-                EditorApplication.isPlaying = true;
-            }
-            else
-            {
-                Debug.LogError($"找不到 DebugScene，路径错误：{scenePath}");
-            }
+            EditorApplication.isPlaying = true;
         }
     }
 }

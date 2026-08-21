@@ -21,47 +21,80 @@ using UnityEditor;
 public class VNProjectConfig : ScriptableObject
 {
     private static VNProjectConfig _instance;
+    private static VNProjectConfig _tempInstance;
+    private static bool _warnedMissingConfig;
 
+    /// <summary>
+    /// 全局配置访问（带兜底）：未创建持久配置资产时，使用内置默认值的临时实例
+    /// （零配置开箱即用——引擎的全部默认值都内置于字段初始化器，临时实例即完整可用），
+    /// 并提示一次"打开 Edit → Project Settings → VNovelizer 创建持久配置"。
+    /// </summary>
     public static VNProjectConfig Instance
     {
         get
         {
-            if (_instance == null)
+            VNProjectConfig config = LoadInstance();
+            if (config != null) return config;
+
+            if (_tempInstance == null)
             {
-                // 引导配置：始终经 Resources 加载（资源服务链初始化前即被各管理器访问，
-                // 且作为全项目唯一的 Resources 引导资产，属 Phase 2 既定决策，见
-                // Docs/VNResourceProviderRefactoring.md）
-                _instance = Resources.Load<VNProjectConfig>("VNProjectConfig");
-#if UNITY_EDITOR
-                if (_instance == null)
+                _tempInstance = CreateInstance<VNProjectConfig>();
+                if (!_warnedMissingConfig)
                 {
-                    string[] guids = AssetDatabase.FindAssets("t:VNProjectConfig");
-                    foreach (var guid in guids)
-                    {
-                        string path = AssetDatabase.GUIDToAssetPath(guid);
-                        if (!path.StartsWith("Packages"))
-                        {
-                            _instance = AssetDatabase.LoadAssetAtPath<VNProjectConfig>(path);
-                            break;
-                        }
-                    }
+                    _warnedMissingConfig = true;
+                    Debug.LogWarning("[VNProjectConfig] 未找到持久配置资产，正在使用内置默认值（临时实例，重启后丢失修改）。\n" +
+                                     "要保存配置请打开：Edit → Project Settings → VNovelizer（首次打开会自动创建配置资产）。");
                 }
-#endif
             }
-            if (_instance == null)
-                Debug.LogError("严重错误：未找到 VNProjectConfig 配置文件！请在 Resources 目录下创建。");
-            return _instance;
+            return _tempInstance;
         }
     }
 
+    /// <summary>
+    /// 静默探测（编辑器轮询/后台任务专用）："配置尚未创建"是合法的未初始化状态
+    ///（刚安装插件、尚未打开设置页），不应刷错误日志，也不应触发临时实例兜底。
+    /// </summary>
+    public static bool TryGetInstance(out VNProjectConfig config)
+    {
+        config = LoadInstance();
+        return config != null;
+    }
+
+    private static VNProjectConfig LoadInstance()
+    {
+        if (_instance == null)
+        {
+            // 引导配置：始终经 Resources 加载（资源服务链初始化前即被各管理器访问，
+            // 且作为全项目唯一的 Resources 引导资产，属 Phase 2 既定决策，见
+            // Docs/VNResourceProviderRefactoring.md）
+            _instance = Resources.Load<VNProjectConfig>("VNProjectConfig");
+#if UNITY_EDITOR
+            if (_instance == null)
+            {
+                string[] guids = AssetDatabase.FindAssets("t:VNProjectConfig");
+                foreach (var guid in guids)
+                {
+                    string path = AssetDatabase.GUIDToAssetPath(guid);
+                    if (!path.StartsWith("Packages"))
+                    {
+                        _instance = AssetDatabase.LoadAssetAtPath<VNProjectConfig>(path);
+                        break;
+                    }
+                }
+            }
+#endif
+        }
+        return _instance;
+    }
+
     // ==================== 一、编辑器工具 ====================
-    [Order(10), BoxGroup("一、编辑器工具路径"), LabelText("Excel 源文件夹")]
+    [Order(10), BoxGroup("一、编辑器工具"), LabelText("Excel 源文件夹")]
     public Object ExcelSourceFolder;
 
-    [Order(20), BoxGroup("一、编辑器工具路径"), LabelText("CSV 输出文件夹")]
+    [Order(20), BoxGroup("一、编辑器工具"), LabelText("CSV 输出文件夹")]
     public Object CsvOutputFolder;
 
-    [Order(30), BoxGroup("一、编辑器工具路径"), LabelText("自动转换 Excel → CSV")]
+    [Order(30), BoxGroup("一、编辑器工具"), LabelText("自动转换 Excel → CSV")]
     [Tooltip("启用后，每次从 Excel 切回 Unity Editor 时自动检测并转换被修改的 Excel 文件")]
     public bool AutoConvertExcel = true;
 
@@ -70,7 +103,7 @@ public class VNProjectConfig : ScriptableObject
     // - Addressables 托管模式：逻辑类别前缀——拖放分配时资产获得地址 {前缀}/{逻辑名}，
     //   物理位置无关，无需任何文件夹约定；
     // - Resources 兼容模式（旧项目）：同时是 Assets/Resources 下的相对文件夹路径（旧行为）。
-    // 这是引擎私有寻址常量（对标 Naninovel 的内部地址前缀），正常使用无需修改。
+    // 这是引擎私有寻址常量（VN 引擎内部地址前缀），正常使用无需修改。
     [Order(100), BoxGroup("二、资源默认地址（引擎内部，勿改）"), ReadOnly, LabelText("剧本 CSV")]
     public string VNScriptResPath = "VNovelizerRes/VNScripts";
 

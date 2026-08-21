@@ -28,8 +28,9 @@ public enum FlagScope
 /// Flag 注册表（变量声明清单）。
 /// 所有剧本中引用的 Flag 建议先在此声明（名称/类型/作用域/默认值），
 /// 供运行时类型推断、新游戏复位与编辑器静态校验使用。
-/// 资产默认路径：Assets/Resources/VNovelizerRes/VNFlagRegistry.asset
-/// （运行时经 Resources.Load("VNovelizerRes/VNFlagRegistry") 加载；不存在时 FlagService 进入兼容模式）。
+/// 资产可保存在项目内任意位置：运行时按固定资源键 FlagService.DefaultRegistryPath
+/// 经资源服务链加载（Addressables 地址由编辑器自动登记；旧版项目回退 Resources 路径）；
+/// 不存在时 FlagService 进入兼容模式（所有 Flag 按旧全局行为处理）。
 /// </summary>
 [CreateAssetMenu(menuName = "VNovelizer/FlagRegistry", fileName = "VNFlagRegistry")]
 public class FlagRegistry : ScriptableObject

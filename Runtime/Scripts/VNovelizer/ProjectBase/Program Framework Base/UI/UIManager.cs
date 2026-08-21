@@ -530,14 +530,26 @@ public class UIManager : BaseManager<UIManager>
             return;
         }
 
-        // 模板覆写优先（用户自定义 EventSystem），fallback = 包内默认（键即地址）
+        // 三层兜底（确保任意启动时序下 EventSystem 都能就绪）：
+        // 1. 模板覆写字段（用户自定义 EventSystem prefab）
+        // 2. 程序化创建（最可靠：不依赖 Addressables 初始化时序，UI 输入立刻可用）
+        // 3. Addressables / Resources 加载包内 prefab（如自定义组件如 InputSystemUIInputModule）
         GameObject prefab = VNUIPrefabs.Load(VNUIPrefabKeys.EventSystem, VNUIPrefabKeys.EventSystem);
-        if (prefab == null)
+        if (prefab != null)
         {
-            Debug.LogError("[UIManager] 无法加载 EventSystem 预制体！");
-            return;
+            _eventSystemGameObject = UnityEngine.Object.Instantiate(prefab);
         }
-        _eventSystemGameObject = UnityEngine.Object.Instantiate(prefab);
+        else
+        {
+            // 程序化兜底：StartGame 早期调用时 Addressables 初始化未就绪，此处直接创建
+            _eventSystemGameObject = new GameObject("EventSystem");
+            _eventSystemGameObject.AddComponent<EventSystem>();
+#if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
+            _eventSystemGameObject.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
+#else
+            _eventSystemGameObject.AddComponent<StandaloneInputModule>();
+#endif
+        }
         UnityEngine.Object.DontDestroyOnLoad(_eventSystemGameObject);
     }
 

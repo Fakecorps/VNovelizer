@@ -4,9 +4,11 @@
 
 This is a Unity UPM package without traditional CLI build/lint/test commands. All workflows operate through the Unity Editor.
 
-- **One-time project setup**: In Unity, run **VNovelizer → 一键初始化 (Setup Wizard)**. This copies default resources from `Runtime/PackageDefault/VNovelizerRes/` to `Assets/Resources/VNovelizerRes/`, generates `VNProjectConfig`, and imports core UI prefabs and sample scenes.
+- **One-time project setup**: In Unity, run **VNovelizer → 一键初始化 (Setup Wizard)**. This registers package default resources from `Runtime/PackageDefault/VNovelizerRes/` into the Addressables "VNovelizer" group (zero file copy, GUID-based) and configures dependencies (PrimeTween, TMP, Input System). No files are written to `Assets/`. The `VNProjectConfig` asset is auto-created on first opening **Edit → Project Settings → VNovelizer**; gallery data containers are created on first opening the gallery editor.
 
-- **Debug a script**: Open `Assets/Scenes/VNDebugScene`, enter a script name (e.g., `Chapter1`) and starting line ID in the Inspector, then press Play. The game launches directly into that line without going through the main menu.
+- **Debug a script**: The engine is scene-independent. Either (a) attach the `VNRuntimeInitializer` component to any GameObject in any scene, enter a script name (e.g., `Chapter1`) and optional line ID in the Inspector, then press Play; or (b) click the "试玩" (Quick Play) button in the script manager — it enters Play mode in the current scene and auto-starts the script via a PlayerPrefs flag consumed by `VNRuntimeInitializer.AutoPlayOnPlayMode`.
+
+- **Start the game from code**: `VNManager.StartGame(scriptName, lineID)` runs in the current scene without scene switching (engine roots — theater camera, EventSystem, AudioListener, BGM audio source, transition root — are all auto-created on demand and persist across scenes). "Return to main menu" shows the `MainMenuPanel` instead of loading a scene.
 
 - **Author scripts**: Use **VNovelizer → 剧本管理器** to create new Excel scripts. After editing, click "转换" to convert Excel to CSV, then use **VNovelizer → 资源管理器** to verify assets. Scripts are parsed from CSV at runtime via `ScriptParser.Parse()`.
 

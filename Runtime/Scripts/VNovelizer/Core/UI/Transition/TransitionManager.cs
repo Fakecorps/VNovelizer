@@ -6,7 +6,38 @@ using UnityEngine.EventSystems;
 [DisallowMultipleComponent]
 public class TransitionManager : MonoBehaviour
 {
-    public static TransitionManager Instance { get; private set; }
+    private static TransitionManager _instance;
+
+    /// <summary>
+    /// 全局单例（场景无关）：场景没有放置 TransitionManagerRoot 时，
+    /// 自动加载包内默认 prefab 实例化（经 VNUIPrefabs：覆写字段优先 → 服务链 fallback）。
+    /// DontDestroyOnLoad 后跨场景常驻。
+    /// </summary>
+    public static TransitionManager Instance
+    {
+        get
+        {
+            if (_instance != null) return _instance;
+            _instance = FindFirstObjectByType<TransitionManager>();
+            if (_instance == null)
+            {
+                // 按需自举：加载默认转场根对象（含 DarkFade 等效果组件）
+                var prefab = VNUIPrefabs.Load(VNUIPrefabKeys.TransitionManagerRoot, VNUIPrefabKeys.TransitionManagerRoot);
+                if (prefab != null)
+                {
+                    _instance = Instantiate(prefab).GetComponent<TransitionManager>();
+                    DontDestroyOnLoad(_instance.gameObject);
+                    Debug.Log("[TransitionManager] 场景未放置转场根对象，已自动创建包内默认实例");
+                }
+                else
+                {
+                    Debug.LogError("[TransitionManager] 无法加载默认转场根对象: " + VNUIPrefabKeys.TransitionManagerRoot);
+                }
+            }
+            return _instance;
+        }
+        private set { _instance = value; }
+    }
 
     private readonly Dictionary<string, TransitionEffectBase> effectMap = new Dictionary<string, TransitionEffectBase>();
 
@@ -296,5 +327,4 @@ public class TransitionManager : MonoBehaviour
             SetAllUIInputModulesEnabled(true);
             Instance = null;
         }
-    }
-}
+    }}

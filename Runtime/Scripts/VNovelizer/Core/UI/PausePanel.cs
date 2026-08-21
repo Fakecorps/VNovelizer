@@ -236,15 +236,15 @@ public class PausePanel : BasePanel
     }
     
     /// <summary>
-    /// 退出按钮点击 - 返回主菜单场景
+    /// 退出按钮点击 - 返回主菜单（场景无关：主菜单是面板而非场景，当前场景直接切换）
     /// </summary>
     private void OnExitBtnClick()
     {
         // 关闭暂停面板
         UIManager.GetInstance().HidePanel("PausePanel");
-        
+
         // 恢复游戏状态
-        if (GameStateManager.GetInstance() != null && 
+        if (GameStateManager.GetInstance() != null &&
             GameStateManager.GetInstance().CurrentState == GameState.Pause)
         {
             GameStateManager.GetInstance().RestoreState();
@@ -252,12 +252,12 @@ public class PausePanel : BasePanel
             VNAPI.ClearAllEffects();
             PoolManager.GetInstance().Clear();
         }
-        
 
-        // 加载主菜单场景
-        SceneManager.LoadScene("VNMainMenu");
-        
-        Debug.Log("[PausePanel] 返回主菜单场景");
+        // 显示主菜单面板（主菜单与游戏同场景共存；引擎根对象常驻，无需切场景）
+        UIManager.GetInstance().HidePanel("VNGameplayPanel");
+        UIManager.GetInstance().Show<MainMenuPanel>();
+
+        Debug.Log("[PausePanel] 已返回主菜单面板");
     }
     
     #endregion

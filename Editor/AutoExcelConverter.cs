@@ -51,8 +51,9 @@ public static class AutoExcelConverter
 
     private static void TryConvertModifiedExcelFiles()
     {
-        VNProjectConfig config = VNProjectConfig.Instance;
-        if (config == null || !config.AutoConvertExcel) return;
+        // 静默探测：刚安装插件（未跑初始化向导）时配置不存在是合法状态，不刷错误日志
+        if (!VNProjectConfig.TryGetInstance(out VNProjectConfig config)) return;
+        if (!config.AutoConvertExcel) return;
 
         string excelFolderPath = config.GetExcelFolderPath();
         string csvOutputPath = config.GetCsvOutputPath();
@@ -117,7 +118,9 @@ public static class AutoExcelConverter
         {
             AssetDatabase.Refresh();
             // 工作区新增/更新的 CSV 自动注册进 Addressables（未初始化的项目自动跳过）
-            VNAddressablesRegistrar.SyncWorkspace();
+            // 【修复】AssetDatabase.Refresh() 是异步的，需用 delayCall 推迟到导入管线完成后执行，
+            //         避免 GUID 尚未就绪时 "资产尚未导入，跳过" 导致漏注册
+            EditorApplication.delayCall += VNAddressablesRegistrar.SyncWorkspace;
             Debug.Log($"<color=green>[AutoConvert] 自动转换完成: {successCount} 个文件" +
                       (failCount > 0 ? $", 失败 {failCount} 个" : "") + "</color>");
         }

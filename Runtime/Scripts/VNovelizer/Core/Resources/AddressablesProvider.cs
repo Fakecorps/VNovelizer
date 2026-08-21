@@ -51,6 +51,17 @@ public class AddressablesProvider : IVNResourceProvider
     /// </summary>
     public static Func<string, bool> LabelProbe;
 
+    /// <summary>
+    /// 键存在性探针：返回 true 表示该地址已在 Addressables 设置中注册（任意组）。
+    /// 由编辑器程序集注入（直接查编辑器设置的组条目）——注意与曾被移除的
+    /// "运行时 locator 预检"有本质区别：那个依赖惰性初始化的 ResourceLocators，
+    /// 预检恒 false 并短路本应触发初始化的加载，形成自锁；本探针读编辑器设置，
+    /// 无运行时初始化依赖，不存在自锁问题。
+    /// 用途：键未注册时静默回退链上下一环，抑制 Addressables 内部打印的
+    /// InvalidKeyException 日志噪声；构建包内为 null（直接加载）。
+    /// </summary>
+    public static Func<string, bool> KeyProbe;
+
     private const string LabelCachePrefix = "label:";
 
     /// <summary>"key|TypeName" 或 "label:category|TypeName" → handle</summary>
@@ -80,9 +91,16 @@ public class AddressablesProvider : IVNResourceProvider
             try { if (!probe()) return; }
             catch { return; }
         }
-#endif
-        // 异步启动、不阻塞；句柄由 Addressables 内部持有，无需保存
+        // 编辑器 Fast 模式：同步等待初始化完成，消除"InitializeAsync 未完成 →
+        // LoadAssetAsync IsDone==false → 直接 Release → 加载失败"的启动期竞争窗口。
+        // Fast 模式（Use Asset Database）保证操作不会永久阻塞（不存在死锁风险）。
+        var initHandle = Addressables.InitializeAsync();
+        if (!initHandle.IsDone)
+            initHandle.WaitForCompletion();
+#else
+        // 构建包：异步预热即可，运行时加载有 WaitForCompletion 兜底
         Addressables.InitializeAsync();
+#endif
     }
 
     public string Name => "Addressables";
@@ -148,7 +166,9 @@ public class AddressablesProvider : IVNResourceProvider
     public T Load<T>(string key) where T : UnityEngine.Object
     {
         if (string.IsNullOrEmpty(key) || !IsAvailable) return null;
-
+#if UNITY_EDITOR
+        if (IsKeyUnregistered(key)) return null; // 未注册键静默回退（抑制 InvalidKeyException 噪声）
+#endif
         string cacheKey = BuildCacheKey(key, typeof(T));
 
         // 已缓存：直接复用（Addressables 内部引用计数）
@@ -159,8 +179,19 @@ public class AddressablesProvider : IVNResourceProvider
         {
             var handle = Addressables.LoadAssetAsync<T>(key);
 #if UNITY_EDITOR
-            // 编辑器（仅 Fast 模式启用本提供者，操作应同步完成）：
-            // 未同步完成则绝不阻塞等待（防死锁）——释放并回退链上下一环
+            // 编辑器 Fast 模式：初始化完成后操作应同步完成（IsDone == true）。
+            // 如果仍未同步完成（极端情况：初始化卡顿），尝试 WaitForCompletion 补救一次；
+            // 补救失败则释放并回退链上下一环（避免永久阻塞的保守策略仅在确认死锁风险时采用）。
+            if (!handle.IsDone)
+            {
+                Debug.LogWarning($"[AddressablesProvider] Fast 模式下 LoadAssetAsync 未同步完成（key={key}），尝试 WaitForCompletion 补救...");
+                try { handle.WaitForCompletion(); }
+                catch
+                {
+                    if (handle.IsValid()) Addressables.Release(handle);
+                    return null;
+                }
+            }
             if (!handle.IsDone)
             {
                 if (handle.IsValid()) Addressables.Release(handle);
@@ -190,7 +221,9 @@ public class AddressablesProvider : IVNResourceProvider
     {
         var op = new VNLoadOperation<T>(key);
         if (string.IsNullOrEmpty(key) || !IsAvailable) { op.Complete(null); return op; }
-
+#if UNITY_EDITOR
+        if (IsKeyUnregistered(key)) { op.Complete(null); return op; } // 未注册键静默回退
+#endif
         string cacheKey = BuildCacheKey(key, typeof(T));
         if (_handles.TryGetValue(cacheKey, out var cached) && cached.IsValid() && cached.Status == AsyncOperationStatus.Succeeded)
         {
@@ -251,8 +284,17 @@ public class AddressablesProvider : IVNResourceProvider
 
             var handle = Addressables.LoadAssetsAsync<T>(new List<object> { label }, null, Addressables.MergeMode.Union);
 #if UNITY_EDITOR
-            // 编辑器（仅 Fast 模式启用本提供者，操作应同步完成）：
-            // 未同步完成则绝不阻塞等待（防死锁）——释放并回退链上下一环
+            // 编辑器 Fast 模式：初始化完成后操作应同步完成。
+            // 意外未完成时尝试 WaitForCompletion 补救一次，失败则回退链上下一环。
+            if (!handle.IsDone)
+            {
+                try { handle.WaitForCompletion(); }
+                catch
+                {
+                    if (handle.IsValid()) Addressables.Release(handle);
+                    return null;
+                }
+            }
             if (!handle.IsDone)
             {
                 if (handle.IsValid()) Addressables.Release(handle);
@@ -303,5 +345,20 @@ public class AddressablesProvider : IVNResourceProvider
     {
         return key + "|" + (assetType != null ? assetType.FullName : "Object");
     }
+
+#if UNITY_EDITOR
+    /// <summary>
+    /// 编辑器键探针判定：true = 该键确认未注册（应静默回退，不发起加载）。
+    /// 探针未注入或探针自身异常时返回 false（放行，交给加载结果裁决——
+    /// 宁可多一次无效加载，不可误杀有效键）。
+    /// </summary>
+    private static bool IsKeyUnregistered(string key)
+    {
+        var probe = KeyProbe;
+        if (probe == null) return false;
+        try { return !probe(key); }
+        catch { return false; }
+    }
+#endif
 }
 #endif

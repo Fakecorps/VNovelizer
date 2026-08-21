@@ -92,7 +92,9 @@ public class VNManager : BaseManager<VNManager>
     }
 
     /// <summary>
-    /// 启动游戏（会切换到VNGamePlay场景）
+    /// 启动游戏（场景无关：在当前场景直接开始，不切换场景）。
+    /// VN 层自带自举（剧场相机/EventSystem/AudioListener/BGM 音源/转场根对象均按需自动创建），
+    /// 任意场景调用即可——引擎根对象自行 Root 化并跨场景常驻。
     /// </summary>
     /// <param name="scriptFileName">剧本文件名</param>
     /// <param name="startLineID">起始行ID（可选）</param>
@@ -103,34 +105,19 @@ public class VNManager : BaseManager<VNManager>
         this.pendingLineID = startLineID;
         this.onGameStartedCallback = onGameStarted;
 
-        if (SceneManager.GetActiveScene().name != "VNGamePlay")
-        {
-            SceneManager.LoadScene("VNGamePlay");
-        }
-        else
-        {
-            RunGameLogic();
-        }
+        // 确保UIManager已初始化，这样会检查并创建Canvas
+        UIManager.GetInstance().Init();
+
+        // 直接运行游戏逻辑，不切换场景
+        RunGameLogic();
     }
 
     /// <summary>
-    /// 在当前场景中启动游戏（不切换场景）
-    /// 会在当前场景检查并创建Canvas
+    /// 在当前场景中启动游戏（不切换场景）——StartGame 的场景无关化别名（历史 API 兼容保留）。
     /// </summary>
-    /// <param name="scriptFileName">剧本文件名</param>
-    /// <param name="startLineID">起始行ID（可选）</param>
-    /// <param name="onGameStarted">游戏启动完成后的回调函数（可选）</param>
     public void StartGameOnScene(string scriptFileName, string startLineID = "", UnityAction onGameStarted = null)
     {
-        this.pendingScriptName = scriptFileName;
-        this.pendingLineID = startLineID;
-        this.onGameStartedCallback = onGameStarted;
-
-        // 确保UIManager已初始化，这样会检查并创建Canvas
-        UIManager.GetInstance().Init();
-        
-        // 直接运行游戏逻辑，不切换场景
-        RunGameLogic();
+        StartGame(scriptFileName, startLineID, onGameStarted);
     }
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -796,20 +783,12 @@ public class VNManager : BaseManager<VNManager>
     }
 
     /// <summary>
-    /// 继续游戏（加载存档）
+    /// 继续游戏（加载存档，场景无关：当前场景直接恢复，不切换场景）
     /// </summary>
     public void ContinueGame(SaveData saveData)
     {
-        // 【核心修复】先检查场景，如果不在VNGamePlay场景，先加载场景
-        if (SceneManager.GetActiveScene().name != "VNGamePlay")
-        {
-            // 保存存档数据，等待场景加载完成后再恢复
-            pendingSaveData = saveData;
-            SceneManager.LoadScene("VNGamePlay");
-            return;
-        }
-        
-        // 如果已经在VNGamePlay场景，直接执行
+        // 确保引擎 UI 自举（任意场景恢复存档）
+        UIManager.GetInstance().Init();
         ContinueGameInternal(saveData);
     }
     
@@ -1625,7 +1604,27 @@ public class VNManager : BaseManager<VNManager>
         
         progressManager.CompleteTask(scriptTaskID); // 剧本加载完成
 
-        // 2. 计算目标行索引 (暂不预演，只算位置)
+        // 2. 剧本数据为空：直接判定加载失败并中止（先于行号解析——
+        //    否则剧本没加载成功时会先抛出"找不到行号 ID"的次生报错，掩盖真正根因）
+        if (StoryLines.Count <= 0)
+        {
+            Debug.LogError("[VNManager] 剧本加载失败，无法启动游戏。");
+
+            // 清理并隐藏加载面板
+            progressManager.OnAllTasksCompleted -= OnGameLoadingCompleted;
+            progressManager.ClearAllTasks();
+            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
+
+            // 调用失败回调
+            if (onGameStartedCallback != null)
+            {
+                onGameStartedCallback.Invoke();
+                onGameStartedCallback = null;
+            }
+            yield break;
+        }
+
+        // 3. 计算目标行索引 (暂不预演，只算位置)
         int targetIndex = 0;
         if (!string.IsNullOrEmpty(pendingLineID))
         {
@@ -1640,33 +1639,14 @@ public class VNManager : BaseManager<VNManager>
                 targetIndex = 0;
             }
         }
-        
-        // 3. 显示 UI (异步过程，UIManager会自动注册并跟踪进度)
-        if (StoryLines.Count > 0)
+
+        // 4. 显示 UI (异步过程，UIManager会自动注册并跟踪进度)
+        // UIManager会自动注册任务 "ui_VNGameplayPanel"，我们只需要等待它完成
+        UIManager.GetInstance().Show<VNGameplayPanel>((panel) =>
         {
-            // UIManager会自动注册任务 "ui_VNGameplayPanel"，我们只需要等待它完成
-            UIManager.GetInstance().Show<VNGameplayPanel>((panel) =>
-            {
-                isGameplayPanelLoadCallbackFired = true;
-                VNDebug.LogVerbose("[VNManager] VNGameplayPanel 的 ShowPanel 回调已触发");
-            });
-        }
-        else
-        {
-            Debug.LogError("[VNManager] 剧本加载失败，无法启动游戏。");
-            
-            // 清理并隐藏加载面板
-            progressManager.OnAllTasksCompleted -= OnGameLoadingCompleted;
-            progressManager.ClearAllTasks();
-            UIManager.GetInstance().HidePanel("LoadingProgressPanel");
-            
-            // 调用失败回调
-            if (onGameStartedCallback != null)
-            {
-                onGameStartedCallback.Invoke();
-                onGameStartedCallback = null;
-            }
-        }
+            isGameplayPanelLoadCallbackFired = true;
+            VNDebug.LogVerbose("[VNManager] VNGameplayPanel 的 ShowPanel 回调已触发");
+        });
     }
     
 

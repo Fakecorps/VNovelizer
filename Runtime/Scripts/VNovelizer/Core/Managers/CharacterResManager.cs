@@ -34,7 +34,10 @@ public class CharacterResManager : BaseManager<CharacterResManager>
 
         if (profileList == null || profileList.Count == 0)
         {
-            Debug.LogError($"【严重错误】{loadPath} 文件夹是空的，或者文件夹名字写错了！(必须是复数 Characters)");
+            // 角色不是必需资产：未配置任何角色是合法状态（无角色剧也能正常跑）
+            // 不再视为错误——改为 info 提示与创建引导
+            Debug.Log($"[CharacterResManager] 未找到任何角色 Profile（类别 {loadPath}）。" +
+                      $"如需添加角色：使用 VNovelizer → 角色编辑器 → 新建角色（位置自选）。");
             return;
         }
 

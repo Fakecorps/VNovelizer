@@ -14,13 +14,13 @@ public static class ScriptParser
     }
 
     /// <summary>
-    /// 解析剧本文件
+    /// 解析剧本文件（智能回退：配置的复数路径失败时自动尝试单数变体——兼容历史单数目录配置）
     /// </summary>
     public static ScriptData Parse(string fileName)
     {
         ScriptData data = new ScriptData();
 
-        // 从配置路径加载
+        // 从配置路径加载（主路径）
         string configPath = VNProjectConfig.Instance.VNScriptResPath;
         string loadPath = configPath + "/" + fileName;
         Debug.Log($"[ScriptParser] 尝试加载剧本: {loadPath} (ConfigPath: {configPath}, FileName: {fileName})");
@@ -28,9 +28,26 @@ public static class ScriptParser
         // 经资源服务链加载（Addressables → Resources），键 = 配置路径 + 文件名
         TextAsset csvFile = VNResourceService.Load<TextAsset>(loadPath);
 
+        // 智能回退：主路径失败时尝试单数变体（兼容用户工作区用 VNScript 单数目录的历史配置）
         if (csvFile == null)
         {
-            Debug.LogError($"[ScriptParser] 找不到剧本文件: {loadPath}");
+            string singularPath = configPath.TrimEnd('s') + "/" + fileName;
+            if (singularPath != loadPath)
+            {
+                Debug.Log($"[ScriptParser] 主路径失败，尝试单数变体: {singularPath}");
+                csvFile = VNResourceService.Load<TextAsset>(singularPath);
+            }
+        }
+
+        if (csvFile == null)
+        {
+            Debug.LogError($"[ScriptParser] 找不到剧本文件: {loadPath}\n" +
+                           $"排查步骤：\n" +
+                           $"  1) 文件名是否正确（区分大小写）：\"{fileName}\"\n" +
+                           $"  2) VNProjectConfig.VNScriptResPath 当前值：\"{configPath}\"（默认应为 VNovelizerRes/VNScripts）\n" +
+                           $"  3) 在 Unity 编辑器中执行：VNovelizer → 资源管理器 → 同步全部资源注册，确保 CSV 已注册进 Addressables\n" +
+                           $"  4) 使用 VNovelizer → 剧本管理器 点击\"转换\"按钮重新生成 CSV\n" +
+                           $"  5) 当前资源服务链：{VNResourceService.DescribeChain()}");
             return null;
         }
 
