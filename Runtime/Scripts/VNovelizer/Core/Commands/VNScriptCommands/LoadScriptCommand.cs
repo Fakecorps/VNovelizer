@@ -20,6 +20,9 @@ namespace VNovelizer.Core.Commands
             // 如果 Excel 里没写第二个参数，startID 就是 null
             string startID = parts.Length >= 2 ? parts[1].Trim() : null;
 
+            // 自动存档：跨剧本切换前保存当前剧本进度（新游戏首个 loadscript 无进度可存，内部自动跳过）
+            VNManager.GetInstance().TriggerAutoSaveOnScriptSwitch();
+
             // 1. 解析新剧本
             var scriptData = ScriptParser.Parse(scriptName);
 

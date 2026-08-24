@@ -57,6 +57,9 @@ public class ChoicePanel : BasePanel
         // [Confirm 出口] 选项即本行出口：choice 行声明的 @Confirm: 段不再执行
         VNManager.GetInstance().ConsumeConfirmExit();
 
+        // 自动存档：在执行选项跳转命令前触发（快照停留在 choice 行，读档后重新弹出选项）
+        VNManager.GetInstance().TriggerAutoSaveOnChoice();
+
         // 注意：这里需要调用 VNManager 或 CommandManager 来执行
         if (!string.IsNullOrEmpty(command))
         {

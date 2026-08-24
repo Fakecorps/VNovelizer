@@ -71,6 +71,11 @@ public class VNManager : BaseManager<VNManager>
     private bool isVoiceEnabled = true;
     private bool isTextSpeedEnabled = true;
 
+    // === 自动存档 ===
+    private int autoSaveLineCounter = 0;        // 行数计数器（每 N 行触发）
+    private Coroutine _autoSaveCoroutine;       // 防重入：上一次自动保存协程未结束时跳过新触发
+    private static bool _autoSaveConfigEnsured = false; // 是否已从 SaveLoadPanel 预制体加载过配置
+
     // 协程
     private Coroutine _flowCoroutine;
     private Coroutine _autoPlayCoroutine;
@@ -278,6 +283,7 @@ public class VNManager : BaseManager<VNManager>
         currentCharactersScaleX.Clear();
         isVoiceEnabled = true;
         lastLine = null;
+        autoSaveLineCounter = 0; // 新剧本/预演重置行数计数，避免跨剧本残留计数
     }
     
     /// <summary>
@@ -913,6 +919,9 @@ public class VNManager : BaseManager<VNManager>
         }
 
         _usePersistedCharacterSlotsWhenCsvCharCellsEmpty = false;
+
+        // 自动存档：行数计数（快进预演不经过此处，天然不重复计数）
+        TickAutoSaveOnLinePlayed();
     }
 
     private void CheckAndTriggerAutoPlay()
@@ -1353,6 +1362,19 @@ public class VNManager : BaseManager<VNManager>
 
     public void SaveGame(int slotIndex)
     {
+        SaveData saveData = BuildSaveData();
+
+        saveData.SaveTime = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        saveData.ScreenshotPath = SaveManager.GetInstance().SaveCachedScreenshot(slotIndex);
+
+        SaveManager.GetInstance().SaveGame(slotIndex, saveData);
+    }
+
+    /// <summary>
+    /// 构建当前游戏状态的存档快照（手动档与自动档共用）
+    /// </summary>
+    private SaveData BuildSaveData()
+    {
         SaveData saveData = new SaveData();
         saveData.ScriptFileName = this.currentScriptName;
         saveData.LineID = lastLine != null ? lastLine.ID : "";
@@ -1363,14 +1385,14 @@ public class VNManager : BaseManager<VNManager>
         // [Flag 扩展] 经 FlagService 导出快照（Save 作用域 + 兼容模式全量；Global 作用域不进存档）
         FlagService.GetInstance().ExportForSave(saveData);
         saveData.ActiveEffects = new List<string>(this.activeEffects); // 保存特效
-        
+
         // 保存历史记录
         List<HistoryEntry> historyLog = GlobalDataManager.GetInstance().GetHistoryLog();
         if (historyLog != null)
         {
             saveData.HistoryLog = new List<HistoryEntry>(historyLog);
             VNDebug.LogVerbose($"[VNManager] 保存了 {historyLog.Count} 条历史记录");
-            
+
             // 验证历史记录数据
             if (historyLog.Count > 0)
             {
@@ -1383,11 +1405,123 @@ public class VNManager : BaseManager<VNManager>
             saveData.HistoryLog = new List<HistoryEntry>();
             Debug.LogWarning("[VNManager] 历史记录为null，已初始化为空列表");
         }
-        
-        saveData.SaveTime = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        saveData.ScreenshotPath = SaveManager.GetInstance().SaveCachedScreenshot(slotIndex);
 
-        SaveManager.GetInstance().SaveGame(slotIndex, saveData);
+        return saveData;
+    }
+
+    // ==================== 自动存档 ====================
+
+    /// <summary>
+    /// 触发自动存档（异步：等帧末截图后落盘；快照在触发时刻同步捕获以保证状态正确）
+    /// </summary>
+    /// <param name="reason">触发原因（日志用）</param>
+    public void TriggerAutoSave(string reason)
+    {
+        EnsureAutoSaveConfigLoaded();
+        if (!SaveManager.AutoSaveConfig.Enabled) return;
+        if (lastLine == null) return;               // 无实际进度（如新游戏启动的 loadscript）不保存
+        if (_autoSaveCoroutine != null) return;     // 上一次自动保存仍在进行，跳过本次
+
+        // 关键：此处同步捕获快照。loadscript/jump 等命令在同帧内同步改写状态，
+        // 协程等到帧末再构建会拿到切换后的错误状态。
+        SaveData snapshot = BuildSaveData();
+
+        VNDebug.LogVerbose($"[VNManager] 自动存档触发: {reason} (剧本: {currentScriptName}, 行: {snapshot.LineID})");
+        _autoSaveCoroutine = MonoManager.GetInstance().StartCoroutine(AutoSaveWriteRoutine(snapshot));
+    }
+
+    /// <summary>
+    /// 选项选择后触发自动存档（保存选择行进度，读档后重新弹出选项）
+    /// </summary>
+    public void TriggerAutoSaveOnChoice()
+    {
+        EnsureAutoSaveConfigLoaded();
+        if (!SaveManager.AutoSaveConfig.Enabled || !SaveManager.AutoSaveConfig.OnChoice) return;
+        TriggerAutoSave("选项选择");
+    }
+
+    /// <summary>
+    /// 跨剧本切换(loadscript)前触发自动存档（保存上一个剧本的进度）
+    /// </summary>
+    public void TriggerAutoSaveOnScriptSwitch()
+    {
+        EnsureAutoSaveConfigLoaded();
+        if (!SaveManager.AutoSaveConfig.Enabled || !SaveManager.AutoSaveConfig.OnScriptSwitch) return;
+        if (lastLine == null) return; // 新游戏首次 loadscript 无进度可存
+        TriggerAutoSave("跨剧本切换");
+    }
+
+    /// <summary>
+    /// 自动存档落盘协程：等本行画面渲染完成后截图并写入自动档文件
+    /// </summary>
+    private IEnumerator AutoSaveWriteRoutine(SaveData snapshot)
+    {
+        yield return new WaitForEndOfFrame();
+
+        if (snapshot != null)
+        {
+            SaveManager.GetInstance().CaptureCurrentScreen();
+            snapshot.SaveTime = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            snapshot.ScreenshotPath = SaveManager.GetInstance().SaveCachedAutoScreenshot();
+            SaveManager.GetInstance().SaveAutoGame(snapshot);
+        }
+
+        _autoSaveCoroutine = null;
+    }
+
+    /// <summary>
+    /// 立即保存自动档（同步；供玩家在 Save 面板手动覆盖自动档时使用，
+    /// 截图使用打开面板前缓存的画面）
+    /// </summary>
+    public void SaveAutoGameNow()
+    {
+        if (lastLine == null) return;
+
+        SaveData saveData = BuildSaveData();
+        saveData.SaveTime = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        saveData.ScreenshotPath = SaveManager.GetInstance().SaveCachedAutoScreenshot();
+
+        SaveManager.GetInstance().SaveAutoGame(saveData);
+    }
+
+    /// <summary>
+    /// 行数计数：每播放一行 +1，达到配置间隔即触发自动存档
+    /// </summary>
+    private void TickAutoSaveOnLinePlayed()
+    {
+        EnsureAutoSaveConfigLoaded();
+        var cfg = SaveManager.AutoSaveConfig;
+        if (!cfg.Enabled || cfg.EveryLines <= 0) return;
+
+        autoSaveLineCounter++;
+        if (autoSaveLineCounter >= cfg.EveryLines)
+        {
+            autoSaveLineCounter = 0;
+            TriggerAutoSave($"每 {cfg.EveryLines} 行");
+        }
+    }
+
+    /// <summary>
+    /// 确保自动存档配置已从 SaveLoadPanel 加载：
+    /// 面板可能从未实例化（自动保存触发早于面板首次打开），
+    /// 此时加载面板预制体（不实例化）读取 Inspector 序列化值。
+    /// </summary>
+    private void EnsureAutoSaveConfigLoaded()
+    {
+        if (_autoSaveConfigEnsured) return;
+        _autoSaveConfigEnsured = true;
+        if (SaveManager.AutoSaveConfig.LoadedFromPanel) return;
+
+        var prefab = VNUIPrefabs.Load(VNUIPrefabKeys.SaveLoadPanel, VNUIPrefabKeys.SaveLoadPanel);
+        if (prefab != null)
+        {
+            var panel = prefab.GetComponent<SaveLoadPanel>();
+            if (panel != null)
+            {
+                panel.PushAutoSaveConfigToManager();
+                VNDebug.LogVerbose("[VNManager] 已从 SaveLoadPanel 预制体加载自动存档配置");
+            }
+        }
     }
 
     private void AddHistoryEntry(string speaker, string text, string voiceID)

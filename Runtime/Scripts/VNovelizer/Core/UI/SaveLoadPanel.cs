@@ -9,6 +9,23 @@ public class SaveLoadPanel : BasePanel
     // 面板类型
     public enum Mode { Save, Load }
 
+    // 自动存档槽的虚拟索引（不占用 0~59 手动槽；回调据此路由）
+    private const int AUTO_SLOT_INDEX = -1;
+
+    [Header("自动存档设置")]
+    [Tooltip("启用自动存档系统（每 N 行 / 选项选择后 / 跨剧本切换前）")]
+    [SerializeField] private bool enableAutoSave = true;
+    [Tooltip("每播放 N 行剧情自动保存一次")]
+    [SerializeField] private int autoSaveEveryLines = 10;
+    [Tooltip("玩家做出选项选择后自动保存")]
+    [SerializeField] private bool autoSaveOnChoice = true;
+    [Tooltip("跨剧本切换(loadscript)前自动保存")]
+    [SerializeField] private bool autoSaveOnScriptSwitch = true;
+
+    [Header("截图缩略图")]
+    [Tooltip("存档截图缩略图的最长边像素（保存时下采样；文件更小、面板加载更快）")]
+    [SerializeField] private int screenshotThumbnailSize = 480;
+
     // UI组件
     private Button closeButton;
     private TextMeshProUGUI modeTitle;
@@ -26,6 +43,10 @@ public class SaveLoadPanel : BasePanel
 
     // 存档槽位预制体
     private GameObject saveSlotPrefab;
+
+    // 自动存档槽（固定在容器第一位，不随翻页销毁）
+    private SaveSlot autoSaveSlot;
+    private const string AUTO_SLOT_NAME = "AutoSaveSlot";
 
     // 存档数据（延迟初始化，在Awake中根据MAX_SAVE_SLOTS创建）
     private SaveData[] saveDatas;
@@ -57,6 +78,54 @@ public class SaveLoadPanel : BasePanel
 
         // 加载存档槽位预制体（模板覆写优先，fallback 经资源服务链；键即默认地址）
         saveSlotPrefab = VNUIPrefabs.Load(VNUIPrefabKeys.SaveSlot, VNUIPrefabKeys.SaveSlot);
+
+        // 自动存档：把 Inspector 配置推送到运行时（VNManager 触发逻辑读取）
+        PushAutoSaveConfigToManager();
+
+        // 截图缩略图尺寸（保存时下采样）
+        SaveManager.ThumbnailMaxSize = Mathf.Max(64, screenshotThumbnailSize);
+
+        // 自动存档槽：预制体中不存在则自动创建，固定在容器第一位
+        EnsureAutoSaveSlot();
+    }
+
+    /// <summary>
+    /// 把本预制体上配置的自动存档参数推送到 SaveManager（供 VNManager 触发逻辑读取）
+    /// </summary>
+    public void PushAutoSaveConfigToManager()
+    {
+        SaveManager.ApplyAutoSaveConfig(enableAutoSave, autoSaveEveryLines, autoSaveOnChoice, autoSaveOnScriptSwitch);
+    }
+
+    /// <summary>
+    /// 确保自动存档槽节点存在：预制体中手工放置或此处自动创建（基于 SaveSlot 模板），
+    /// 固定位于 SaveSlotsContainer 第一位。
+    /// </summary>
+    private void EnsureAutoSaveSlot()
+    {
+        if (saveSlotsContainer == null || saveSlotPrefab == null) return;
+
+        Transform autoSlotTrans = saveSlotsContainer.Find(AUTO_SLOT_NAME);
+        if (autoSlotTrans == null)
+        {
+            GameObject autoObj = Instantiate(saveSlotPrefab, saveSlotsContainer);
+            autoObj.name = AUTO_SLOT_NAME;
+            autoSlotTrans = autoObj.transform;
+        }
+        autoSlotTrans.SetSiblingIndex(0);
+
+        autoSaveSlot = autoSlotTrans.GetComponent<SaveSlot>();
+        if (autoSaveSlot == null) autoSaveSlot = autoSlotTrans.gameObject.AddComponent<SaveSlot>();
+    }
+
+    /// <summary>
+    /// 刷新自动存档槽显示（打开面板 / 模式切换 / 保存删除后调用）
+    /// </summary>
+    private void RefreshAutoSaveSlot()
+    {
+        if (autoSaveSlot == null) return;
+        SaveData autoData = SaveManager.GetInstance().LoadAutoGame();
+        autoSaveSlot.Init(AUTO_SLOT_INDEX, autoData, currentMode, OnSaveSlotClick, OnDeleteSlotClick, true);
     }
 
     protected override void OnEnable()
@@ -97,6 +166,9 @@ public class SaveLoadPanel : BasePanel
         // 加载存档数据
         LoadAllSaveDatas();
 
+        // 刷新自动存档槽（独立于手动槽数据）
+        RefreshAutoSaveSlot();
+
         // 更新页面
         UpdatePage();
     }
@@ -121,37 +193,62 @@ public class SaveLoadPanel : BasePanel
     }
 
     /// <summary>
+    /// 总页数：格数 = 自动档(1) + 手动槽(MAX_SAVE_SLOTS)，每页 12 格。
+    /// 虚拟格 0 = 自动存档（仅第一页第一位），虚拟格 v (v≥1) = 手动槽 (v-1)。
+    /// </summary>
+    private int TotalPages => Mathf.Max(1, Mathf.CeilToInt((float)(MAX_SAVE_SLOTS + 1) / SLOTS_PER_PAGE));
+
+    /// <summary>
     /// 更新页面
     /// </summary>
     private void UpdatePage()
     {
-        // 清空现有槽位
+        // 清空现有槽位（跳过固定的自动存档槽）
         foreach (Transform child in saveSlotsContainer)
         {
+            if (autoSaveSlot != null && child == autoSaveSlot.transform) continue;
             Destroy(child.gameObject);
         }
 
         // 计算页面信息
-        int totalPages = Mathf.CeilToInt((float)MAX_SAVE_SLOTS / SLOTS_PER_PAGE);
-        if (totalPages == 0) totalPages = 1; // 至少有一页
+        int totalPages = TotalPages;
         pageText.text = string.Format("{0}/{1}", currentPage + 1, totalPages);
 
         // 更新按钮状态
         prevPageButton.interactable = currentPage > 0;
         nextPageButton.interactable = currentPage < totalPages - 1;
 
-        // 生成当前页的存档槽位
-        int startIndex = currentPage * SLOTS_PER_PAGE;
-        int endIndex = Mathf.Min(startIndex + SLOTS_PER_PAGE, MAX_SAVE_SLOTS);
+        // 当前页对应的虚拟格区间 [startCell, endCell)
+        int totalCells = MAX_SAVE_SLOTS + 1;
+        int startCell = currentPage * SLOTS_PER_PAGE;
+        int endCell = Mathf.Min(startCell + SLOTS_PER_PAGE, totalCells);
 
-        for (int i = startIndex; i < endIndex; i++)
+        // 自动存档槽：仅第一页的第一格显示，其他页隐藏（保证每页恰好 12 格）
+        bool showAutoOnThisPage = startCell == 0 && autoSaveSlot != null;
+        if (autoSaveSlot != null)
         {
+            autoSaveSlot.gameObject.SetActive(showAutoOnThisPage);
+        }
+
+        // 生成当前页的手动槽位（虚拟格 v ≥ 1 映射物物理槽 v-1）
+        for (int cell = startCell; cell < endCell; cell++)
+        {
+            if (cell == 0) continue; // 虚拟格 0 = 自动档，已处理
+
+            int manualIndex = cell - 1;
             GameObject slotObj = Instantiate(saveSlotPrefab, saveSlotsContainer);
             SaveSlot slot = slotObj.GetComponent<SaveSlot>();
             if (slot == null) slot = slotObj.AddComponent<SaveSlot>();
 
             // 初始化，传入点击回调和删除回调
-            slot.Init(i, saveDatas[i], currentMode, OnSaveSlotClick, OnDeleteSlotClick);
+            slot.Init(manualIndex, saveDatas[manualIndex], currentMode, OnSaveSlotClick, OnDeleteSlotClick);
+        }
+
+        // 自动存档槽保持在第一位；重新 Init 以恢复被禁用时中断的截图加载协程
+        if (showAutoOnThisPage)
+        {
+            RefreshAutoSaveSlot();
+            autoSaveSlot.transform.SetSiblingIndex(0);
         }
     }
 
@@ -227,6 +324,32 @@ public class SaveLoadPanel : BasePanel
     // }
     private void OnSaveSlotClick(int slotIndex)
     {
+        // 自动存档槽路由
+        if (slotIndex == AUTO_SLOT_INDEX)
+        {
+            if (currentMode == Mode.Save)
+            {
+                // 手动覆盖自动档（截图使用打开面板前缓存的画面）
+                VNManager.GetInstance().SaveAutoGameNow();
+                RefreshAutoSaveSlot();
+            }
+            else
+            {
+                if (_isLoadingGame) return;
+
+                SaveData autoData = SaveManager.GetInstance().LoadAutoGame();
+                if (autoData != null)
+                {
+                    StartCoroutine(LoadGameFlow(autoData));
+                }
+                else
+                {
+                    Debug.Log("自动存档为空，无法加载。");
+                }
+            }
+            return;
+        }
+
         if (currentMode == Mode.Save)
         {
             // 保存游戏
@@ -319,6 +442,24 @@ public class SaveLoadPanel : BasePanel
     /// </summary>
     private void OnDeleteSlotClick(int slotIndex)
     {
+        // 自动存档槽路由
+        if (slotIndex == AUTO_SLOT_INDEX)
+        {
+            UIManager.GetInstance().Show<ConfirmPanel>((panel) =>
+            {
+                panel.Show(
+                    "Delete",
+                    $"Are you sure you want to delete the Auto Save?",
+                    () => {
+                        SaveManager.GetInstance().DeleteAutoSave();
+                        RefreshAutoSaveSlot();
+                    },
+                    null
+                );
+            });
+            return;
+        }
+
         // 弹出确认框
         UIManager.GetInstance().Show<ConfirmPanel>((panel) =>
         {
@@ -395,7 +536,7 @@ public class SaveLoadPanel : BasePanel
 
     private void OnNextPageButtonClick()
     {
-        int totalPages = Mathf.CeilToInt((float)MAX_SAVE_SLOTS / SLOTS_PER_PAGE);
+        int totalPages = TotalPages;
         if (currentPage < totalPages - 1)
         {
             currentPage++;

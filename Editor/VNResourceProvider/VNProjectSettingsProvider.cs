@@ -181,23 +181,22 @@ internal class VNProjectSettingsProvider : SettingsProvider
     private void DrawSecurityPage()
     {
         EditorGUILayout.LabelField("AES 存档加密", EditorStyles.boldLabel);
-        DrawFields("UseAES", "Key", "IV");
-        // GenerateRandomKey 按钮：复用完整 Inspector 渲染
-        if (_editor != null)
+        DrawFields("UseAES");
+
+        if (!_config.UseAES)
         {
-            EditorGUILayout.Space(4);
-            foreach (var target in _editor.targets)
-            {
-                var so = new SerializedObject(target);
-                var iter = so.GetIterator();
-                iter.NextVisible(true);
-                while (iter.NextVisible(false))
-                {
-                    if (iter.name == "Key" || iter.name == "IV" || iter.name == "UseAES") continue;
-                    EditorGUILayout.PropertyField(iter, true);
-                }
-                so.ApplyModifiedProperties();
-            }
+            EditorGUILayout.HelpBox("开发期建议关闭；发布前开启并配置密钥。", MessageType.Info);
+            return;
+        }
+
+        DrawFields("Key", "IV");
+
+        EditorGUILayout.Space(4);
+        if (GUILayout.Button("生成随机密钥与偏移向量"))
+        {
+            _config.GenerateRandomKey();
+            EditorUtility.SetDirty(_config);
+            AssetDatabase.SaveAssets();
         }
     }
 

@@ -22,8 +22,13 @@ public class SaveSlot : MonoBehaviour
     private int slotIndex;
     private SaveData saveData;
     private SaveLoadPanel.Mode mode;
+    private bool isAutoSaveSlot = false; // 自动存档槽：SlotText 固定 [自动]，不参与普通编号
     private UnityAction<int> onClickCallback;
     private UnityAction<int> onDeleteCallback;
+
+    // 动态加载的截图资源（槽位销毁/刷新时必须手动释放，否则泄漏）
+    private Texture2D _loadedTexture;
+    private Sprite _loadedSprite;
 
     // 自我初始化
     private void Awake()
@@ -41,11 +46,12 @@ public class SaveSlot : MonoBehaviour
     /// 初始化存档槽位
     /// </summary>
     public void Init(int index, SaveData data, SaveLoadPanel.Mode mode,
-                     UnityAction<int> onClick, UnityAction<int> onDelete)
+                     UnityAction<int> onClick, UnityAction<int> onDelete, bool isAuto = false)
     {
         this.slotIndex = index;
         this.saveData = data;
         this.mode = mode;
+        this.isAutoSaveSlot = isAuto;
         this.onClickCallback = onClick;
         this.onDeleteCallback = onDelete;
 
@@ -72,7 +78,7 @@ public class SaveSlot : MonoBehaviour
     /// </summary>
     private void UpdateDisplay()
     {
-        if (slotText != null) slotText.text = $"[{slotIndex + 1}]";
+        if (slotText != null) slotText.text = isAutoSaveSlot ? "[自动]" : $"[{slotIndex + 1}]";
 
         if (saveData != null)
         {
@@ -119,9 +125,43 @@ public class SaveSlot : MonoBehaviour
     {
         if (screenshotImage != null)
         {
+            ReleaseLoadedVisual();
             screenshotImage.color = Color.gray;
             screenshotImage.sprite = null;
         }
+    }
+
+    /// <summary>
+    /// 应用加载完成的截图并登记资源所有权
+    /// </summary>
+    private void SetLoadedScreenshot(Sprite sprite, Texture2D texture)
+    {
+        if (screenshotImage == null)
+        {
+            // Image 丢失时立即释放，避免孤儿纹理
+            if (sprite != null) Destroy(sprite);
+            if (texture != null) Destroy(texture);
+            return;
+        }
+        ReleaseLoadedVisual();
+        _loadedSprite = sprite;
+        _loadedTexture = texture;
+        screenshotImage.sprite = sprite;
+        screenshotImage.color = Color.white;
+    }
+
+    /// <summary>
+    /// 释放本槽位动态加载的截图资源（槽位每次翻页都会销毁重建，不释放会持续泄漏）
+    /// </summary>
+    private void ReleaseLoadedVisual()
+    {
+        if (_loadedSprite != null) { Destroy(_loadedSprite); _loadedSprite = null; }
+        if (_loadedTexture != null) { Destroy(_loadedTexture); _loadedTexture = null; }
+    }
+
+    private void OnDestroy()
+    {
+        ReleaseLoadedVisual();
     }
 
     /// <summary>
@@ -144,10 +184,18 @@ public class SaveSlot : MonoBehaviour
             {
                 if (screenshotImage != null)
                 {
-                    Texture2D texture = ((UnityEngine.Networking.DownloadHandlerTexture)www.downloadHandler).texture;
+                    Texture2D texture = UnityEngine.Networking.DownloadHandlerTexture.GetContent(www);
+
+                    // 兼容旧版全分辨率截图：下采样后再显示，避免整页 12 张全尺寸纹理挤占带宽与显存
+                    Texture2D display = SaveManager.CreateThumbnail(texture, SaveManager.ThumbnailMaxSize);
+                    if (display != null)
+                    {
+                        Destroy(texture); // 只保留缩小的显示副本
+                        texture = display;
+                    }
+
                     Sprite sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
-                    screenshotImage.sprite = sprite;
-                    screenshotImage.color = Color.white;
+                    SetLoadedScreenshot(sprite, texture);
                 }
             }
         }

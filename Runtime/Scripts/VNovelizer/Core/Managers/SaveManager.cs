@@ -4,6 +4,19 @@ using System.IO;
 using UnityEngine;
 
 /// <summary>
+/// 自动存档运行时配置（默认值兜底；由 SaveLoadPanel 预制体上的 Inspector 字段推送覆盖）
+/// </summary>
+public class AutoSaveConfigData
+{
+    /// <summary>是否已从 SaveLoadPanel 预制体/实例应用过配置（避免重复加载）</summary>
+    public bool LoadedFromPanel = false;
+    public bool Enabled = true;
+    public int EveryLines = 10;
+    public bool OnChoice = true;
+    public bool OnScriptSwitch = true;
+}
+
+/// <summary>
 /// 存档管理器
 /// </summary>
 public class SaveManager : BaseManager<SaveManager>
@@ -11,6 +24,19 @@ public class SaveManager : BaseManager<SaveManager>
     private const string SAVE_DATA_DIR = "SaveData";
     private const string SCREENSHOT_DIR = "Screenshots";
     private const int MAX_SAVE_SLOTS = 60;
+
+    // 自动存档（独立于 60 个手动槽位之外的专用文件）
+    private const string AUTO_SAVE_FILE = "save_auto.json";
+    private const string AUTO_SCREENSHOT_FILE = "screenshot_auto.png";
+
+    /// <summary>自动存档配置（运行时由 SaveLoadPanel 推送；面板未加载时使用默认值）</summary>
+    public static readonly AutoSaveConfigData AutoSaveConfig = new AutoSaveConfigData();
+
+    /// <summary>
+    /// 截图缩略图最长边像素（保存时下采样；由 SaveLoadPanel.Inspector 推送，默认 480）。
+    /// 全分辨率截图文件大、解码慢，是存档面板卡顿的主因。
+    /// </summary>
+    public static int ThumbnailMaxSize = 480;
 
     private Texture2D _tempScreenshot;
     public void Init()
@@ -40,9 +66,30 @@ public class SaveManager : BaseManager<SaveManager>
         if (slotIndex < 0 || slotIndex >= MAX_SAVE_SLOTS)
             return;
 
-        string savePath = GetSaveFilePath(slotIndex);
+        if (WriteSaveData(GetSaveFilePath(slotIndex), saveData))
+        {
+            EventCenter.GetInstance().EventTrigger("GameSaved", slotIndex);
+        }
+    }
 
+    /// <summary>
+    /// 保存自动存档（独立文件，不占用 60 个手动槽位）
+    /// </summary>
+    public void SaveAutoGame(SaveData saveData)
+    {
+        if (saveData == null) return;
 
+        if (WriteSaveData(GetAutoSaveFilePath(), saveData))
+        {
+            EventCenter.GetInstance().EventTrigger("GameSaved", -1);
+        }
+    }
+
+    /// <summary>
+    /// 通用的存档写入：序列化 → 可选 AES 加密 → 落盘
+    /// </summary>
+    private bool WriteSaveData(string savePath, SaveData saveData)
+    {
         string dir = Path.GetDirectoryName(savePath);
         if (!Directory.Exists(dir))
         {
@@ -58,9 +105,9 @@ public class SaveManager : BaseManager<SaveManager>
         catch (System.Exception e)
         {
             Debug.LogError($"[SaveManager] 序列化失败: {e.Message}\n{e.StackTrace}");
-            return;
+            return false;
         }
-        
+
         string contentToWrite = json;
 
         if (VNProjectConfig.Instance.UseAES)
@@ -73,7 +120,7 @@ public class SaveManager : BaseManager<SaveManager>
             catch (System.Exception e)
             {
                 Debug.LogError($"[SaveManager] 加密失败: {e.Message}\n{e.StackTrace}");
-                return;
+                return false;
             }
         }
 
@@ -81,16 +128,15 @@ public class SaveManager : BaseManager<SaveManager>
         {
             File.WriteAllText(savePath, contentToWrite);
             Debug.Log($"[SaveManager] 存档保存成功: {savePath}");
+            return true;
         }
         catch (System.Exception e)
         {
             Debug.LogError($"[SaveManager] 文件写入失败: {e.Message}\n{e.StackTrace}");
-            return;
+            return false;
         }
-
-        EventCenter.GetInstance().EventTrigger("GameSaved", slotIndex);
     }
-    
+
     /// <summary>
     /// 加载游戏
     /// </summary>
@@ -100,8 +146,23 @@ public class SaveManager : BaseManager<SaveManager>
     {
         if (slotIndex < 0 || slotIndex >= MAX_SAVE_SLOTS)
             return null;
-        
-        string savePath = GetSaveFilePath(slotIndex);
+
+        return ReadSaveData(GetSaveFilePath(slotIndex));
+    }
+
+    /// <summary>
+    /// 加载自动存档（独立文件）
+    /// </summary>
+    public SaveData LoadAutoGame()
+    {
+        return ReadSaveData(GetAutoSaveFilePath());
+    }
+
+    /// <summary>
+    /// 通用的存档读取：读文件 → 可选 AES 解密 → 反序列化（含兼容重试）
+    /// </summary>
+    private SaveData ReadSaveData(string savePath)
+    {
         if (File.Exists(savePath))
         {
             string fileContent = File.ReadAllText(savePath);
@@ -116,12 +177,8 @@ public class SaveManager : BaseManager<SaveManager>
                 }
                 else
                 {
-                    Debug.LogWarning($"[SaveManager] 存档 {slotIndex} 解密失败，尝试按明文读取。");
+                    Debug.LogWarning($"[SaveManager] 存档 {Path.GetFileName(savePath)} 解密失败，尝试按明文读取。");
                 }
-            }
-            else
-            { 
-            
             }
             try
             {
@@ -135,11 +192,51 @@ public class SaveManager : BaseManager<SaveManager>
                 if (!string.IsNullOrEmpty(retryDecrypt))
                     return LitJson.JsonMapper.ToObject<SaveData>(retryDecrypt);
 
-                Debug.LogError($"存档 {slotIndex} 损坏或格式无法识别。");
+                Debug.LogError($"存档 {Path.GetFileName(savePath)} 损坏或格式无法识别。");
                 return null;
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// 检查自动存档是否存在
+    /// </summary>
+    public bool IsAutoSaveExists()
+    {
+        return File.Exists(GetAutoSaveFilePath());
+    }
+
+    /// <summary>
+    /// 删除自动存档（存档文件 + 截图）
+    /// </summary>
+    public void DeleteAutoSave()
+    {
+        string savePath = GetAutoSaveFilePath();
+        if (File.Exists(savePath))
+        {
+            File.Delete(savePath);
+        }
+
+        string screenshotPath = GetAutoScreenshotFilePath();
+        if (File.Exists(screenshotPath))
+        {
+            File.Delete(screenshotPath);
+        }
+
+        EventCenter.GetInstance().EventTrigger("SaveDeleted", -1);
+    }
+
+    /// <summary>
+    /// 应用自动存档配置（由 SaveLoadPanel 的 Inspector 字段推送）
+    /// </summary>
+    public static void ApplyAutoSaveConfig(bool enabled, int everyLines, bool onChoice, bool onScriptSwitch)
+    {
+        AutoSaveConfig.Enabled = enabled;
+        AutoSaveConfig.EveryLines = Mathf.Max(1, everyLines);
+        AutoSaveConfig.OnChoice = onChoice;
+        AutoSaveConfig.OnScriptSwitch = onScriptSwitch;
+        AutoSaveConfig.LoadedFromPanel = true;
     }
     
     /// <summary>
@@ -258,6 +355,22 @@ public class SaveManager : BaseManager<SaveManager>
     {
         return Path.Combine(Application.persistentDataPath, SCREENSHOT_DIR, "screenshot_" + slotIndex + ".png");
     }
+
+    /// <summary>
+    /// 获取自动存档文件路径
+    /// </summary>
+    private string GetAutoSaveFilePath()
+    {
+        return Path.Combine(Application.persistentDataPath, SAVE_DATA_DIR, AUTO_SAVE_FILE);
+    }
+
+    /// <summary>
+    /// 获取自动存档截图路径
+    /// </summary>
+    private string GetAutoScreenshotFilePath()
+    {
+        return Path.Combine(Application.persistentDataPath, SCREENSHOT_DIR, AUTO_SCREENSHOT_FILE);
+    }
     
     /// <summary>
     /// 获取最大存档槽位数
@@ -310,19 +423,68 @@ public class SaveManager : BaseManager<SaveManager>
 
     public string SaveCachedScreenshot(int slotIndex)
     {
+        return WriteScreenshotThumbnail(GetScreenshotFilePath(slotIndex));
+    }
+
+    /// <summary>
+    /// 将缓存截图写入自动存档专用截图文件
+    /// </summary>
+    public string SaveCachedAutoScreenshot()
+    {
+        return WriteScreenshotThumbnail(GetAutoScreenshotFilePath());
+    }
+
+    /// <summary>
+    /// 将缓存截图下采样为缩略图后写入文件：
+    /// 全分辨率 PNG（如 1920×1080，单张数 MB）会显著拖慢存档面板的批量加载，
+    /// 缩略图（默认最长边 480px，几十 KB）可实现近乎瞬时的槽位预览。
+    /// </summary>
+    private string WriteScreenshotThumbnail(string screenshotPath)
+    {
         if (_tempScreenshot == null)
         {
             Debug.LogWarning("没有缓存的截图，尝试重新截取（可能会包含UI）");
             CaptureCurrentScreen();
         }
 
-        string screenshotPath = GetScreenshotFilePath(slotIndex);
         string dir = Path.GetDirectoryName(screenshotPath);
         if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
-        byte[] bytes = _tempScreenshot.EncodeToPNG();
+        Texture2D thumb = CreateThumbnail(_tempScreenshot, ThumbnailMaxSize);
+        Texture2D target = thumb != null ? thumb : _tempScreenshot; // 源图比目标更小时直接用原图
+
+        byte[] bytes = target.EncodeToPNG();
         File.WriteAllBytes(screenshotPath, bytes);
 
+        if (thumb != null) Object.Destroy(thumb); // 临时缩略图纹理，编码完即释放
         return screenshotPath;
+    }
+
+    /// <summary>
+    /// 生成缩略图：保持宽高比缩放至最长边 ≤ maxSize。
+    /// 源图尺寸不超过 maxSize 时返回 null（无需缩放）。
+    /// </summary>
+    public static Texture2D CreateThumbnail(Texture2D source, int maxSize)
+    {
+        if (source == null || maxSize <= 0 || source.width <= 0 || source.height <= 0)
+            return null;
+
+        float scale = Mathf.Min((float)maxSize / source.width, (float)maxSize / source.height);
+        if (scale >= 1f) return null; // 源图已足够小
+
+        int w = Mathf.Max(2, Mathf.RoundToInt(source.width * scale));
+        int h = Mathf.Max(2, Mathf.RoundToInt(source.height * scale));
+
+        RenderTexture rt = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+        Graphics.Blit(source, rt);
+
+        RenderTexture prev = RenderTexture.active;
+        RenderTexture.active = rt;
+        Texture2D thumb = new Texture2D(w, h, TextureFormat.RGB24, false);
+        thumb.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+        thumb.Apply(false, false);
+        RenderTexture.active = prev;
+        RenderTexture.ReleaseTemporary(rt);
+        return thumb;
     }
 }

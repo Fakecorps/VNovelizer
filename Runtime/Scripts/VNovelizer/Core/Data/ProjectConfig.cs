@@ -179,7 +179,7 @@ public class VNProjectConfig : ScriptableObject
     public string IV = "1234567890123456";
 
     [Order(630), BoxGroup("六、AES 存档加密"), ShowIf("UseAES"), Button, LabelText("")]
-    private void GenerateRandomKey()
+    public void GenerateRandomKey()
     {
         const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         var random = new System.Random();
