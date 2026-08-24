@@ -30,5 +30,8 @@ public class SaveData
     
     // 元数据
     public string SaveTime;
+    /// <summary>保存时刻的高精度 Ticks（DateTime.Ticks）。SaveTime 仅秒级精度，
+    /// 同秒内重复保存会导致 UI 层"内容未变"误判；以此字段做变化比对（旧档缺省 0，必然触发刷新）。</summary>
+    public long SaveTick;
     public string ScreenshotPath;
 }

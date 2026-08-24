@@ -28,18 +28,13 @@ public class SettingsPanel : BasePanel
     public bool enableResolution = true;
 
     [Header("UI控件引用")]
-    // 分页按钮
-    [SerializeField] private Button volumePageBtn;
-    [SerializeField] private Button textPageBtn;
-    [SerializeField] private Button displayPageBtn;
-    
-    // 页面容器
-    private GameObject volumePage;
-    private GameObject textPage;
-    private GameObject displayPage;
-    
-    // 当前页面索引（0=音量, 1=文本, 2=显示）
-    private int currentPageIndex = 0;
+    // （已移除分页 TabsBtn：所有设置项平铺在同一页；
+    //   VolumePage/TextPage/DisplayPage 容器若在 prefab 中保留则由 ResolveGroupRoot 强制显示，删除则全局查找）
+
+    // 自动播放间隔范围与精度：0.1s ~ 5s，步进 0.1s（显示保留一位小数）
+    private const float AutoSpeedMin = 0.1f;
+    private const float AutoSpeedMax = 5f;
+    private const float AutoSpeedStep = 0.1f;
 
     // 音频设置（在VolumePage内）
     [SerializeField] private GameObject masterVolumeGroup;
@@ -92,106 +87,106 @@ public class SettingsPanel : BasePanel
         
         // 绑定事件
         BindEvents();
-        
-        // 初始化页面状态：默认显示音量页面，隐藏其他页面
-        InitializePageStates();
     }
-    
-    /// <summary>
-    /// 初始化页面状态
-    /// </summary>
-    private void InitializePageStates()
-    {
-        // 默认显示音量页面
-        if (volumePage != null) volumePage.SetActive(true);
-        if (textPage != null) textPage.SetActive(false);
-        if (displayPage != null) displayPage.SetActive(false);
-        currentPageIndex = 0;
-    }
-    
+
     /// <summary>
     /// 初始化控件
     /// </summary>
     private void InitializeControls()
     {
-        // 查找分页按钮
-        volumePageBtn = GetControl<Button>("VolumePageBtn");
-        textPageBtn = GetControl<Button>("TextPageBtn");
-        displayPageBtn = GetControl<Button>("DisplayPageBtn");
-        
-        // 查找页面容器
-        volumePage = FindControlGroup("VolumePage");
-        textPage = FindControlGroup("TextPage");
-        displayPage = FindControlGroup("DisplayPage");
-        
-        // 音频设置组（在VolumePage内）
-        if (volumePage != null)
+        // （已移除分页 TabsBtn 查找）
+
+        // 查找页面/分组容器（单页布局：容器存在则强制显示；prefab 已删除容器时返回面板根，group 直接全局查找）
+        Transform volumeRoot = ResolveGroupRoot("VolumePage");
+        Transform textRoot = ResolveGroupRoot("TextPage");
+        Transform displayRoot = ResolveGroupRoot("DisplayPage");
+
+        // 音频设置组
         {
-            masterVolumeGroup = FindControlGroupInParent(volumePage.transform, "MasterVolumeGroup");
+            masterVolumeGroup = FindControlGroupInParent(volumeRoot, "MasterVolumeGroup");
             if (masterVolumeGroup != null)
             {
                 masterVolumeSlider = masterVolumeGroup.GetComponentInChildren<Slider>();
                 masterVolumeText = FindValueText(masterVolumeGroup.transform);
             }
-            
-            bgmVolumeGroup = FindControlGroupInParent(volumePage.transform, "BGMVolumeGroup");
+
+            bgmVolumeGroup = FindControlGroupInParent(volumeRoot, "BGMVolumeGroup");
             if (bgmVolumeGroup != null)
             {
                 bgmVolumeSlider = bgmVolumeGroup.GetComponentInChildren<Slider>();
                 bgmVolumeText = FindValueText(bgmVolumeGroup.transform);
             }
-            
-            voiceVolumeGroup = FindControlGroupInParent(volumePage.transform, "VoiceVolumeGroup");
+
+            voiceVolumeGroup = FindControlGroupInParent(volumeRoot, "VoiceVolumeGroup");
             if (voiceVolumeGroup != null)
             {
                 voiceVolumeSlider = voiceVolumeGroup.GetComponentInChildren<Slider>();
                 voiceVolumeText = FindValueText(voiceVolumeGroup.transform);
             }
-            
-            sfxVolumeGroup = FindControlGroupInParent(volumePage.transform, "SFXVolumeGroup");
+
+            sfxVolumeGroup = FindControlGroupInParent(volumeRoot, "SFXVolumeGroup");
             if (sfxVolumeGroup != null)
             {
                 sfxVolumeSlider = sfxVolumeGroup.GetComponentInChildren<Slider>();
                 sfxVolumeText = FindValueText(sfxVolumeGroup.transform);
             }
         }
-        
-        // 文本设置组（在TextPage内）
-        if (textPage != null)
+
+        // 文本设置组
         {
-            textSpeedGroup = FindControlGroupInParent(textPage.transform, "TextSpeedGroup");
+            textSpeedGroup = FindControlGroupInParent(textRoot, "TextSpeedGroup");
             if (textSpeedGroup != null)
             {
                 textSpeedSlider = textSpeedGroup.GetComponentInChildren<Slider>();
                 textSpeedText = FindValueText(textSpeedGroup.transform);
             }
-            
-            autoSpeedGroup = FindControlGroupInParent(textPage.transform, "AutoSpeedGroup");
+
+            autoSpeedGroup = FindControlGroupInParent(textRoot, "AutoSpeedGroup");
             if (autoSpeedGroup != null)
             {
                 autoSpeedSlider = autoSpeedGroup.GetComponentInChildren<Slider>();
                 autoSpeedText = FindValueText(autoSpeedGroup.transform);
+
+                // 强制约束范围 0.1~5s（覆盖 prefab 序列化值，保证与需求一致）
+                if (autoSpeedSlider != null)
+                {
+                    autoSpeedSlider.minValue = AutoSpeedMin;
+                    autoSpeedSlider.maxValue = AutoSpeedMax;
+                    autoSpeedSlider.wholeNumbers = false;
+                }
             }
         }
-        
-        // 显示设置组（在DisplayPage内）
-        if (displayPage != null)
+
+        // 显示设置组
         {
-            displayModeGroup = FindControlGroupInParent(displayPage.transform, "DisplayModeGroup");
+            displayModeGroup = FindControlGroupInParent(displayRoot, "DisplayModeGroup");
             if (displayModeGroup != null)
             {
                 displayModeDropdown = displayModeGroup.GetComponentInChildren<TMP_Dropdown>();
             }
-            
-            resolutionGroup = FindControlGroupInParent(displayPage.transform, "ResolutionGroup");
+
+            resolutionGroup = FindControlGroupInParent(displayRoot, "ResolutionGroup");
             if (resolutionGroup != null)
             {
                 resolutionDropdown = resolutionGroup.GetComponentInChildren<TMP_Dropdown>();
             }
         }
-        
+
         // 关闭按钮
         closeBtn = GetControl<Button>("CloseBtn");
+    }
+
+    /// <summary>
+    /// 解析分组查找根节点：
+    /// 单页布局下 Page 容器若仍存在则作为查找根并强制显示（保持层级整洁）；
+    /// 若 prefab 中已删除 Page 容器（内容直接平铺），则回落到面板根做全局递归查找。
+    /// </summary>
+    private Transform ResolveGroupRoot(string pageName)
+    {
+        GameObject page = FindControlGroup(pageName);
+        if (page == null) return transform;
+        page.SetActive(true);
+        return page.transform;
     }
     
     /// <summary>
@@ -303,14 +298,8 @@ public class SettingsPanel : BasePanel
     /// </summary>
     private void BindEvents()
     {
-        // 分页按钮事件
-        if (volumePageBtn != null)
-            volumePageBtn.onClick.AddListener(() => SwitchPage(0));
-        if (textPageBtn != null)
-            textPageBtn.onClick.AddListener(() => SwitchPage(1));
-        if (displayPageBtn != null)
-            displayPageBtn.onClick.AddListener(() => SwitchPage(2));
-        
+        // （已移除分页按钮事件）
+
         // 设置项事件
         if (masterVolumeSlider != null)
             masterVolumeSlider.onValueChanged.AddListener(OnMasterVolumeChanged);
@@ -418,7 +407,7 @@ public class SettingsPanel : BasePanel
     public override void ShowMe()
     {
         gameObject.SetActive(true);
-        
+
         // 加载全局数据（确保从保存的文件中加载）
         globalData = GlobalDataManager.GetInstance().GetGlobalData();
         if (globalData == null)
@@ -426,56 +415,14 @@ public class SettingsPanel : BasePanel
             Debug.LogError("[SettingsPanel] 无法获取GlobalData，请确保GlobalDataManager已初始化");
             return;
         }
-        
-        // 切换到默认页面（音量页面）
-        SwitchPage(0);
-        
+
+        // （单页布局：无页面切换）
+
         // 更新UI显示状态（根据bool开关）
         UpdateUIVisibility();
-        
+
         // 更新UI值（在设置值前临时移除事件监听，避免触发事件）
         UpdateUIFromGlobalData();
-    }
-    
-    /// <summary>
-    /// 切换页面
-    /// </summary>
-    /// <param name="pageIndex">页面索引（0=音量, 1=文本, 2=显示）</param>
-    private void SwitchPage(int pageIndex)
-    {
-        currentPageIndex = pageIndex;
-        
-        // 隐藏所有页面
-        if (volumePage != null) volumePage.SetActive(false);
-        if (textPage != null) textPage.SetActive(false);
-        if (displayPage != null) displayPage.SetActive(false);
-        
-        // 显示当前页面
-        switch (pageIndex)
-        {
-            case 0: // 音量页面
-                if (volumePage != null) volumePage.SetActive(true);
-                break;
-            case 1: // 文本页面
-                if (textPage != null) textPage.SetActive(true);
-                break;
-            case 2: // 显示页面
-                if (displayPage != null) displayPage.SetActive(true);
-                break;
-        }
-        
-        // 更新按钮状态（可选：高亮当前选中的按钮）
-        UpdatePageButtonStates();
-    }
-    
-    /// <summary>
-    /// 更新分页按钮状态（可选：用于高亮当前选中的按钮）
-    /// </summary>
-    private void UpdatePageButtonStates()
-    {
-        // 这里可以添加按钮高亮逻辑
-        // 例如：改变按钮颜色、添加选中标记等
-        // 如果需要，可以添加按钮的Image组件引用，然后改变颜色
     }
     
     public override void HideMe()
@@ -495,36 +442,31 @@ public class SettingsPanel : BasePanel
     }
     
     /// <summary>
-    /// 根据bool开关更新UI显示状态
+    /// 根据bool开关更新UI显示状态（单页布局：统一处理所有分组）
     /// </summary>
     private void UpdateUIVisibility()
     {
-        // 只在当前页面内更新可见性
-        if (currentPageIndex == 0) // 音量页面
-        {
-            if (masterVolumeGroup != null)
-                masterVolumeGroup.SetActive(enableMasterVolume);
-            if (bgmVolumeGroup != null)
-                bgmVolumeGroup.SetActive(enableBGMVolume);
-            if (voiceVolumeGroup != null)
-                voiceVolumeGroup.SetActive(enableVoiceVolume);
-            if (sfxVolumeGroup != null)
-                sfxVolumeGroup.SetActive(enableSFXVolume);
-        }
-        else if (currentPageIndex == 1) // 文本页面
-        {
-            if (textSpeedGroup != null)
-                textSpeedGroup.SetActive(enableTextSpeed);
-            if (autoSpeedGroup != null)
-                autoSpeedGroup.SetActive(enableAutoSpeed);
-        }
-        else if (currentPageIndex == 2) // 显示页面
-        {
-            if (displayModeGroup != null)
-                displayModeGroup.SetActive(enableDisplayMode);
-            if (resolutionGroup != null)
-                resolutionGroup.SetActive(enableResolution);
-        }
+        // 音频
+        if (masterVolumeGroup != null)
+            masterVolumeGroup.SetActive(enableMasterVolume);
+        if (bgmVolumeGroup != null)
+            bgmVolumeGroup.SetActive(enableBGMVolume);
+        if (voiceVolumeGroup != null)
+            voiceVolumeGroup.SetActive(enableVoiceVolume);
+        if (sfxVolumeGroup != null)
+            sfxVolumeGroup.SetActive(enableSFXVolume);
+
+        // 文本
+        if (textSpeedGroup != null)
+            textSpeedGroup.SetActive(enableTextSpeed);
+        if (autoSpeedGroup != null)
+            autoSpeedGroup.SetActive(enableAutoSpeed);
+
+        // 显示
+        if (displayModeGroup != null)
+            displayModeGroup.SetActive(enableDisplayMode);
+        if (resolutionGroup != null)
+            resolutionGroup.SetActive(enableResolution);
     }
     
     /// <summary>
@@ -581,8 +523,10 @@ public class SettingsPanel : BasePanel
         }
         if (autoSpeedSlider != null)
         {
-            autoSpeedSlider.value = globalData.AutoSpeed;
-            UpdateAutoSpeedText(globalData.AutoSpeed);
+            // 旧存档可能存在越界值，先钳制到有效范围
+            float autoSpeed = Mathf.Clamp(globalData.AutoSpeed, AutoSpeedMin, AutoSpeedMax);
+            autoSpeedSlider.value = autoSpeed;
+            UpdateAutoSpeedText(autoSpeed);
         }
         
         // 显示设置
@@ -803,10 +747,20 @@ public class SettingsPanel : BasePanel
             globalData = GlobalDataManager.GetInstance().GetGlobalData();
             if (globalData == null) return;
         }
-        
-        globalData.AutoSpeed = value;
-        UpdateAutoSpeedText(value);
-        GlobalDataManager.GetInstance().UpdateAutoSpeed(value);
+
+        // 吸附到 0.1s 步进（Slider 无内置步进，值变化时量化；
+        // 同步回 slider 仅在量化改变原值时触发，不会形成事件循环）
+        float snapped = Mathf.Round(value / AutoSpeedStep) * AutoSpeedStep;
+        snapped = Mathf.Clamp(snapped, AutoSpeedMin, AutoSpeedMax);
+        if (!Mathf.Approximately(snapped, value))
+        {
+            autoSpeedSlider.value = snapped;
+            return; // slider.value 赋值会重新触发本回调，按量化后的值处理
+        }
+
+        globalData.AutoSpeed = snapped;
+        UpdateAutoSpeedText(snapped);
+        GlobalDataManager.GetInstance().UpdateAutoSpeed(snapped);
     }
     
     /// <summary>

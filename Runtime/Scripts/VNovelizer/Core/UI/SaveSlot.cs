@@ -30,6 +30,16 @@ public class SaveSlot : MonoBehaviour
     private Texture2D _loadedTexture;
     private Sprite _loadedSprite;
 
+    // 截图按需重载：记录当前已显示的数据对象，引用未变则跳过磁盘重载（防止整页闪烁）
+    private SaveData _displayedData;
+    // 截图是否已进入终态（已显示图片 / 已显示占位）；协程被禁用中断时为 false
+    private bool _screenshotResolved;
+    // 飞行中的截图加载协程：数据快速变化时先停旧协程，避免新旧并行、完成顺序不定导致显示旧图
+    private Coroutine _screenshotCoroutine;
+
+    /// <summary>截图显示是否就绪（供面板决定是否强制刷新）</summary>
+    public bool IsScreenshotReady => _screenshotResolved;
+
     // 自我初始化
     private void Awake()
     {
@@ -40,6 +50,9 @@ public class SaveSlot : MonoBehaviour
         if (dateText == null) dateText = transform.Find("DateText")?.GetComponent<TextMeshProUGUI>();
         if (screenshotImage == null) screenshotImage = transform.Find("Screenshot")?.GetComponent<Image>();
         if (deleteButton == null) deleteButton = transform.Find("DeleteButton")?.GetComponent<Button>();
+
+        // 立即应用占位态（避免 Instantiate 后第一帧显示预制体默认的纯白 Image 造成"白方块闪烁"）
+        SetDefaultScreenshot();
     }
 
     /// <summary>
@@ -80,6 +93,10 @@ public class SaveSlot : MonoBehaviour
     {
         if (slotText != null) slotText.text = isAutoSaveSlot ? "[自动]" : $"[{slotIndex + 1}]";
 
+        // 数据对象引用未变化时跳过截图重载：保存/删除/开关面板只有变化的槽会重载图片，
+        // 其余槽保持已显示的画面 —— 这是消除整页闪烁的关键
+        bool dataChanged = !ReferenceEquals(saveData, _displayedData);
+
         if (saveData != null)
         {
             // --- 有存档数据 ---
@@ -87,15 +104,19 @@ public class SaveSlot : MonoBehaviour
 
             string chapterName = Path.GetFileNameWithoutExtension(saveData.ScriptFileName);
 
-            // 加载截图
-            if (screenshotImage != null)
+            // 加载截图（仅数据变化时）
+            if (screenshotImage != null && dataChanged)
             {
+                _screenshotResolved = false;
                 if (!string.IsNullOrEmpty(saveData.ScreenshotPath) && File.Exists(saveData.ScreenshotPath))
                 {
-                    StartCoroutine(LoadScreenshot(saveData.ScreenshotPath));
+                    // 停掉仍在飞行的旧请求，防止新旧协程并行、完成顺序不定导致显示旧图
+                    if (_screenshotCoroutine != null) StopCoroutine(_screenshotCoroutine);
+                    _screenshotCoroutine = StartCoroutine(LoadScreenshot(saveData.ScreenshotPath));
                 }
                 else
                 {
+                    if (_screenshotCoroutine != null) { StopCoroutine(_screenshotCoroutine); _screenshotCoroutine = null; }
                     SetDefaultScreenshot();
                 }
             }
@@ -110,7 +131,11 @@ public class SaveSlot : MonoBehaviour
         {
             // --- 空槽位 ---
             if (dateText != null) dateText.text = "[Empty]";
-            if (screenshotImage != null) SetDefaultScreenshot();
+            if (screenshotImage != null && dataChanged)
+            {
+                _screenshotResolved = false;
+                SetDefaultScreenshot();
+            }
 
             // 逻辑关键：Save模式可点，Load模式不可点
             if (slotButton != null)
@@ -119,14 +144,20 @@ public class SaveSlot : MonoBehaviour
             // 隐藏删除按钮
             if (deleteButton != null) deleteButton.gameObject.SetActive(false);
         }
+
+        if (dataChanged) _displayedData = saveData;
     }
+
+    // 占位用中性深灰（避免槽位出现时闪现预制体默认的纯白方块）
+    private static readonly Color PlaceholderColor = new Color(0.18f, 0.18f, 0.18f, 1f);
 
     private void SetDefaultScreenshot()
     {
+        _screenshotResolved = true;
         if (screenshotImage != null)
         {
             ReleaseLoadedVisual();
-            screenshotImage.color = Color.gray;
+            screenshotImage.color = PlaceholderColor;
             screenshotImage.sprite = null;
         }
     }
@@ -146,8 +177,34 @@ public class SaveSlot : MonoBehaviour
         ReleaseLoadedVisual();
         _loadedSprite = sprite;
         _loadedTexture = texture;
+        _screenshotResolved = true;
         screenshotImage.sprite = sprite;
-        screenshotImage.color = Color.white;
+        // 渐入：避免图片突然出现造成"白方块变实图"的硬切换
+        var c = Color.white;
+        c.a = 0f;
+        screenshotImage.color = c;
+        StartCoroutine(FadeInSprite());
+    }
+
+    /// <summary>
+    /// 截图淡入（短促过渡，掩盖同步设图带来的视觉跳变）
+    /// </summary>
+    private IEnumerator FadeInSprite()
+    {
+        const float duration = 0.12f;
+        float t = 0f;
+        Color c;
+        while (t < duration)
+        {
+            t += Time.unscaledDeltaTime;
+            c = screenshotImage.color;
+            c.a = Mathf.Clamp01(t / duration);
+            screenshotImage.color = c;
+            yield return null;
+        }
+        c = screenshotImage.color;
+        c.a = 1f;
+        screenshotImage.color = c;
     }
 
     /// <summary>
@@ -199,6 +256,8 @@ public class SaveSlot : MonoBehaviour
                 }
             }
         }
+
+        _screenshotCoroutine = null; // 正常完成，清理句柄
     }
 
     private void OnSlotClick()

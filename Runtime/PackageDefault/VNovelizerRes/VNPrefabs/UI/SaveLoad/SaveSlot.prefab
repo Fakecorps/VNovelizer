@@ -628,7 +628,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: '[520]'
+  m_text: "[\u81EA\u52A8]"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 9b09ab1a689518b41aed7b33a9390464, type: 2}
   m_sharedMaterial: {fileID: -4627823312624107808, guid: 9b09ab1a689518b41aed7b33a9390464, type: 2}

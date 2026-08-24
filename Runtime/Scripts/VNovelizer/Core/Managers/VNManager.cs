@@ -1362,6 +1362,13 @@ public class VNManager : BaseManager<VNManager>
 
     public void SaveGame(int slotIndex)
     {
+        // 防护：无实际进度时不写出空存档（与 SaveAutoGameNow 行为对齐）
+        if (lastLine == null)
+        {
+            Debug.LogWarning("[VNManager] 无剧情进度（lastLine 为空），取消保存");
+            return;
+        }
+
         SaveData saveData = BuildSaveData();
 
         saveData.SaveTime = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -1376,6 +1383,7 @@ public class VNManager : BaseManager<VNManager>
     private SaveData BuildSaveData()
     {
         SaveData saveData = new SaveData();
+        saveData.SaveTick = System.DateTime.Now.Ticks; // 高精度保存标识（UI 层变化比对用，防同秒撞车）
         saveData.ScriptFileName = this.currentScriptName;
         saveData.LineID = lastLine != null ? lastLine.ID : "";
         saveData.CurrentBG = this.currentBG;
@@ -1419,6 +1427,7 @@ public class VNManager : BaseManager<VNManager>
     {
         EnsureAutoSaveConfigLoaded();
         if (!SaveManager.AutoSaveConfig.Enabled) return;
+        if (isReplayMode) return;                   // 回放模式（画廊回想）不写自动档，防止回放进度覆盖玩家真实进度
         if (lastLine == null) return;               // 无实际进度（如新游戏启动的 loadscript）不保存
         if (_autoSaveCoroutine != null) return;     // 上一次自动保存仍在进行，跳过本次
 
@@ -1941,6 +1950,15 @@ public class VNManager : BaseManager<VNManager>
                 // UI加载完成，UIManager会自动完成任务
                 // 注意：这里不立即执行游戏逻辑，等待OnContinueGameLoadingCompleted回调
                 isGameplayPanelLoadCallbackFired = true;
+
+                // 【读档死锁修复】面板已在显示时 Show 走幂等分支（不实例化 → 不触发 CompleteTask），
+                // 而本流程的 ui_VNGameplayPanel 任务在 ContinueGameLoading 中手动注册后无人完成，
+                // OnAllTasksCompleted 永不触发 → 读档卡死。此处显式补完成（重复 Complete 幂等无害）。
+                if (LoadingProgressManager.GetInstance() != null)
+                {
+                    LoadingProgressManager.GetInstance().CompleteTask("ui_VNGameplayPanel");
+                }
+
                 VNDebug.LogVerbose("[VNManager] VNGameplayPanel 的 ShowPanel 回调已触发（ContinueGame）");
             });
         }
