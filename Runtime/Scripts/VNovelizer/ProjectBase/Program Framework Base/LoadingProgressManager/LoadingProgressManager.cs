@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
+using VNovelizer.Core.Diagnostics;
 
 /// <summary>
 /// 加载任务信息
@@ -119,7 +120,7 @@ public class LoadingProgressManager : BaseManager<LoadingProgressManager>
         LoadingTask task = new LoadingTask(taskID, taskName, weight);
         tasks.Add(taskID, task);
         
-        Debug.Log($"[LoadingProgressManager] 注册任务: {taskName} (ID: {taskID}, 权重: {weight})");
+        VNDebug.LogVerbose($"[LoadingProgressManager] 注册任务: {taskName} (ID: {taskID}, 权重: {weight})");
         
         // 触发进度更新
         UpdateProgress();
@@ -147,7 +148,7 @@ public class LoadingProgressManager : BaseManager<LoadingProgressManager>
         if (task.Progress >= 1f && !task.IsCompleted)
         {
             task.IsCompleted = true;
-            Debug.Log($"[LoadingProgressManager] 任务完成: {task.TaskName} (ID: {taskID})");
+            VNDebug.LogVerbose($"[LoadingProgressManager] 任务完成: {task.TaskName} (ID: {taskID})");
         }
         
         // 触发进度更新
@@ -188,7 +189,7 @@ public class LoadingProgressManager : BaseManager<LoadingProgressManager>
     {
         if (tasks.ContainsKey(taskID))
         {
-            Debug.Log($"[LoadingProgressManager] 注销任务: {tasks[taskID].TaskName} (ID: {taskID})");
+            VNDebug.LogVerbose($"[LoadingProgressManager] 注销任务: {tasks[taskID].TaskName} (ID: {taskID})");
             tasks.Remove(taskID);
             UpdateProgress();
         }
@@ -315,6 +316,10 @@ public class LoadingProgressManager : BaseManager<LoadingProgressManager>
     /// </summary>
     private void UpdateProgress()
     {
+        // 无任务时不广播：清空/未注册状态下 GetTotalProgress 恒为 1（100%），
+        // 会向监听者误报"加载完成"（ClearAllTasks 后触发 OnAllTasksCompleted 即属此误报）。
+        if (tasks.Count == 0) return;
+
         float totalProgress = GetTotalProgress();
         LoadingTask mainTask = GetCurrentMainTask();
         List<LoadingTask> activeTasks = GetActiveTasks();
@@ -330,21 +335,12 @@ public class LoadingProgressManager : BaseManager<LoadingProgressManager>
             IsAllCompleted = isAllCompleted
         };
         
-        Debug.Log($"[LoadingProgressManager] UpdateProgress: 总进度={totalProgress:F2}, 任务={info.CurrentTaskName}, 回调订阅数={OnProgressUpdated?.GetInvocationList()?.Length ?? 0}");
+        VNDebug.LogVerbose($"[LoadingProgressManager] UpdateProgress: 总进度={totalProgress:F2}, 任务={info.CurrentTaskName}");
+
+        // 触发回调（无监听者是正常状态：加载面板未显示/已隐藏退订，静默跳过）
+        OnProgressUpdated?.Invoke(info);
         
-        // 触发回调
-        if (OnProgressUpdated != null)
-        {
-            Debug.Log("[LoadingProgressManager] 触发 OnProgressUpdated 回调");
-            OnProgressUpdated.Invoke(info);
-        }
-        else
-        {
-            Debug.LogWarning("[LoadingProgressManager] OnProgressUpdated 回调为 null，没有监听者！");
-        }
-        
-        // 通过 EventCenter 发送事件（兼容项目现有的事件系统）
-        Debug.Log("[LoadingProgressManager] 通过 EventCenter 触发 LoadingProgressUpdated 事件");
+        // 通过 EventCenter 发送事件（兼容外部监听者；LoadingProgressPanel 走上方 C# 回调，勿重复订阅本通道）
         EventCenter.GetInstance().EventTrigger("LoadingProgressUpdated", info);
         
         // 如果所有任务都完成，触发完成回调
@@ -356,13 +352,14 @@ public class LoadingProgressManager : BaseManager<LoadingProgressManager>
     }
     
     /// <summary>
-    /// 清空所有任务
+    /// 清空所有任务。
+    /// 注意：不触发进度/完成事件——清空 ≠ 加载完成（无任务时总进度语义为 100%，
+    /// 广播会误触发 OnAllTasksCompleted），且调用方均在 HidePanel（面板已退订）之后调用。
     /// </summary>
     public void ClearAllTasks()
     {
-        Debug.Log("[LoadingProgressManager] 清空所有任务");
+        VNDebug.LogVerbose("[LoadingProgressManager] 清空所有任务");
         tasks.Clear();
-        UpdateProgress();
     }
     
     /// <summary>

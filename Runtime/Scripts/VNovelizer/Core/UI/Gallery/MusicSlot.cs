@@ -32,10 +32,10 @@ public class MusicSlot : MonoBehaviour
             Debug.LogWarning("[MusicSlot] 未找到TextMeshProUGUI组件，无法显示音乐名称");
         }
         
-        // 设置音乐名称
+        // 设置音乐名称（"音乐名 - 艺术家"；艺术家留空时只显示音乐名）
         if (nameText != null && music != null)
         {
-            nameText.text = music.name;
+            nameText.text = music.DisplayName;
         }
         
         // 设置按钮状态和事件

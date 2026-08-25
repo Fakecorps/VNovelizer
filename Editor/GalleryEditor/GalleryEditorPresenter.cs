@@ -170,6 +170,18 @@ public class GalleryEditorPresenter
         OnDataChanged?.Invoke();
     }
 
+    /// <summary>设置当前选中音乐的艺术家（纯展示字段）</summary>
+    public void SetArtist(string artist)
+    {
+        if (SelectedItem is not VNMusic music) return;
+        var container = GetCurrentContainer();
+        if (container == null) return;
+        Undo.RecordObject(container, "Gallery: Set Artist");
+        music.artist = artist ?? "";
+        EditorUtility.SetDirty(container);
+        AssetDatabase.SaveAssetIfDirty(container);
+    }
+
     public void CopySelected()
     {
         if (SelectedItem == null) return;
@@ -199,6 +211,7 @@ public class GalleryEditorPresenter
         {
             var copy = new VNMusic(srcM.name + "_copy")
             {
+                artist = srcM.artist,
                 isUnlocked = srcM.isUnlocked,
                 picture = srcM.picture,
                 music = srcM.music

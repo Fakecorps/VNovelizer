@@ -54,6 +54,11 @@ public class VNGameplayPanel : BasePanel
     [SerializeField] private Button historyButton;
     [SerializeField] private Button hideButton;
     [SerializeField] private Button pauseButton;
+    [Header("Auto 按钮图标")]
+    [Tooltip("自动播放停止时显示的图标（提示用户：点击会开始播放）")]
+    [SerializeField] private Sprite autoPlaySprite;
+    [Tooltip("自动播放进行中显示的图标（提示用户：点击会停止播放）")]
+    [SerializeField] private Sprite autoStopSprite;
     // 状态变量
     private bool isAutoPlaying = false;
     private bool isSkipping = false;
@@ -986,6 +991,21 @@ public class VNGameplayPanel : BasePanel
     // 更新按钮状态
     private void UpdateAutoButtonState()
     {
+        // 优先用 Sprite 切换：播放中显示"停止"图标、停止中显示"播放"图标（点击反馈更直观）
+        if (autoButton != null && (autoPlaySprite != null || autoStopSprite != null))
+        {
+            Image img = autoButton.GetComponent<Image>();
+            if (img == null) img = autoButton.GetComponentInChildren<Image>();
+
+            if (img != null)
+            {
+                Sprite target = isAutoPlaying ? autoStopSprite : autoPlaySprite;
+                if (target != null) img.sprite = target;
+            }
+            return;
+        }
+
+        // 兼容：未配置 Sprite 时回退到文本方式（旧 prefab）
         TMP_Text buttonText = autoButton.GetComponentInChildren<TMP_Text>();
         if (buttonText != null)
         {

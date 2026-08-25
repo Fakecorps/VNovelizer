@@ -118,9 +118,11 @@ namespace VNovelizer.Core.Theater
         }
 
         /// <summary>
-        /// 检测与剧场相机冲突的遗留相机（渲染 Default 层的其他相机）。
+        /// 处理与剧场相机冲突的遗留相机（渲染 Default 层的其他相机）。
         /// 这些相机通常源于旧 ScreenSpaceCamera Canvas 时代——UI 已全部 Overlay，
-        /// 它们除了白白渲染一遍剧场画面（然后被覆盖）外毫无作用，建议删除。
+        /// 它们除了白白渲染一遍剧场画面（然后被 depth=10 的剧场相机覆盖）外毫无作用。
+        /// 处理：自动将其 cullingMask 中的 Default 层剔除（渲染空集 = 零渲染成本），
+        /// 保留相机对象与其余层/组件（AudioListener 等不受影响）；若确认无用可手动删除。
         /// </summary>
         private static void WarnAboutLegacyCameras(Camera theaterCamera)
         {
@@ -130,9 +132,10 @@ namespace VNovelizer.Core.Theater
                 if (c == null || c == theaterCamera) continue;
                 if ((c.cullingMask & 1) == 0) continue; // 不渲染 Default 层（bit 0），无冲突
 
+                c.cullingMask &= ~1; // 运行时剔除 Default 层（不改资产），幂等
                 Debug.LogWarning($"[SceneCameraManager] 检测到遗留相机 '{c.name}' 仍在渲染 Default 层，" +
-                                 "其画面会被剧场相机覆盖（浪费渲染）。建议删除该相机（UI 已全部 Overlay，不再需要场景相机）。" +
-                                 "若该相机带有 AudioListener，删除后剧场相机会自动补齐，不影响音频。");
+                                 "已自动剔除其 Default 层渲染（画面本就被剧场相机覆盖，纯浪费）。" +
+                                 "若确认无用可删除该相机（UI 已全部 Overlay；其 AudioListener 若被删除，剧场相机会自动补齐）。");
             }
         }
 

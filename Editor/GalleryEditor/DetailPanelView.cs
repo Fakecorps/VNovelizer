@@ -224,6 +224,16 @@ public class DetailPanelView : VisualElement
     {
         DrawHeader("音乐名称", music.name, presenter.RenameSelected, presenter.IsNameDuplicate(music.name, music));
 
+        // 艺术家（纯展示字段，不参与解锁键/唯一性判定）
+        var artistCard = GalleryStyles.MakeCard();
+        var artistField = new TextField("艺术家（Artist）") { value = music.artist };
+        artistField.style.flexShrink = 1;
+        artistField.style.minWidth = 0;
+        GalleryStyles.ApplyField(artistField);
+        artistField.RegisterValueChangedCallback(evt => presenter.SetArtist(evt.newValue));
+        artistCard.Add(artistField);
+        rightPane.Add(artistCard);
+
         var stateCard = GalleryStyles.MakeCard();
         var toggle = new Toggle("已解锁（调试）") { value = music.isUnlocked };
         GalleryStyles.ApplyToggle(toggle);

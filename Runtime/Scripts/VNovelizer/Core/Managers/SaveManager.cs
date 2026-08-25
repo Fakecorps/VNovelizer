@@ -385,40 +385,54 @@ public class SaveManager : BaseManager<SaveManager>
     {
         if (_tempScreenshot != null) Object.Destroy(_tempScreenshot);
 
-        // 1. 获取主摄像机 (通常渲染场景)
-        Camera cam = Camera.main;
+        // 选相机策略：遍历所有启用的相机，挑"能渲染 Default 层（背景/角色）+ depth 最高"的一个。
+        // 这样能避开两种坑：
+        //   ① 场景里的"遗留 Main Camera"被 SceneCameraManager 剔除 Default 层后 cullingMask=0，不再被选中；
+        //   ② 带 MainCamera tag 但不是 Theatre 相机的情况（Camera.main 单一 tag 匹配不可靠）。
+        // 用 Camera.Render 路径而不是 ScreenCapture，是为了**只截 3D 场景而不含 ScreenSpaceOverlay UI**
+        // （存档缩略图应当是"当时游戏画面"，而非"屏上看到的一切"，否则对话框/控制按钮会污染缩略图）。
+        Camera cam = PickSceneCameraForCapture();
         if (cam == null)
         {
-
-            Canvas canvas = Object.FindFirstObjectByType<Canvas>();
-            if (canvas != null && canvas.worldCamera != null) cam = canvas.worldCamera;
-        }
-
-        if (cam == null)
-        {
-            // 如果实在没有相机，回退到旧方法
+            // 兜底：场景里没有渲染 Default 层的相机，截整屏（含 UI）也比蓝屏强
             _tempScreenshot = ScreenCapture.CaptureScreenshotAsTexture();
             return;
         }
+
         int width = Screen.width;
         int height = Screen.height;
         RenderTexture rt = new RenderTexture(width, height, 24);
 
-        // 3. 渲染
-        RenderTexture oldTarget = cam.targetTexture; // 备份旧的
+        RenderTexture oldTarget = cam.targetTexture;
         cam.targetTexture = rt;
         cam.Render();
-        cam.targetTexture = oldTarget; // 恢复旧的
+        cam.targetTexture = oldTarget;
 
-        // 4. 读取像素到 Texture2D
         RenderTexture.active = rt;
         _tempScreenshot = new Texture2D(width, height, TextureFormat.RGB24, false);
         _tempScreenshot.ReadPixels(new Rect(0, 0, width, height), 0, 0);
         _tempScreenshot.Apply();
 
-        // 5. 清理
         RenderTexture.active = null;
         Object.Destroy(rt);
+    }
+
+    /// <summary>
+    /// 选取用于存档截图的相机：cullingMask 含 Default 层、已启用、按 depth 降序的第一个。
+    /// 避免命中被 SceneCameraManager 自动剔除 Default 层的"遗留 Main Camera"（cullingMask=0）。
+    /// </summary>
+    private static Camera PickSceneCameraForCapture()
+    {
+        Camera best = null;
+        var cameras = Object.FindObjectsByType<Camera>(FindObjectsSortMode.None);
+        for (int i = 0; i < cameras.Length; i++)
+        {
+            Camera c = cameras[i];
+            if (c == null || !c.isActiveAndEnabled) continue;
+            if ((c.cullingMask & 1) == 0) continue; // bit 0 = Default 层（背景/角色）
+            if (best == null || c.depth > best.depth) best = c;
+        }
+        return best;
     }
 
     public string SaveCachedScreenshot(int slotIndex)

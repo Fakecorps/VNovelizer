@@ -243,6 +243,19 @@ public class UIManager : BaseManager<UIManager>
         {
             if (!existing.gameObject.activeSelf) existing.gameObject.SetActive(true);
             existing.ShowMe();
+
+            // 面板已就绪：对应的加载进度任务（VNManager 预注册的 "ui_面板名"）直接完成。
+            // 否则 WaitLoadingQueue 会因任务永不 Complete 而白等满 120 帧超时
+            // （读档/换剧本时 GameplayPanel 已存在的常见路径）。
+            var earlySpec = GetSpec(name);
+            if (earlySpec != null && earlySpec.LoadingTaskWeight > 0f)
+            {
+                var pm = LoadingProgressManager.GetInstance();
+                string taskId = "ui_" + name;
+                if (pm != null && pm.GetTask(taskId) != null) // 无预注册任务时跳过（避免"任务不存在"警告）
+                    pm.CompleteTask(taskId);
+            }
+
             onReady?.Invoke(existing as T);
             return;
         }
@@ -281,13 +294,19 @@ public class UIManager : BaseManager<UIManager>
             fullPath = !string.IsNullOrEmpty(spec.PrefabKey) ? spec.PrefabKey : name;
         }
 
-        // 注册加载进度任务（仅指定了权重的大面板；VNManager 后续通过 LoadingProgressPanel 等待完成）
+        // 注册加载进度任务（仅指定了权重的大面板；VNManager 后续通过 LoadingProgressPanel 等待完成）。
+        // 注意：VNManager（StartGameLoading/ContinueGameLoading）会预注册同名任务 "ui_面板名"，
+        // 已存在时复用（不重复注册、不重置进度），仅在加载完成时 CompleteTask。
         string loadingTaskId = null;
         if (spec.LoadingTaskWeight > 0f && LoadingProgressManager.GetInstance() != null)
         {
+            var progress = LoadingProgressManager.GetInstance();
             loadingTaskId = "ui_" + name;
-            LoadingProgressManager.GetInstance().RegisterTask(loadingTaskId, $"加载界面: {name}", spec.LoadingTaskWeight);
-            LoadingProgressManager.GetInstance().UpdateTaskProgress(loadingTaskId, 0.1f);
+            if (progress.GetTask(loadingTaskId) == null)
+            {
+                progress.RegisterTask(loadingTaskId, $"加载界面: {name}", spec.LoadingTaskWeight);
+                progress.UpdateTaskProgress(loadingTaskId, 0.1f);
+            }
         }
 
         var pending = new List<Action<BasePanel>>();
@@ -306,6 +325,14 @@ public class UIManager : BaseManager<UIManager>
     {
         _pendingShows.TryGetValue(name, out var waiters);
         _pendingShows.Remove(name);
+
+        // 加载期间面板已被 HidePanel/HideAll 作废（等待队列被移除）：丢弃加载结果，
+        // 不再实例化——否则场景切换后加载完成的面板会凭空冒出来。
+        if (waiters == null)
+        {
+            VNDebug.LogVerbose($"[UIManager] 面板 {name} 的 Show 已在加载期间被作废，丢弃加载结果");
+            return;
+        }
 
         if (prefab == null)
         {
@@ -351,7 +378,7 @@ public class UIManager : BaseManager<UIManager>
 
         VNDebug.LogVerbose($"[UIManager] Show {name} (Layer={spec.Layer}, sortingOrder={(int)spec.Layer + spec.Order})");
 
-        if (waiters == null) return;
+        // waiters 必非 null（为 null 时已在方法开头作为"已作废"丢弃）
         for (int i = 0; i < waiters.Count; i++)
         {
             try { waiters[i]?.Invoke(panel); }

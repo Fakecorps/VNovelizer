@@ -11,9 +11,10 @@ using UnityEngine.InputSystem;
 public class HistoryPanel : BasePanel
 {
     // UI组件
+    [Header("UI组件")]
     [SerializeField] private Button closeButton;
-    private ScrollRect historyScrollView;
-    private Transform contentTransform;
+    [SerializeField]private ScrollRect historyScrollView;
+    [SerializeField]private Transform contentTransform;
 
     // 记录当前正在显示的 Item 列表，以便回收
     private List<GameObject> activeItems = new List<GameObject>();
@@ -139,32 +140,36 @@ public class HistoryPanel : BasePanel
         itemObj.transform.localPosition = new Vector3(itemObj.transform.localPosition.x, itemObj.transform.localPosition.y, 0);
         itemObj.transform.localRotation = Quaternion.identity;
 
-        // 查找子组件 (根据你的Prefab层级结构)
-        Transform speakerBox = itemObj.transform.Find("H_SpeakerBox");
+        // 查找子组件 (Prefab 新结构：所有控件平铺在 HistoryItem 根下，H_SpeakerBoxImage 替代旧 H_SpeakerBox 容器)
+        Transform speakerBoxImage = itemObj.transform.Find("H_SpeakerBoxImage");
         // 注意：这里用 GetControl<TMP_Text> 可能找不到子物体的组件，建议直接 GetComponent
-        TMP_Text speakerText = speakerBox.Find("H_SpeakerText").GetComponent<TMP_Text>();
+        Image speakerBoxGraphic = speakerBoxImage.GetComponent<Image>();
+        TMP_Text speakerText = speakerBoxImage.Find("H_SpeakerText").GetComponent<TMP_Text>();
 
-        Transform contentTrans = itemObj.transform.Find("H_Content");
-        TMP_Text dialogueText = contentTrans.Find("H_DialogueBox/H_Dialogue").GetComponent<TMP_Text>();
-        Button replayButton = contentTrans.Find("H_Replay").GetComponent<Button>();
+        TMP_Text dialogueText = itemObj.transform.Find("H_DialogueBox/H_Dialogue").GetComponent<TMP_Text>();
+        Button replayButton = itemObj.transform.Find("H_Replay").GetComponent<Button>();
 
         //处理 Speaker 重复
         bool isSameSpeaker = (prevEntry != null && prevEntry.Speaker == entry.Speaker);
 
         if (isSameSpeaker)
         {
-            speakerBox.gameObject.SetActive(false);
+            // 占位隐藏：仅禁用可视组件，GameObject 保持激活参与 HorizontalLayoutGroup 布局。
+            // 若用 SetActive(false) 会让布局组重排（内容整体左移/重居中），导致各行 H_DialogueBox 左边缘错位。
+            speakerBoxGraphic.enabled = false;
+            speakerText.enabled = false;
         }
         else
         {
-            speakerBox.gameObject.SetActive(true);
+            speakerBoxGraphic.enabled = true;
+            speakerText.enabled = true;
             speakerText.text = entry.Speaker;
         }
 
         // 填充对话内容
         dialogueText.text = entry.Text;
 
-        // 处理 Replay 按钮 
+        // 处理 Replay 按钮
         // 先移除旧的监听器，防止复用时点击一次触发多次
         replayButton.onClick.RemoveAllListeners();
 
@@ -182,6 +187,11 @@ public class HistoryPanel : BasePanel
 
         // 强制刷新布局
         LayoutRebuilder.ForceRebuildLayoutImmediate(itemObj.GetComponent<RectTransform>());
+        // H_DialogueBox 内的 ContentSizeFitter 需要在 H_Dialogue 文本写入后单独重建一次，
+        // 否则首次实例化的 Item 高度仍为 prefab 默认值（TMP 文本未完成换行计算）
+        Transform dialogueBox = itemObj.transform.Find("H_DialogueBox");
+        if (dialogueBox != null)
+            LayoutRebuilder.ForceRebuildLayoutImmediate(dialogueBox.GetComponent<RectTransform>());
     }
 
     /// <summary>

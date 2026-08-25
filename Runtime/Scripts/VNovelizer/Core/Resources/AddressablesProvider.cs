@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
+using VNovelizer.Core.Diagnostics;
 
 /// <summary>
 /// 基于 Unity Addressables 的提供者（安装 com.unity.addressables 后启用，位于链首）。
@@ -179,12 +180,13 @@ public class AddressablesProvider : IVNResourceProvider
         {
             var handle = Addressables.LoadAssetAsync<T>(key);
 #if UNITY_EDITOR
-            // 编辑器 Fast 模式：初始化完成后操作应同步完成（IsDone == true）。
-            // 如果仍未同步完成（极端情况：初始化卡顿），尝试 WaitForCompletion 补救一次；
-            // 补救失败则释放并回退链上下一环（避免永久阻塞的保守策略仅在确认死锁风险时采用）。
+            // 编辑器 Fast 模式：初始化完成后操作通常同步完成，但完成回调的调度并不保证
+            // 在当帧返回前就绪（首个加载/依赖链较长时 IsDone==false 属常态）。
+            // WaitForCompletion 是无死锁风险的正常补救路径（Fast 模式不阻塞），
+            // 不作为警告刷屏；补救失败则释放并回退链上下一环。
             if (!handle.IsDone)
             {
-                Debug.LogWarning($"[AddressablesProvider] Fast 模式下 LoadAssetAsync 未同步完成（key={key}），尝试 WaitForCompletion 补救...");
+                VNDebug.LogVerbose($"[AddressablesProvider] Fast 模式下 LoadAssetAsync 未同步完成（key={key}），WaitForCompletion 补救。");
                 try { handle.WaitForCompletion(); }
                 catch
                 {
