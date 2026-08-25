@@ -38,6 +38,18 @@ namespace VNovelizer.Core.Commands
                 return false;
             }
         }
+
+        /// <summary>
+        /// 【Fix】此前未覆写 Simulate：快进（读档/跳行）经过的行中 settextspeed 丢失，读档后打字速度错误。
+        /// 预演只更新持久数据（GlobalData），不触发 UI 事件——预演阶段面板可能未就绪。
+        /// </summary>
+        public override void Simulate(string args)
+        {
+            if (float.TryParse(args?.Trim(), out float speed))
+            {
+                GlobalDataManager.GetInstance().UpdateTextSpeed(speed);
+            }
+        }
     }
 }
 

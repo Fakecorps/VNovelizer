@@ -104,6 +104,11 @@ public static class AutoExcelConverter
             try
             {
                 ExcelToCsvConverter.ConvertFile(file, csvOutputPath);
+
+                // 【防循环】镜像写回可能更新了 xlsx 的修改时间，重新记录最新时间戳，
+                // 避免下一轮轮询误判"xlsx 又被修改"而再次触发转换（死循环）。
+                _lastWriteTicks[file] = File.GetLastWriteTime(file).Ticks;
+
                 successCount++;
                 Debug.Log($"[AutoConvert] 已转换: {Path.GetFileNameWithoutExtension(file)}.csv");
             }

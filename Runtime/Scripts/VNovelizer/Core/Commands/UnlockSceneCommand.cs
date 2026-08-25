@@ -24,5 +24,11 @@ namespace VNovelizer.Core.Commands
 
             return true;
         }
+
+        /// <summary>
+        /// 解锁是持久数据（GlobalData）而非演出状态，预演与执行行为一致。
+        /// 【Fix】此前未覆写 Simulate：读档/跳行快进经过的行中 unlockscene 不生效，场景回想解锁丢失。
+        /// </summary>
+        public override void Simulate(string args) => Execute(args);
     }
 }

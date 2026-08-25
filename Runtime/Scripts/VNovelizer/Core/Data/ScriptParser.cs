@@ -132,7 +132,7 @@ public static class ScriptParser
     /// 正确分割CSV行，处理引号内的换行符
     /// 只有在引号外遇到换行符时才分割行
     /// </summary>
-    private static string[] SplitCSVLines(string csvContent)
+    public static string[] SplitCSVLines(string csvContent)
     {
         List<string> lines = new List<string>();
         bool inQuotes = false;
@@ -192,7 +192,7 @@ public static class ScriptParser
     /// <summary>
     /// 分割CSV行中的各个字段，处理引号内的逗号
     /// </summary>
-    private static string[] SplitCSV(string line)
+    public static string[] SplitCSV(string line)
     {
         List<string> fields = new List<string>();
         bool inQuotes = false;

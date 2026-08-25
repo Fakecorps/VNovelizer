@@ -2,7 +2,9 @@ using UnityEngine;
 using UnityEditor;
 using System.IO;
 using System.Text;
+using System.Collections.Generic;
 using ExcelDataReader;
+using ClosedXML.Excel;
 
 public class ExcelToCsvConverter : EditorWindow
 {
@@ -91,22 +93,20 @@ public class ExcelToCsvConverter : EditorWindow
     /// <returns>是否覆盖了旧文件</returns>
     public static bool ConvertFile(string filePath, string targetFolder)
     {
+        // ---- 1. 读取 xlsx 全部行（ExcelDataReader，只读） ----
+        List<string[]> allRows = new List<string[]>();
+        int maxColumnCount = 0;
+
         using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
         {
             using (var reader = ExcelReaderFactory.CreateReader(stream))
             {
-                StringBuilder csvContent = new StringBuilder();
-                int maxColumnCount = 0;
-                bool isFirstRow = true;
-                System.Collections.Generic.List<string[]> allRows = new System.Collections.Generic.List<string[]>();
-
-                // 读取所有行
+                bool firstRow = true;
                 while (reader.Read())
                 {
                     int fieldCount = reader.FieldCount;
                     string[] row = new string[fieldCount];
 
-                    // 读取当前行的所有列
                     for (int j = 0; j < fieldCount; j++)
                     {
                         object cellValue = reader.GetValue(j);
@@ -116,7 +116,7 @@ public class ExcelToCsvConverter : EditorWindow
                     allRows.Add(row);
 
                     // 第一行用于确定最大列数
-                    if (isFirstRow)
+                    if (firstRow)
                     {
                         // 检查第一行的实际列数（从右往左找最后一个非空列）
                         for (int i = fieldCount - 1; i >= 0; i--)
@@ -131,54 +131,261 @@ public class ExcelToCsvConverter : EditorWindow
                         {
                             maxColumnCount = fieldCount; // 如果第一行全空，使用字段数
                         }
-                        isFirstRow = false;
+                        firstRow = false;
                     }
                 }
-
-                if (allRows.Count == 0)
-                {
-                    Debug.LogWarning($"文件 {Path.GetFileName(filePath)} 没有数据");
-                    return false;
-                }
-
-                // 将所有行转换为 CSV 格式
-                foreach (string[] row in allRows)
-                {
-                    // 确保每一行的数据列数与表头对齐
-                    int currentLoopLimit = maxColumnCount;
-
-                    for (int j = 0; j < currentLoopLimit; j++)
-                    {
-                        string cellValueStr = "";
-
-                        // 获取单元格值
-                        if (j < row.Length)
-                        {
-                            cellValueStr = row[j] ?? "";
-                        }
-
-                        // 转义 CSV 特殊字符
-                        csvContent.Append(EscapeCsvCell(cellValueStr));
-
-                        // 添加逗号 (最后一列除外)
-                        if (j < currentLoopLimit - 1)
-                            csvContent.Append(",");
-                    }
-                    csvContent.AppendLine();
-                }
-
-                // 使用传入的 targetFolder 拼接路径
-                string fileName = Path.GetFileNameWithoutExtension(filePath);
-                string finalPath = Path.Combine(targetFolder, fileName + ".csv");
-
-                bool fileExists = File.Exists(finalPath);
-
-                // 使用 UTF-8 (无BOM) 编码写入
-                File.WriteAllText(finalPath, csvContent.ToString(), new UTF8Encoding(false));
-
-                return fileExists;
             }
         }
+
+        if (allRows.Count == 0)
+        {
+            Debug.LogWarning($"文件 {Path.GetFileName(filePath)} 没有数据");
+            return false;
+        }
+
+        string fileName = Path.GetFileNameWithoutExtension(filePath);
+        string finalPath = Path.Combine(targetFolder, fileName + ".csv");
+        bool fileExists = File.Exists(finalPath);
+
+        // ---- 2. 列分工：Command 列三方合并（决策见 VNCommandChainSpec.md §11.5）----
+        // 数据列从 xlsx 全量更新；Command 列编辑权归 Unity 图编辑器，做单元格级三方合并：
+        //   base = 上次转换时的 Command 快照（sidecar 文件）
+        //   · xlsx == base（Excel 未改）→ 保留 CSV 值（图编辑器的修改生效）
+        //   · csv  == base（CSV 未改） → 采用 xlsx 值（Excel 旧工作流的修改生效，过渡期零感知）
+        //   · 两边都改且不同 → CSV 值（Command 永远以 CSV 为准）+ 冲突警告
+        //   · sidecar 不存在（首次转换/升级）→ 全部采用 xlsx 值（与旧版行为一致），并建立快照基准
+        int commandColIndex = GetCommandColumnIndex(maxColumnCount);
+        string sidecarPath = GetSidecarPath(finalPath);
+        bool sidecarExists = File.Exists(sidecarPath);
+
+        Dictionary<string, string> csvCommands = (commandColIndex >= 0 && fileExists)
+            ? LoadCommandColumnFromCsv(finalPath, commandColIndex)
+            : new Dictionary<string, string>();
+        Dictionary<string, string> baseCommands = sidecarExists
+            ? LoadCommandSnapshot(sidecarPath)
+            : new Dictionary<string, string>();
+
+        var mergedCommands = new Dictionary<string, string>();   // rowId → 合并终值
+        var writeBackDiffs = new List<(int excelRow, string value)>(); // 镜像写回差异（Excel 1-based 行号）
+
+        // ---- 3. 生成 CSV ----
+        StringBuilder csvContent = new StringBuilder();
+        bool isFirstRow = true;
+
+        for (int r = 0; r < allRows.Count; r++)
+        {
+            string[] row = allRows[r];
+            int currentLoopLimit = maxColumnCount;
+            string rowId = (row.Length > 0 ? row[0] : "").Trim();
+
+            for (int j = 0; j < currentLoopLimit; j++)
+            {
+                string cellValueStr = (j < row.Length) ? (row[j] ?? "") : "";
+
+                // 【列分工】Command 列走三方合并（表头行原样保留）
+                if (j == commandColIndex && !isFirstRow)
+                {
+                    string xlsxVal = cellValueStr;
+                    string csvVal = csvCommands.TryGetValue(rowId, out var c) ? c : null;
+                    string baseVal = baseCommands.TryGetValue(rowId, out var b) ? b : null;
+
+                    string merged = MergeCommandCell(filePath, rowId, xlsxVal, csvVal, baseVal, sidecarExists);
+                    cellValueStr = merged;
+                    mergedCommands[rowId] = merged;
+
+                    // 镜像写回差异：xlsx 原值 ≠ 合并终值
+                    if (merged != xlsxVal)
+                        writeBackDiffs.Add((r + 1, merged));
+                }
+
+                csvContent.Append(EscapeCsvCell(cellValueStr));
+
+                if (j < currentLoopLimit - 1)
+                    csvContent.Append(",");
+            }
+            csvContent.AppendLine();
+            isFirstRow = false;
+        }
+
+        // UTF-8 (无BOM) 写入
+        File.WriteAllText(finalPath, csvContent.ToString(), new UTF8Encoding(false));
+
+        // ---- 4. 保存新的 base 快照（下次三方合并的基准） ----
+        SaveCommandSnapshot(sidecarPath, mergedCommands);
+
+        // ---- 5. 镜像写回：把合并终值写回 xlsx 的 Command 列（ClosedXML） ----
+        // 仅在存在差异时物理写入（常态零写入零扰动）；写回后由调用方（AutoExcelConverter）刷新时间戳防循环
+        if (writeBackDiffs.Count > 0)
+        {
+            MirrorCommandsBackToExcel(filePath, writeBackDiffs, commandColIndex + 1);
+        }
+
+        return fileExists;
+    }
+
+    /// <summary>
+    /// 按列数布局确定 Command 列索引（与 ScriptParser 的解析布局一致）：
+    /// 14 列新格式 → 12；12 列旧格式 → 10；其余（列数不足）→ -1（无 Command 列，不做列分工）
+    /// </summary>
+    private static int GetCommandColumnIndex(int columnCount)
+    {
+        if (columnCount >= 14) return 12;
+        if (columnCount >= 12) return 10;
+        return -1;
+    }
+
+    /// <summary>
+    /// 读取现有 CSV 的 Command 列（rowId → command），复用 ScriptParser 的引号感知解析保证行为一致
+    /// </summary>
+    private static Dictionary<string, string> LoadCommandColumnFromCsv(string csvPath, int commandColIndex)
+    {
+        var result = new Dictionary<string, string>();
+        try
+        {
+            string content = File.ReadAllText(csvPath, new UTF8Encoding(false));
+            string[] lines = ScriptParser.SplitCSVLines(content);
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i == 0) continue; // 表头行
+                string line = lines[i].Trim();
+                if (string.IsNullOrEmpty(line)) continue;
+
+                string[] cols = ScriptParser.SplitCSV(line);
+                if (cols.Length == 0) continue;
+
+                string id = cols[0].Trim();
+                if (string.IsNullOrEmpty(id)) continue;
+
+                // 按该行列数自适应 Command 位置（兼容新旧布局混存）
+                int idx = GetCommandColumnIndex(cols.Length);
+                if (idx >= 0 && idx < cols.Length)
+                    result[id] = cols[idx];
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[CmdSync] 读取现有 CSV 的 Command 列失败（本次按无基准处理）: {csvPath} — {e.Message}");
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Command 单元格三方合并
+    /// </summary>
+    private static string MergeCommandCell(string xlsxPath, string rowId, string xlsxVal, string csvVal, string baseVal, bool sidecarExists)
+    {
+        xlsxVal = xlsxVal ?? "";
+
+        // sidecar 不存在（首次转换/从旧版本升级）：全部采用 xlsx 值，与旧版全量覆盖行为完全一致（零感知升级）
+        if (!sidecarExists) return xlsxVal;
+
+        // 新插入的行（快照中无基准）：Excel 是唯一编辑过它的地方
+        if (baseVal == null) return xlsxVal;
+
+        // Excel 未改（xlsx == base）→ 保留 CSV 值（图编辑器的修改生效；CSV 无此行则回退 xlsx 值）
+        if (xlsxVal == baseVal) return csvVal ?? xlsxVal;
+
+        // Excel 改了；CSV 未改（csv == base 或 CSV 无此行）→ Excel 修改生效（旧工作流兼容）
+        if (csvVal == null || csvVal == baseVal) return xlsxVal;
+
+        // 两边都改且不同 → 冲突：Command 永远以 CSV 为准（决策见 VNCommandChainSpec.md §11.4/§11.5）
+        Debug.LogWarning($"[CmdSync] 行 {rowId} 的 Command 列在 Excel 与 CSV（图编辑器）两侧均被修改且不一致，已采用 CSV 值。" +
+                         $"Excel 侧的修改被忽略：\"{Truncate(xlsxVal, 40)}\" → \"{Truncate(csvVal, 40)}\"（{Path.GetFileName(xlsxPath)}）");
+        return csvVal;
+    }
+
+    /// <summary>
+    /// 镜像写回：把 CSV 的 Command 终值写回 xlsx 对应列（ClosedXML，原地编辑保留用户格式）
+    /// </summary>
+    private static void MirrorCommandsBackToExcel(string xlsxPath, List<(int excelRow, string value)> diffs, int excelCol)
+    {
+        if (Path.GetExtension(xlsxPath).ToLower() == ".xls")
+        {
+            Debug.LogWarning($"[CmdSync] {Path.GetFileName(xlsxPath)} 为 .xls 旧格式，不支持镜像写回（请另存为 .xlsx）；CSV 侧不受影响。");
+            return;
+        }
+
+        try
+        {
+            using (var workbook = new XLWorkbook(xlsxPath))
+            {
+                var ws = workbook.Worksheet(1);
+                foreach (var d in diffs)
+                    ws.Cell(d.excelRow, excelCol).Value = d.value;
+                workbook.Save();
+            }
+            Debug.Log($"[CmdSync] 已镜像写回 {diffs.Count} 个 Command 单元格到 {Path.GetFileName(xlsxPath)}（Excel 侧视图已同步）");
+        }
+        catch (IOException)
+        {
+            Debug.LogWarning($"[CmdSync] 镜像写回失败（{Path.GetFileName(xlsxPath)} 可能被 Excel 占用），下次转换时自动重试。CSV 侧不受影响。");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[CmdSync] 镜像写回异常（{Path.GetFileName(xlsxPath)}）：{e.Message}。CSV 侧不受影响。");
+        }
+    }
+
+    // ==================== sidecar 快照（三方合并基准） ====================
+
+    private static string GetSidecarPath(string csvPath) => csvPath + ".cmdmap.json";
+
+    [System.Serializable]
+    private class CommandSnapshotData
+    {
+        public List<RowCommandEntry> rows = new List<RowCommandEntry>();
+    }
+
+    [System.Serializable]
+    private class RowCommandEntry
+    {
+        public string id;
+        public string cmd;
+    }
+
+    private static Dictionary<string, string> LoadCommandSnapshot(string sidecarPath)
+    {
+        var result = new Dictionary<string, string>();
+        try
+        {
+            if (!File.Exists(sidecarPath)) return result;
+            var data = JsonUtility.FromJson<CommandSnapshotData>(File.ReadAllText(sidecarPath, new UTF8Encoding(false)));
+            if (data?.rows != null)
+            {
+                foreach (var entry in data.rows)
+                {
+                    if (!string.IsNullOrEmpty(entry?.id))
+                        result[entry.id] = entry.cmd ?? "";
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[CmdSync] 快照读取失败（按无基准处理，本次采用 xlsx 值）: {sidecarPath} — {e.Message}");
+        }
+        return result;
+    }
+
+    private static void SaveCommandSnapshot(string sidecarPath, Dictionary<string, string> commands)
+    {
+        try
+        {
+            var data = new CommandSnapshotData();
+            foreach (var kvp in commands)
+                data.rows.Add(new RowCommandEntry { id = kvp.Key, cmd = kvp.Value });
+            File.WriteAllText(sidecarPath, JsonUtility.ToJson(data), new UTF8Encoding(false));
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[CmdSync] 快照写入失败（下次转换将按无基准处理）: {sidecarPath} — {e.Message}");
+        }
+    }
+
+    private static string Truncate(string s, int max)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length <= max ? s : s.Substring(0, max) + "...";
     }
 
     // 辅助方法：CSV 转义规则

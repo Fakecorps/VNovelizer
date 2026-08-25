@@ -65,5 +65,11 @@ namespace VNovelizer.Core.Commands
             Debug.LogError("Config命令参数格式错误，应为key:value");
             return false;
         }
+
+        /// <summary>
+        /// 【Fix】此前未覆写 Simulate：快进（读档/跳行）经过的行中 config 丢失（voice/textspeed/autospeed）。
+        /// 配置均为持久数据更新（GlobalData），无 UI 事件触发，预演与执行行为一致。
+        /// </summary>
+        public override void Simulate(string args) => Execute(args);
     }
 }
