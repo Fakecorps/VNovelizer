@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Commands.Meta;
 using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
@@ -13,8 +14,15 @@ namespace VNovelizer.Core.Commands
     /// arg = L/ML/M/MR/R: 对应位置的角色震动（剧场演员）
     /// arg = dialogue: 对话框震动（UI 层，保持旧实现）
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance, "屏幕 / 角色 / 对话框震动")]
     public class ShakeCommand : VNCommand
     {
+        [VNParam(0, "target", VNParamType.Enum, Options = "screen|dialogue|L|ML|M|MR|R",
+            Description = "震动目标：screen=相机（UI 不动）/ dialogue=对话框 / 槽位码=角色")]
+        [VNParam(1, "duration", VNParamType.Float, Min = 0f, Max = 10f, Default = "0.5",
+            Optional = true, Description = "持续秒数")]
+        [VNParam(2, "intensity", VNParamType.Float, Min = 0f, Max = 100f, Default = "10",
+            Optional = true, Description = "强度（剧本像素）")]
         public override string CommandName { get { return "shake"; } }
 
         // 默认参数：强度单位为剧本像素（UI 与剧场演员统一像素语义，相机内部换算世界单位）

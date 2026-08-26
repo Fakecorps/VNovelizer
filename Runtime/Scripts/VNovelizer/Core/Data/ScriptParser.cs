@@ -245,7 +245,8 @@ public static class ScriptParser
     /// 规则：
     ///   · 未出现 @Confirm: 时 ConfirmCommands 为空，行为与旧剧本完全一致；
     ///   · 出现多个 @Confirm: 时报错，仅第一个生效（容错继续解析）；
-    ///   · 出口段禁止 choice 命令（出口执行后面板尚未响应即被默认推进），进入段含 choice 时警告出口不会触发。
+    ///   · 出口段禁止 choice 命令（出口执行后面板尚未响应即被默认推进），进入段含 choice 时警告出口不会触发；
+    ///   · 引号内的 @Confirm: 视为字面文本，不参与切分（如 showprompt("@Confirm: 是标记")）。
     /// </summary>
     private static void SplitConfirmSection(StoryLine line, string rawCommand)
     {
@@ -253,7 +254,7 @@ public static class ScriptParser
         line.ConfirmCommands = "";
         if (string.IsNullOrEmpty(rawCommand)) return;
 
-        int idx = rawCommand.ToLower().IndexOf(ConfirmToken);
+        int idx = IndexOfConfirmToken(rawCommand, 0);
         if (idx < 0)
         {
             line.Command = rawCommand; // 无出口段：保持旧语义
@@ -266,7 +267,7 @@ public static class ScriptParser
         // 出口段：第一个 @Confirm: 之后的全部内容（含后续 &）
         string rest = rawCommand.Substring(idx + ConfirmToken.Length);
 
-        int second = rest.ToLower().IndexOf(ConfirmToken);
+        int second = IndexOfConfirmToken(rest, 0);
         if (second >= 0)
         {
             Debug.LogError($"[ScriptParser] 行 {line.ID}: Command 列包含多个 @Confirm:（仅第一个生效），请移除多余标记。");
@@ -286,6 +287,41 @@ public static class ScriptParser
                 Debug.LogWarning($"[ScriptParser] 行 {line.ID}: 进入段含 choice 命令，Choice 状态会拦截普通点击，本行 @Confirm: 出口段将不会执行（choice 选项命令优先生效）。");
             }
         }
+    }
+
+    /// <summary>
+    /// 引号感知地查找 @Confirm: 标记位置（大小写不敏感），未找到返回 -1。
+    /// 引号内的 @Confirm: 属命令参数中的字面文本（如 showprompt("下一步 @Confirm: 说明")），
+    /// 若按裸 IndexOf 切分会把一条完整命令劈成两半，产生语法错误。
+    /// 转义序列 \" 不视为引号结束（与 ChainLexer 的引号处理规则一致）。
+    /// </summary>
+    private static int IndexOfConfirmToken(string source, int startIndex)
+    {
+        if (string.IsNullOrEmpty(source)) return -1;
+
+        bool inQuote = false;
+        for (int i = startIndex; i < source.Length; i++)
+        {
+            char c = source[i];
+
+            if (inQuote)
+            {
+                if (c == '\\') { i++; continue; }   // 跳过被转义字符（i++ 越界由 for 条件兜住）
+                if (c == '"') inQuote = false;
+                continue;
+            }
+
+            if (c == '"') { inQuote = true; continue; }
+
+            if (c == '@' && i + ConfirmToken.Length <= source.Length &&
+                string.Compare(source, i, ConfirmToken, 0, ConfirmToken.Length,
+                    System.StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>粗粒度检测命令串中是否含 choice 命令（与 VNManager.ContainsChoiceCommand 同规则）</summary>

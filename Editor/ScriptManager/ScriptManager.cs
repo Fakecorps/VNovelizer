@@ -155,6 +155,49 @@ public class ScriptManagerWindow : EditorWindow
         RefreshList();
     }
 
+    /// <summary>
+    /// 双击预览行 → 打开「行演出编辑器」编辑该行的 Command 列。
+    ///
+    /// 编辑器读的是**转换后的 CSV**（Command 列的唯一真值来源）而非 xlsx——
+    /// 因此若尚未转换，需先提示用户执行转换，否则会编辑到过期内容。
+    /// </summary>
+    private void OnPreviewRowChosen(System.Collections.Generic.IEnumerable<object> chosen)
+    {
+        if (selectedFile == null) return;
+
+        List<string> row = null;
+        foreach (var item in chosen) { row = item as List<string>; break; }
+        if (row == null || row.Count == 0) return;
+
+        string lineId = row[0];
+        if (string.IsNullOrWhiteSpace(lineId)) return;
+
+        string scriptName = Path.GetFileNameWithoutExtension(selectedFile.Name);
+        string csvPath = FindCsvPath(scriptName);
+
+        if (string.IsNullOrEmpty(csvPath))
+        {
+            EditorUtility.DisplayDialog("需要先转换",
+                $"未找到 {scriptName} 的 CSV 文件。\n\n" +
+                "行演出编辑器编辑的是转换后的 CSV（Command 列的真值来源）。\n" +
+                "请先点击「转换」，然后重试。", "好");
+            return;
+        }
+
+        VNovelizer.Editor.RowPerformanceEditor.RowPerfEditorWindow.OpenForRow(csvPath, lineId);
+    }
+
+    private static string FindCsvPath(string scriptName)
+    {
+        foreach (string guid in AssetDatabase.FindAssets("t:TextAsset"))
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            if (!path.EndsWith(".csv", System.StringComparison.OrdinalIgnoreCase)) continue;
+            if (Path.GetFileNameWithoutExtension(path) == scriptName) return path;
+        }
+        return null;
+    }
+
     private void RefreshList()
     {
         if (!Directory.Exists(excelFolderPath)) return;
@@ -230,15 +273,30 @@ public class ScriptManagerWindow : EditorWindow
                         {
                             if (previewTable.itemsSource == null || i >= previewTable.itemsSource.Count) return;
                             var rowData = (List<string>)previewTable.itemsSource[i];
+                            var label = e as Label;
                             if (colIndex < rowData.Count)
-                                (e as Label).text = rowData[colIndex];
+                                label.text = rowData[colIndex];
+
+                            // Command 列：提示可双击进入行演出编辑器（图形化编排）
+                            bool isCommandColumn = headerName.IndexOf("command",
+                                System.StringComparison.OrdinalIgnoreCase) >= 0;
+                            if (isCommandColumn)
+                            {
+                                label.tooltip = "双击本行任意单元格可打开「行演出编辑器」以图形方式编排命令。\n" +
+                                                "注意：Command 列由该编辑器维护，请勿在 Excel 中直接修改。";
+                                label.style.color = new Color(0.6f, 0.78f, 0.95f);
+                            }
                         };
                         previewTable.columns.Add(col);
                     }
 
                     previewTable.itemsSource = tableData;
                     previewTable.Rebuild();
-                    statusLabel.text = $"已加载预览：{file.Name}";
+                    statusLabel.text = $"已加载预览：{file.Name}　（双击某行可打开行演出编辑器）";
+
+                    // 双击预览行 → 打开该行的行演出编辑器（图形化编排 Command 列）
+                    previewTable.itemsChosen -= OnPreviewRowChosen;
+                    previewTable.itemsChosen += OnPreviewRowChosen;
                 }
             }
         }

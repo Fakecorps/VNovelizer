@@ -354,6 +354,35 @@ namespace VNovelizer.Core.API
         /// <summary>当前剧本行索引（0-based）；无有效剧本时为 -1。</summary>
         public static int GetCurrentLineIndex() => VNManager.GetInstance().CurrentLineIndex;
 
+        /// <summary>
+        /// 当前正在处理行的**解析后**上下文，供系统命令的隐式绑定读取
+        /// （空参命令引用本行数据列，如 <c>showDialogue()</c> 取 Text 列、<c>showbg()</c> 取 Background 列）。
+        ///
+        /// <para>
+        /// "解析后"意味着继承规则已应用：背景的"空单元格 = 沿用上一有效值"、
+        /// 语音的"空 = 按行 ID 自动生成路径"等，读到的即最终取值。
+        /// </para>
+        ///
+        /// <para>
+        /// Execute 与 Simulate（快进预演）两条路径都会填充本上下文，
+        /// 用 <c>IsSimulating</c> 区分——预演中只应更新状态，不要播放动画/音频。
+        /// </para>
+        ///
+        /// <para>
+        /// 未在演出中（未加载剧本 / 已回主菜单）时返回 null，调用方须判空。
+        /// </para>
+        /// </summary>
+        public static Commands.Meta.VNLineContext GetCurrentLineContext()
+            => VNManager.GetInstance().CurrentLineContext;
+
+        /// <summary>
+        /// 取当前行某个数据列的解析后取值（隐式绑定的便捷入口）。
+        /// 列名大小写不敏感（如 "Text" / "Background" / "BGM" / "CharLeft"）。
+        /// 无上下文或列名未知时返回 null。
+        /// </summary>
+        public static string GetCurrentLineColumn(string columnName)
+            => VNManager.GetInstance().CurrentLineContext?.GetColumn(columnName);
+
         /// <summary>当前行的行 ID（Excel 中的 ID 列）；无效索引时返回 false。</summary>
         public static bool TryGetCurrentLineId(out string lineId)
         {

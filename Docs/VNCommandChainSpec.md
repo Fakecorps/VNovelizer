@@ -18,6 +18,7 @@
 8. [使用示例](#8-使用示例)
 9. [与完整 DSL 的对比](#9-与完整-dsl-的对比)
 10. [实施计划](#10-实施计划)
+11. [行演出编辑器（2026-08-25 架构决策）](#11-行演出编辑器row-performance-editor2026-08-25-架构决策)
 
 ---
 
@@ -285,6 +286,9 @@ charfadein(L) & charfadein(M) & wait(0.5) & showprompt(...)
 | 悬空 `->`（如 `a ->`） | 解析报错，带位置信息 |
 | 悬空 `&`（如 `& b` 或 `a &`） | 解析报错，带位置信息 |
 | 括号不匹配（`[a & b`） | 解析报错："缺少闭合 ']'" |
+| 多余 `)`（如 `showbg(a))`） | 括号深度 clamp 到 0（2026-08-26 修复），不再吞掉后续命令 |
+| 参数以 `\` 结尾 | 词法安全前进（2026-08-26 修复），不再抛越界异常 |
+| 嵌套深度 >2 层 | **警告**（`Warnings`），不阻断 |
 | 未知命令名 | 语义警告（沿用现有命令注册表校验） |
 | **运行时命令失败** | 记录错误，**该单元视为完成**，链继续（演出容错优先，不因一条命令卡死整行） |
 
@@ -336,7 +340,7 @@ Excel 单元格内支持换行（Alt+Enter），CSV 转义已处理引号内换�
 |------|------|
 | 1 层 `[a & b] -> c` | 正常，最常用 |
 | 2 层 `[[a & b] -> c] & [d -> e]` | 合法，可读性已下降 |
-| 3 层及以上 | 解析**警告**："命令链嵌套过深，建议拆分到多行或使用完整 DSL" |
+| 3 层及以上 | 解析**警告**（进 `ChainParseResult.Warnings`，非 `Errors`）："命令链嵌套过深，建议拆分到多行"——不阻断执行，也不阻断图编辑器保存 |
 
 ---
 
@@ -489,6 +493,283 @@ shake(screen, 0.3) -> wait(0.5) -> showprompt("注意！")
 
 ---
 
+## 11. 行演出编辑器（Row Performance Editor）——2026-08-25 架构决策
+
+> 本章为命令链语法的上层编辑形态，是"命令链可视化生态"路线的核心章节。数据模型规格参考 `VNScriptLanguageSpec.md`（该文档已转为设计参考存档——其 ScriptBlock/VAR/Seq/Par/Confirm 概念在本章架构中复活）；路线图见 `VNRefactoringPlan.md` §12。
+>
+> **UI 实施规格（GraphView 节点体系 / 图结构校验 / 序列化 / 10 大功能区块）见独立文档 `VNRowPerfEditorSpec.md`**——本章聚焦架构决策，实施细节以该文档为基线。
+
+### 11.1 设计动机
+
+命令链解决了"单元格内表达时序"的问题，但 Excel 单元格永远无法提供语法高亮、行内错误提示与自动补全。行演出编辑器把 Command 列的编辑主战场移入 Unity（GraphView），同时保持 CSV 为唯一 Source of Truth：
+
+- **图与命令链 AST 天然同构**：`SeqNode`=顺序连线、`ParNode`=分叉-汇合、`CommandNode`=方块节点——已实装的 `ChainParser` 直接复用（读取方向零新增）
+- **零新语法学习成本**：拖节点/连线/结构化参数面板（角色 ID 下拉、时长滑块、槽位枚举）替代手写 `&`/`->`/`[]`
+- **引擎运行时零改动**：图保存时序列化回命令链文本写入 Command 列，执行路径不变
+- **行的重新定义**：行不再是"固定列表格行"，而是**演出单元 + Confirm 边界（一拍）**——解锁行内多段对话（多个 showDialogue 节点）、纯演出行（删除对话节点）、任意时序编排
+
+### 11.2 三层行形态（核心机制）
+
+| 形态 | 判定（Command 列内容） | 执行路径 | 说明 |
+|------|----------------------|---------|------|
+| **普通行** | 空 | 默认模板（数据列驱动，现有隐式路径） | 大多数对话行，零成本 |
+| **增强行** | 仅普通命令（无系统命令） | 默认模板 + 命令追加（**现有语义原样保留**） | 与现状完全向后兼容 |
+| **定制行** | 含系统命令（完整链） | 全链执行（ChainExecutor） | 触碰默认节点后"按需提升"的产物 |
+
+**判定规则天然向后兼容**：所有存量剧本的 Command 列均不含系统命令 → 自动落入普通/增强形态，**零迁移**。
+
+#### 11.2.1 已落地实现（2026-08-26）
+
+**判定入口**：`VNManager.IsCustomPerformanceRow(line)` → `CommandManager.ContainsSystemCommand()`。
+带缓存（`Dictionary<StoryLine, bool>`）——判定要跑 `ChainParser`，而 jump 回跳 / AutoPlay 连播会反复经过同一行；`StoryLine` 在剧本生命周期内是稳定引用，故可直接作键，`SetScriptData` 时清空（防跨剧本累积泄漏）。
+
+**四个分流点**：
+
+| 路径 | 普通行 / 增强行 | 定制行 |
+|------|---------------|--------|
+| `PlayCurrentLine`（正常播放） | `UpdateVisualState` + `UpdateCharacterSlots` + `UpdateAudioState` + `UpdateDialogue`，随后执行 Command 列 | `PrepareCustomRowBaseline()`（清空五槽立绘），随后**全权**交由命令链 |
+| `PlayCurrentLineImmediately`（skip） | 同上 + `DisplayAllText`，Command 列走 `SimulateCommands` | 清空立绘后 Command 列走 **`ExecuteCommandsInstant`** |
+| `FastForwardToLine` 主循环（预演） | `SimulateLineVisualAudioState` 施加隐式状态 | 同方法内清空立绘字典，交由命令链 `Simulate` |
+| `FastForwardToLine` choice 分支 | 同上（**复用同一方法**） | 同上 |
+
+**三个实现要点**（均为核实代码后的结论，非想当然）：
+
+1. **定制行必须预清空五个立绘槽位**。普通行的 `UpdateCharacterSlots` 对五槽逐一调 `UpdateCharacter`，空值即触发 `HideCharacter`——它正是「立绘列不继承，空 = 隐藏」规则的执行者。定制行跳过该步后，若作者只写了 `showChar(M)`，其余四槽的上一行立绘会残留，既违反既定规则也破坏「提升不改变演出」（默认模板本会生成全部五个 `showChar`，其中空值者即隐藏）。
+
+2. **skip 路径的定制行不能只 Simulate**。`showDialogue.Simulate` 是空实现（对话是纯呈现，无状态副作用），若 skip 时只走 `SimulateCommands`，画面会没有文本/背景/立绘。故新增 `CommandManager.ExecuteCommandsInstant()`——与 `ExecuteCommands` 的唯一区别是**不打"同步模式忽略时序"警告**，因为在 skip 语境下"忽略时序取终态"正是预期语义而非误用（否则每次 skip 定制行都会刷警告）。
+
+3. **`SetLineContextForSimulate` 的背景/BGM 必须自行推导继承，不能直读 `currentBG`/`currentBGM`**。定制行跳过了隐式状态更新，此时 `currentBG` 仍是上一行值；若上下文直取它，`showbg()` 的隐式绑定就会读到上一行背景——形成"命令依赖状态、状态又依赖命令"的循环依赖。现按与 `ResolveLine` 相同的规则推导（本行非空取本行，为空则继承）。
+
+**不需要做的事**：无需重置立绘槽位基准位置。查证 `TheaterManager.OnShowCharacter`（TheaterManager.cs:119-162）确认，每次显示角色都从 `SlotBasePositions[posCode] + profile.offset` 重新布局，故 `charmove` 的偏移不会跨行叠加。
+
+**预演侧与播放侧的对偶抽取**：`FastForwardToLine` 的主循环与 choice 分支原本各写一份状态更新代码，现统一抽为 `SimulateLineVisualAudioState()`——分流规则若只改一处会静默漂移，这是必须消除的重复。
+
+### 11.3 可覆盖模板与按需提升
+
+#### 11.3.1 默认模板结构（2026-08-26 修订：双分支 Par）
+
+**默认模板**是普通行在图编辑器中的可视化形态（运行时从数据列自动生成，不占用 Command 列）：
+
+```
+Par {
+    showDialogue(typewriter)                                    // 分支 A：对话独立一路
+  &
+    [ showbg() & showChar(L) & showChar(ML) & showChar(M) & showChar(MR) & showChar(R)
+      & playBGM() & playVoice()                                 // 分支 B：瞬时系统命令（同帧）
+      -> 用户命令链 ]                                            //         随后启动用户编排
+}
+```
+
+> **⚠ 模板中没有 `showSpeaker()`** —— 这是 2026-08-26 等价性回归测试**实测**修正的结果。
+> 引擎的 `UpdateDialogue` 是**一步**广播 `UpdateDialogue` + `UpdateHeadProfile` 两个事件
+> （说话人、正文、头像同属一次更新）。而 `showSpeaker()` 也广播 `UpdateHeadProfile`，
+> 模板若同时含两者，该事件会发生**两次**——实测「引擎 8 条事件 vs 模板 9 条」。
+> 因此说话人显示由 `showDialogue` 一并承担，`showSpeaker` 的定位是
+> "定制行中只想刷说话人而不重播正文"（如一行内换发言人）的独立场景。
+>
+> 这正是决策 s6 建立回归测试的价值：这个缺陷靠阅读代码极难发现——
+> 两个命令各自看都正确，只有把事件序列摆在一起才暴露重复。
+
+#### 11.3.2 硬契约：提升不改变演出
+
+**「用户触碰模板节点导致行提升为定制行时，演出必须逐帧不变」——这是硬契约，不是软期望。**
+
+等价性论证（对照 `VNManager.PlayCurrentLine`，`VNManager.cs:904-914`）：
+
+| 引擎隐式路径 | 模板链对应部分 | 等价性 |
+|-------------|---------------|--------|
+| `UpdateVisualState`（背景） | 分支 B `showbg()` | 同帧同步 ✓ |
+| `UpdateCharacterSlots`（五槽立绘） | 分支 B `showChar(L..R)` | 同帧同步 ✓ |
+| `UpdateAudioState`（BGM + Voice） | 分支 B `playBGM()` / `playVoice()` | 同帧同步 ✓ |
+| `UpdateDialogue`（说话人 + 文本 + 头像，启动打字机后立即返回） | 分支 A `showDialogue(typewriter)` | 一个命令覆盖引擎这一整步（含 `UpdateHeadProfile` 广播）✓ |
+| 随后 `StartCoroutine(ExecuteActionsAndContinue)` 启动 Command 列 | 分支 B `-> 用户命令链` | 系统命令同帧完成后启动 ✓ |
+
+**为何 `showDialogue` 必须独立成分支 A**：`showDialogue(typewriter)` 的完成语义是"等打字机跑完"（见 §11.4.1）。若把它放进分支 B 的串行链中，`playBGM/playVoice` 与用户命令会被推迟到文本全部打完之后——与现状（打字与 Command 列并行）不符，硬契约当场破裂。把它隔离到自己的并行分支，阻塞只阻塞自己。
+
+> **设计洞察**：这正是命令链的表达力所在——"不阻塞"无需专门造命令（如 `waitfortext()`），并行是链本身的能力。
+
+**验收手段**（决策 s6）：新增「模板等价性」回归测试工具——对同一行分别跑隐式路径与模板链，逐帧对比 `EventCenter` 事件序列（`UpdateDialogue` / `ChangeBackground` / `PlayBGM` / `UpdateHeadProfile` 等的触发时序）。防止后续改引擎或改模板时静默漂移。
+
+#### 11.3.3 图编辑器中的呈现（决策 s8）
+
+- 模板默认渲染为**单个半透明「默认演出」胶囊**（内含引用了哪些数据列的徽章），双击展开为完整 8 分支影子链。
+- 理由：展开态横向约 2000px，每次打开行编辑器都要先滚过一屏模板才能看到自己的命令。
+- 定制行（模板已实体化）默认展开。
+
+#### 11.3.4 按需提升协议
+
+- 图编辑器中，普通/增强行的默认模板以**半透明节点**展示（可见但未持久化到 Command 列）
+- 用户**触碰任何默认节点**（删除 / 修改参数 / 重排 / 加特效）→ 该行提升为定制行：完整命令链（含系统命令）写入 Command 列
+- 提升是**单向的**（可手动"重置回模板"，但会丢弃定制内容 → 提升时弹确认框）
+- 未触碰的行**永不膨胀**（Command 列保持为空 / 仅普通命令）
+
+### 11.4 隐式绑定（系统命令参数协议）
+
+系统命令的参数为空 = 引用本行数据列（VAR 思想的图形化落地）：
+
+| 系统命令 | 空参引用 | 继承语义 | 可否断开引用改内联 |
+|---------|---------|---------|------------------|
+| `showDialogue([mode])` | 本行 Text 列 | 本地化键 `text.{lineID}` 无损 | **否**（见 §11.4.1） |
+| `showSpeaker()` | 本行 Speaker 列 | 本地化键 `speaker.{lineID}` 无损 | **否** |
+| `showbg([name])` | 本行 Background 列 | 列空 → 节点跳过（保留"空格=继承"语义） | 可 |
+| `playBGM([name])` | 本行 BGM 列 | 列空 → 节点跳过（保留继承语义） | 可 |
+| `playVoice([name])` | 本行 Voice 列 | 列空 → 节点跳过 | 可 |
+| `showChar(pos)` | 本行对应立绘列 | 列空 → 节点跳过（= 该槽隐藏） | 可 |
+
+图上以"**引用：Text 列**"徽章显示绑定关系，点击徽章跳转表格视图对应单元格。**内容（数据列）与编排（图）职责彻底分离**：改台词改数据列，图自动跟随。
+
+#### 11.4.0 已落地实现（2026-08-26）
+
+六个命令位于 `Runtime/Core/Commands/SystemCommands/`，在 `RegisterDefaultCommands` 中**显式注册**（不依赖反射扫描的偶然性——图编辑器与模板依赖它们必然存在）。
+
+**核心原则：系统命令必须复用引擎既有实现，不得另写一套。** 否则「提升不改变演出」硬契约会因双实现漂移而破裂。为此 `VNManager` 新增 `SysXxx` 系列包装方法（既有私有逻辑的"显式参数"版本，内部走同一条代码路径）：
+
+| 系统命令 | 复用的引擎方法 | 关键语义 |
+|---------|--------------|---------|
+| `showDialogue([mode])` | `SysShowDialogue` → `UpdateDialogue` | 本地化解析 / 双事件广播 / `isTextDisplaying` / 历史记录**逐字一致** |
+| `showSpeaker()` | `SysShowSpeaker` → `UpdateHeadProfile` 事件 + `VNGameplayPanel.UpdateSpeakerDisplay` | 仅刷说话人与头像，不重播正文 |
+| `showbg([name])` | `SysShowBackground` → `UpdateVisualState` | 分支语义一致：普通名 / `black` / `hide` |
+| `showChar(pos[,ref])` | `SysShowCharacter` → `UpdateCharacter` | 空值 = 隐藏该槽（立绘列不继承） |
+| `playBGM([name])` | `SysPlayBGM` → `UpdateAudioState` | `stop`/`pause`/`resume` + **同名幂等跳过** |
+| `playVoice([name])` | `SysPlayVoice` → `UpdateAudioState` 语音分支 | 含 URL 形式拒绝 |
+
+**"无值即跳过"与"无值即隐藏"的分野**——这不是实现随意性，而是数据列继承规则的直接映射：
+
+| 命令 | 数据列为空时 | 依据 |
+|------|------------|------|
+| `showbg` / `playBGM` / `playVoice` | **跳过**（不动当前状态） | Background / BGM 是框架**唯二的继承列**，"空格 = 继续" |
+| `showChar` | **隐藏该槽** | 立绘列**不继承**，"空格 = 隐藏"是框架既定规则 |
+
+**三层行形态判定入口**：`CommandManager.IsSystemCommand(name)` / `ContainsSystemCommand(commandString)`。后者复用 `ChainParser` 解析 + 深度优先展开，因此 `&` / `->` / `[]` 任意嵌套都能正确识别。
+
+**`showDialogue` 阻塞的中断安全性**（已核实 `VNManager.cs:1013-1039`）：
+
+```
+点击 → isCmdRunning=true（阻塞的 showDialogue 在引用计数中）
+     → StopCoroutine(_flowCoroutine)   掐断整链，等待循环随之停止
+     → InterruptAll() → showDialogue.Interrupt() → DisplayAllText 事件
+                        → 打字机立即全显 → TypingFinished 事件
+                        → OnTypingFinished() → isTextDisplaying = false
+```
+
+`isTextDisplaying` 由**事件**复位而非由等待循环复位，因此协程被掐断不会造成状态残留。`ExecuteAsync` 中的 60 秒帧数上限仅在面板缺失（`TypingFinished` 永不到达）时兜底，防协程永久挂起。
+
+#### 11.4.1 `showDialogue` 的显示方式参数（2026-08-26 新增，决策 dlg）
+
+```
+showDialogue()             // 空参 = typewriter（默认，与现状一致）
+showDialogue(direct)       // 瞬间全显
+showDialogue(typewriter)   // 逐字打字
+```
+
+| mode | 显示行为 | 链中完成语义 |
+|------|---------|-------------|
+| `direct` | 文本瞬间全部显示 | 立即返回（不阻塞） |
+| `typewriter`（默认） | 逐字打字机 | **等打字机跑完**（阻塞本分支） |
+
+**文本永不内联**：`showDialogue` 只接显示方式参数，文本永远引用本行 Text 列。因此：
+- `text.{lineID}` 本地化键**永不可能失效**（§11.6 的"断开引用"风险对它天然不存在）
+- 改台词只能改数据列——内容与编排职责彻底分离
+- 同理 `showSpeaker()` 不接文本参数
+
+**`Interrupt()` 必须实现为"立即全显文本"**。原因见点击处理链路（`VNManager.cs:991-1017`）——两个分支互斥且**命令中断优先**：
+
+```
+玩家点击 → ① 命令/流程协程在跑？ → StopCoroutine + InterruptAll → return   ← 阻塞的 showDialogue 命中此处
+        → ② isTextDisplaying？    → DisplayAllText → return                ← 永远走不到
+        → ③ 推进下一行
+```
+
+若 `showDialogue.Interrupt()` 不触发 `DisplayAllText`，点击后文本会永久停在半截。这与 `VNCommand.Interrupt()` 的既有语义（快进到最终态）一致。
+
+#### 11.4.2 行上下文的获取（决策 s5）
+
+系统命令需要读"当前行的解析后值"，但 `VNCommand.Simulate(string args)` / `Execute(string args)` 只有 args。
+
+**方案**：`VNManager` 暴露 `CurrentLineContext`（存 `ResolveLine()` 结果——**继承已应用后的终值**，而非 `StoryLine` 原始字段），在 Simulate 与 Execute 两条路径入口统一赋值，系统命令经 `VNAPI.GetCurrentLineContext()` 读取。
+
+- **`VNCommand` 签名不变** → 用户自定义命令零破坏
+- **前置修复（2026-08-26 已完成）**：`FastForwardToLine` 原在循环末尾（`SimulateCommands` **之后**）才赋值 `lastLine`，而 choice 分支是先赋值后模拟——两条路径顺序相反。现有命令都不读 `lastLine` 故未暴露，但隐式绑定一旦落地会**静默读到上一行的 Text/Background**。已统一为"模拟前赋值"。
+- Simulate 路径同样需要 `ResolveLine`（否则背景/BGM 继承未应用）
+
+**已落地实现（2026-08-26）**：
+
+| 组成 | 位置 | 说明 |
+|------|------|------|
+| `VNLineContext` | `Runtime/Core/Commands/Meta/VNLineContext.cs` | 公开只读类型。字段 = `ResolvedLine`（Speaker/Text/HeadProfile/Background/BGM/Voice）**并集** 五个立绘槽位 + `LineID`/`LineIndex`/`IsSimulating`。提供 `GetCharBySlot(posCode)`（接受 `L`/`Left` 等两种写法）与 `GetColumn(columnName)`（按 `[VNParam(BoundColumn)]` 声明泛化读取） |
+| `VNManager.CurrentLineContext` | `VNManager.cs`（属性 private set） | 与 `lastLine` 同一语义组，`ResetState()` 与卸载路径一并清空 |
+| `SetLineContextForPlay` | `VNManager.cs` | Execute 路径：复用已算好的 `ResolvedLine`，零重复计算 |
+| `SetLineContextForSimulate` | `VNManager.cs` | Simulate 路径：**不复用 `ResolveLine`**（该方法有写 `isVoiceEnabled` 的副作用，且快进循环已按自己的顺序处理过继承）。调用点位于 `currentBG` 更新之后，此时 `currentBG`/`currentBGM` 已等于本行解析后取值，直接取用即与 Execute 语义一致；`Voice` 置空（预演不播音频） |
+| `VNAPI.GetCurrentLineContext()` / `GetCurrentLineColumn(col)` | `Core/Utils/API.cs` | 命令侧统一入口，不直连 `VNManager` |
+
+**四个赋值点**（全部早于命令执行/模拟）：`PlayCurrentLine` · `PlayCurrentLineImmediately` · `FastForwardToLine` 主循环 · `FastForwardToLine` 的 choice 分支。
+
+> **为何不直接把 `ResolvedLine` 改成公开**：① 它是 `VNManager` 的 private struct，公开会把内部实现细节固化进 API 表面；② 它**不含五个立绘槽位**（立绘走 `UpdateCharacterSlots` 另一条路径），而 `showChar(pos)` 需要立绘引用；③ 它没有行标识（`LineID` 是本地化键 `text.{lineID}` 的来源）与 `IsSimulating` 标记。
+
+
+### 11.5 编辑入口与数据流
+
+```
+Excel（数据列批量编辑：说话人/文本/背景/BGM/立绘）
+    │ AutoExcelConverter 列分工转换：
+    │   ① 数据列从 xlsx 读取（ExcelDataReader，现有逻辑）
+    │   ② Command 列保留 CSV 现值（跳过覆盖，防丢编排数据）
+    │   ③ 镜像写回：xlsx 的 Command 列与 CSV 不一致时，用 ClosedXML
+    │      仅写回 Command 列到 xlsx（保留用户格式），随后刷新时间戳防循环
+    ▼
+CSV（唯一 Source of Truth：数据列 + Command 列）
+    ▲▼ 图↔文本双向转换：
+    │    读：ChainParser.Parse → AST → AstToGraph + AutoLayout
+    │    写：Validator → GraphToAst（SP 分解）→ ChainSerializer → ChainParser 自校验
+GraphView 行演出编辑器（拖资源/连线/参数面板/实时校验/触碰提升/Undo/链复制粘贴）
+    │ 运行时
+    ▼
+ScriptParser → 三路径执行（默认模板 / 增强 / 定制）→ ChainExecutor
+```
+
+- **列分工**：数据列归 Excel（批量录入 + 低门槛），Command 列归 Unity 图编辑器（高亮/补全/校验）
+- **镜像写回（ClosedXML，MIT，2026-08-25 选型）**：转换时顺带把 CSV 的 Command 列写回 xlsx，Excel 侧浏览剧本时看到的编排永远最新。三个关键设计：
+  - **对比后跳过**：写回前对比 xlsx 与 CSV 的 Command 列，一致则不发生物理写入（常态零扰动）
+  - **时机天然安全**：转换触发条件即"xlsx 刚被修改"（用户刚保存并关闭 Excel），文件必然未锁
+  - **Command 列永远以 CSV 为准**：两侧都改且不一致时采用 CSV 值并警告（实现为单元格级三方合并，基准存 `.csv.cmdmap.json`）——Excel 模板应将 Command 列灰底标注"由 Unity 图编辑器维护"
+- **防死循环**：写回会更新 xlsx 修改时间 → 立即刷新 `AutoExcelConverter._lastWriteTicks`，避免下次轮询误判再次转换
+- **`.xls` 限制**：ClosedXML 仅支持 `.xlsx`；检测到 `.xls` 时跳过镜像写回并警告建议转存（.xls 为 2003 旧格式，另存即迁移）
+- **备选记录**：NPOI（Apache 2.0）支持 .xls 原地写，但 API 繁琐、格式保留弱，仅当出现 .xls 刚需再评估
+- **资源拖拽**：从角色编辑器 / 资源管理器拖资源到画布直接生成命令节点（角色 → showChar、背景 → showbg、BGM → playBGM）
+- **实时校验**：图结构校验器 11 规则（`VNRowPerfEditorSpec.md` §5）+ 11.2 形态判定 + 11.4 引用完整性检查
+- **保存竞态防护**：写 CSV 用「临时文件 + `File.Replace`」原子写，并在保存期间挂起 `AutoExcelConverter` 的 2 秒轮询，避免转换器读到半写文件
+- **两个 sidecar 职责严格分离**：
+  - `.csv.cmdmap.json` —— 三方合并**基准**，正确性直接决定 Excel↔CSV 不丢数据，**必须**进版本控制
+  - `.csv.graphpos.json` —— 节点位置/折叠状态**纯缓存**，丢失仅导致重新 AutoLayout，可 `.gitignore`（避免团队协作位置冲突）
+
+### 11.6 待实现组件清单（2026-08-26 修订）
+
+| 组件 | 说明 | 工作量 |
+|------|------|--------|
+| 命令节点化契约 | `[VNCommandMeta]`/`[VNParam]` 特性定义（Runtime）+ `CommandMetaReader` 反射读取（Editor）；替代原「Editor-only 手写 Schema 注册表」方案 | 3-5 天 |
+| 行上下文 | `VNManager.CurrentLineContext`（ResolveLine 结果，Simulate/Execute 统一赋值）+ `VNAPI` 暴露 | 1-2 天 |
+| 系统命令族 | `showbg/showChar/showSpeaker/showDialogue/playBGM/playVoice`，含隐式绑定解析、`Simulate`、`showDialogue` 的 `direct/typewriter` 与 `Interrupt` | 1-2 周 |
+| 引擎三路径执行 | 默认模板 / 增强追加 / 定制全链的分流与回归测试 | 1-2 周 |
+| 模板等价性回归测试 | EventCenter 事件时序逐帧对比（隐式路径 vs 模板链），守护 §11.3.2 硬契约 | 2-3 天 |
+| **图 → AST（`GraphToAst`）** | **SP 分解（Fork→递归分支→共同 Join→续主链）；原规格遗漏的一环** | 3-4 天 |
+| AST → 文本序列化器 | `ChainSerializer`，含括号归一化规则（Par 的 Seq 子项强制 `[]`、单子项包装透传） | 2-3 天 |
+| 图结构校验器 | 11 规则 + 分级阻断（复用 `ChainParser.IsFlowCommand`） | 3-5 天 |
+| GraphView 编辑器 | 五类节点 / 模板折叠胶囊 / 触碰提升 / 资源拖拽 / 元数据驱动参数面板 / 实时校验 | 3-4 周 |
+| 持久化与可用性 | `GraphPosStore`（位置 sidecar）+ `GraphUndoStack`（文本快照栈）+ 链复制粘贴 + 原子写 | 3-5 天 |
+| ~~AutoExcelConverter 改造~~ | ✅ **Phase 0 已完成**（列分工三方合并 + ClosedXML 镜像写回） | — |
+
+### 11.7 遗留风险
+
+| 风险 | 缓解措施 |
+|------|---------|
+| 系统命令与引擎隐式路径双实现漂移（showDialogue 命令 vs UpdateDialogue 引擎代码，同一逻辑两处维护） | 隐式路径内部逐步改为复用系统命令实现；**模板等价性回归测试**（§11.3.2）作为自动护栏 |
+| 引擎三路径重构的回归负担（存档/快进/AutoPlay 全路径） | Phase 0 前置 Simulate 债务偿还（已完成）+ 三层形态专项回归测试 |
+| 按需提升的单向性（误操作重置丢失定制内容） | 提升时确认弹窗；重置前二次确认；`GraphUndoStack` 提供撤销 |
+| 特性标注是渐进工程（39 个命令），标注期内图体验不均质 | 「通用节点」是永久兼容层而非临时态，功能完整（可连线/拖拽/序列化）；任何命令都能上图 |
+| 模板双分支结构的认知成本 | 默认折叠为单胶囊隐藏内部结构；展开时泳道标签明示「对话独立分支，不阻塞其他演出」 |
+
+---
+
 ## 附录：三符号速查卡
 
 ```
@@ -529,9 +810,9 @@ shake(screen, 0.3) -> wait(0.5) -> showprompt("注意！")
 
 | # | 场景 | 风险 | 处理 |
 |---|------|------|------|
-| 5 | `a -> jump(x) -> b` | jump 立即改行索引，b 在"行已切换"上下文执行，演出污染 | `ChainParser.ValidateFlowCommands`：流程命令（`jump/choice/loadscript/loadscene`）非链尾时警告 |
+| 5 | `a -> jump(x) -> b` | jump 立即改行索引，b 在"行已切换"上下文执行，演出污染 | `ChainParser.ValidateFlowCommands`：流程命令非链尾时警告。**流程命令集合（2026-08-26 补全为 8 个）**：`jump / jumpif / jumpifnot / loadscript / loadscriptif / loadscriptifnot / choice / loadscene`——原仅 4 个，遗漏条件跳转族（它们同样改写行索引/剧本数据源）。现另提供公开方法 `ChainParser.IsFlowCommand(name)` 供图编辑器校验复用同一份定义 |
 | 6 | `[a & loadscene(x)]` | 场景切换后旧场景 UI 销毁，残留分支命令操作已销毁对象（MissingReference） | 同上校验；且 `loadscene` 本身要求链尾 |
-| 7 | `playvideo(v.mp4, loadscript(c2)) -> b` | playvideo 第二参数与 `->` 构成双重流程语义 | 校验警告：链式下建议 `playvideo(v.mp4) -> loadscript(c2)` |
+| 7 | `playvideo(v.mp4, loadscript(c2)) -> b` | playvideo 第二参数与 `->` 构成双重流程语义 | 校验警告：链式下建议 `playvideo(v.mp4) -> loadscript(c2)`。检测改为遍历 `FlowCommands` 集合（原硬编码 3 个，同样漏条件跳转族） |
 
 ### B.3 确认安全的命令（无需修改）
 
@@ -569,8 +850,19 @@ shake(screen, 0.3) -> wait(0.5) -> showprompt("注意！")
 
 ### B.6 链式语法使用守则（汇总）
 
-1. **流程命令必须放链尾**：`jump` / `choice` / `loadscript` / `loadscene` 只能作为整条链最后一个命令
+1. **流程命令必须放链尾**：`jump` / `jumpif` / `jumpifnot` / `loadscript` / `loadscriptif` / `loadscriptifnot` / `choice` / `loadscene` 只能作为整条命令链最后一个命令
 2. **playvideo 的"结束后命令"参数在链式中改用 `->`**：`playvideo(a.mp4) -> jump(x)`
 3. **同一并行组内避免操作同一状态**：不要对同一背景、同一 flag 写两个并行命令
-4. **`[]` 嵌套 ≤2 层**：更深嵌套会收到警告
-5. **参数含 `&` `->` `[` `]` `,` 时必须引号包裹**
+4. **`[]` 嵌套 ≤2 层**：更深嵌套会收到**警告**（不阻断执行、不阻断图编辑器保存）
+5. **参数含 `&` `->` `[` `]` `,` `@Confirm:` 时必须引号包裹**
+
+### B.7 词法/解析器修复记录（2026-08-26）
+
+| # | 位置 | 问题 | 影响 | 修复 |
+|---|------|------|------|------|
+| 1 | `ChainLexer` 引号转义 | `if (cc == '\\') { pos += 2; }` 无边界检查 | 参数以 `\` 结尾时 `pos > len`，`Substring` 抛 `ArgumentOutOfRangeException`（解析崩溃） | 串尾时只前进 1 |
+| 2 | `ChainLexer` 括号深度 | `parenDepth--` 无下限 | 多余 `)` 使深度变负 → `parenDepth == 0` 顶层判定永久失效 → 剩余整串被吞成一个 Token（`showbg(a)) -> wait(1)` 中 `-> wait(1)` 被静默吃掉） | clamp 到 0，语法错误交解析器报告 |
+| 3 | `ChainParser` 深度警告 | 嵌套超限写入 `Errors` | `ChainParseResult.Success == false` + `Debug.LogError`；且图编辑器若以 `Success` 为保存闸门，3 层嵌套将**无法保存**——与 §7.5「警告不阻断」规范矛盾 | 改写入 `Warnings`（warnings 通道贯穿 4 个递归方法） |
+| 4 | `ChainParser.FlowCommands` | 仅 4 个，漏条件跳转族 | `jumpif` 等非链尾时不告警 | 补全为 8 个 + 新增公开 `IsFlowCommand()` |
+| 5 | `ScriptParser.SplitConfirmSection` | `@Confirm:` 用裸 `IndexOf`，不感知引号 | 参数含 `@Confirm:` 字面量时把一条完整命令劈成两半 | 新增引号感知的 `IndexOfConfirmToken()` |
+| 6 | `VNManager.FastForwardToLine` | `lastLine` 在 `SimulateCommands` **之后**赋值（choice 分支相反） | 隐式绑定系统命令会静默读到**上一行**的 Text/Background | 统一提到模拟前赋值，删除 3 处冗余后置赋值 |

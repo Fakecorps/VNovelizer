@@ -1,0 +1,740 @@
+/* ============================================================
+   VNovelizer 行演出编辑器 · 样式表
+   设计语言对齐 Docs/mockups/RowPerfEditorMockup.html (V8)
+
+   色彩语义（全局一致，不要随意增改）：
+     蓝 #4A90D9  系统命令 / 数据列引用
+     紫 #9C8FCE  并行（Fork/Join、并行边、进入段泳道）
+     绿 #7FAC5B  出口段（@Confirm 链、点击虚线）
+     橙 #CC7A29  流程命令（仅可置于链尾）
+     土 #8A7A5A  通用节点（无元数据）
+     红 #C85A50  致命错误
+     黄 #C8A03C  警告
+   ============================================================ */
+
+/* ---------------- 窗口骨架 ---------------- */
+
+.vn-root {
+    flex: 1;
+    flex-direction: column;
+    background-color: #383838;
+}
+
+.vn-root > .unity-base-field {
+    background-color: transparent;
+}
+
+.vn-root > .unity-text-field__input {
+    background-color: #2A2A2A;
+    border-color: #555;
+    color: #DDD;
+}
+
+.vn-root > .unity-popup-field {
+    background-color: #2A2A2A;
+}
+
+.vn-root > .unity-slider {
+    margin: 2px 0;
+}
+
+.vn-toolbar {
+    height: 40px;
+    flex-shrink: 0;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 10px;
+    padding-right: 10px;
+    background-color: #333333;
+    border-bottom-width: 1px;
+    border-bottom-color: #212121;
+}
+
+.vn-toolbar-divider {
+    width: 1px;
+    height: 20px;
+    margin-left: 6px;
+    margin-right: 6px;
+    background-color: #555555;
+}
+
+.vn-line-summary {
+    flex: 1;
+    margin-left: 10px;
+    margin-right: 10px;
+    font-size: 11px;
+    color: #909090;
+    overflow: hidden;
+    -unity-text-align: middle-left;
+}
+
+.vn-main {
+    flex: 1;
+    flex-direction: row;
+}
+
+.vn-statusbar {
+    height: 24px;
+    flex-shrink: 0;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 10px;
+    padding-right: 10px;
+    background-color: #2A2A2A;
+    border-top-width: 1px;
+    border-top-color: #212121;
+}
+
+.vn-statusbar Label {
+    font-size: 11px;
+    color: #888888;
+    margin-right: 14px;
+}
+
+/* ---------------- 行形态徽章 ---------------- */
+
+.vn-rowform-badge {
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    border-radius: 9px;
+    border-width: 1px;
+    font-size: 11px;
+    -unity-font-style: bold;
+}
+
+.vn-rowform-normal {
+    background-color: #33404A;
+    border-color: #47607A;
+    color: #9EC4E0;
+}
+
+.vn-rowform-enhanced {
+    background-color: #3E5A2E;
+    border-color: #5A8A3E;
+    color: #A8D08D;
+}
+
+.vn-rowform-custom {
+    background-color: #4A3A5E;
+    border-color: #7A5FA8;
+    color: #C8B0E8;
+}
+
+/* ---------------- 左侧命令面板 ---------------- */
+
+.vn-left-panel {
+    width: 230px;
+    flex-shrink: 0;
+    background-color: #333333;
+    border-right-width: 1px;
+    border-right-color: #212121;
+}
+
+.vn-panel-title {
+    padding: 7px 10px 7px 10px;
+    font-size: 10px;
+    -unity-font-style: bold;
+    color: #888888;
+    letter-spacing: 1px;
+    border-bottom-width: 1px;
+    border-bottom-color: #2A2A2A;
+}
+
+.vn-chain-tabs {
+    flex-direction: row;
+    background-color: #2A2A2A;
+}
+
+.vn-chain-tab {
+    flex: 1;
+    height: 26px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #888888;
+    background-color: transparent;
+    border-width: 0;
+    border-bottom-width: 2px;
+    border-bottom-color: transparent;
+    margin: 0;
+}
+
+.vn-chain-tab:hover { color: #CCCCCC; }
+
+.vn-chain-tab--active {
+    background-color: #333333;
+    color: #DDDDDD;
+    border-bottom-color: #4A90D9;
+}
+
+.vn-chain-tab--active-confirm {
+    background-color: #333333;
+    color: #C8E8B0;
+    border-bottom-color: #7FAC5B;
+}
+
+.vn-cmd-group {
+    flex-direction: row;
+    align-items: center;
+    padding: 5px 10px 3px 10px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #AAAAAA;
+}
+
+.vn-cmd-group-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    margin-right: 6px;
+}
+
+.vn-cmd-item {
+    flex-direction: row;
+    align-items: center;
+    padding: 3px 10px 3px 22px;
+    border-radius: 3px;
+    margin-left: 4px;
+    margin-right: 4px;
+}
+
+.vn-cmd-item:hover { background-color: #2C5D87; }
+
+.vn-cmd-item-name {
+    font-size: 11px;
+    color: #B8B8B8;
+}
+
+.vn-cmd-item:hover .vn-cmd-item-name { color: #FFFFFF; }
+
+.vn-cmd-item-sig {
+    flex: 1;
+    font-size: 9px;
+    color: #6A6A6A;
+    -unity-text-align: middle-right;
+    overflow: hidden;
+}
+
+.vn-cmd-item--generic .vn-cmd-item-sig { color: #8A7A5A; }
+
+.vn-panel-note {
+    margin: 8px 8px 8px 8px;
+    padding: 7px;
+    font-size: 9px;
+    color: #8A9A7A;
+    background-color: rgba(127, 172, 91, 0.07);
+    border-width: 1px;
+    border-color: #3E5A2E;
+    border-radius: 4px;
+    white-space: normal;
+}
+
+/* ---------------- 画布 ---------------- */
+
+.vn-graph {
+    flex: 1;
+}
+
+.vn-lane-label {
+    position: absolute;
+    padding: 2px 10px 2px 10px;
+    border-radius: 9px;
+    font-size: 10px;
+    -unity-font-style: bold;
+    letter-spacing: 1px;
+    background-color: #2B2B2B;
+    border-width: 1px;
+    border-style: dashed;
+    white-space: nowrap;
+}
+
+.vn-lane-entry {
+    color: #B0A4DC;
+    border-color: #5A5478;
+}
+
+.vn-lane-confirm {
+    color: #A8D08D;
+    border-color: #4A6E3E;
+}
+
+/* ---------------- 节点：通用 ---------------- */
+
+.vn-node {
+    min-width: 180px;
+}
+
+.vn-node > #node-border {
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: #666666;
+    background-color: #464646;
+}
+
+/* 标题栏容器：去掉底部分隔与默认 padding，由自定义 label 全权控制 */
+.vn-node > #title {
+    height: auto;
+    min-height: 24px;
+    padding: 3px 8px 3px 8px;
+    background-color: transparent;
+    border-bottom-width: 1px;
+    border-bottom-color: #3A3A3A;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.vn-node-title {
+    font-size: 13px;
+    -unity-font-style: bold;
+    color: #E0E0E0;
+    margin: 0;
+    -unity-font-definition: initial;
+}
+
+.vn-node #contents { padding: 0; }
+
+/* 分类色带（左侧 4px 竖条） */
+.vn-node-accent {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+    background-color: #9C94B2;
+}
+
+.vn-accent-system      { background-color: #4A90D9; }
+.vn-accent-performance { background-color: #9C94B2; }
+.vn-accent-flow        { background-color: #CC7A29; }
+.vn-accent-logic       { background-color: #5FA88A; }
+.vn-accent-audio       { background-color: #C87FA8; }
+.vn-accent-generic     { background-color: #8A7A5A; }
+
+/* 参数区 */
+.vn-node-params {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 4px 8px 5px 8px;
+}
+
+.vn-param-chip {
+    flex-direction: row;
+    align-items: center;
+    background-color: #383838;
+    border-width: 1px;
+    border-color: #555555;
+    border-radius: 3px;
+    padding: 0 5px 1px 5px;
+    margin-right: 3px;
+    margin-bottom: 2px;
+}
+
+.vn-param-key {
+    font-size: 9px;
+    color: #8E8E8E;
+    margin-right: 3px;
+}
+
+.vn-param-value {
+    font-size: 10px;
+    -unity-font-style: bold;
+    color: #E8E8E8;
+}
+
+.vn-param-empty {
+    font-size: 9px;
+    color: #6A6A6A;
+}
+
+/* 原始参数（通用节点态） */
+.vn-node-rawargs {
+    padding: 4px 8px 5px 8px;
+    font-size: 10px;
+    color: #B8AC90;
+    white-space: normal;
+}
+
+/* ---------------- 节点：语义角标 ---------------- */
+
+.vn-badge-row {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.vn-badge {
+    padding: 0 5px 1px 5px;
+    margin-left: 4px;
+    border-radius: 3px;
+    border-width: 1px;
+    font-size: 9px;
+}
+
+.vn-badge-ref       { background-color: #2C4A66; border-color: #3E6A8E; color: #7FB8E8; }
+.vn-badge-noinherit { background-color: #3A3A4A; border-color: #5A5A7E; color: #B0B0D0; }
+.vn-badge-flow      { background-color: #5A462C; border-color: #8E6A3E; color: #E8C87F; }
+.vn-badge-generic   { background-color: #4A422C; border-color: #7E6E42; color: #D8C89A; }
+.vn-badge-blocking  { background-color: #4A2C3E; border-color: #8E4A6A; color: #E8A8C0; }
+.vn-badge-nosim     { background-color: #4A3A2C; border-color: #7E5E3E; color: #D8B48A; }
+
+/* ---------------- 节点：状态 ---------------- */
+
+.vn-node--error > #node-border {
+    border-color: #C85A50;
+    border-width: 2px;
+}
+
+.vn-node--warning > #node-border {
+    border-color: #C8A03C;
+    border-width: 2px;
+}
+
+.vn-node--confirm > #node-border {
+    background-color: #3A4A38;
+    border-color: #5A8A3E;
+}
+
+.vn-node--confirm .vn-node-title { color: #D8E8C8; }
+
+.vn-node--confirm .vn-param-chip {
+    background-color: #2E3A2C;
+    border-color: #4A6E3E;
+}
+
+.vn-node--confirm .vn-param-value { color: #C8D8B8; }
+
+/* 模板影子节点（未持久化，仅视图层） */
+.vn-node--template {
+    opacity: 0.55;
+}
+
+.vn-node--template > #node-border {
+    background-color: #3E4854;
+    border-color: #6A7A96;
+}
+
+/* ---------------- 终端胶囊 ---------------- */
+
+.vn-terminal > #node-border {
+    border-radius: 16px;
+    background-color: #333333;
+    border-color: #666666;
+}
+
+.vn-terminal #title { border-bottom-width: 0; }
+
+.vn-terminal .vn-node-title {
+    font-size: 11px;
+    color: #AAAAAA;
+    -unity-font-style: bold;
+}
+
+.vn-terminal-hint {
+    font-size: 9px;
+    color: #777777;
+    margin-left: 5px;
+}
+
+.vn-terminal--confirm > #node-border {
+    background-color: #3A4A38;
+    border-color: #5A8A3E;
+}
+
+.vn-terminal--confirm .vn-node-title { color: #C8E8B0; }
+.vn-terminal--confirm .vn-terminal-hint { color: #A8C898; }
+
+/* ---------------- FORK / JOIN 胶囊 ---------------- */
+
+.vn-forkjoin {
+    min-width: 130px;
+}
+
+.vn-forkjoin > #node-border {
+    border-radius: 15px;
+    background-color: #3E3454;
+    border-width: 2px;
+    border-color: #9C8FCE;
+}
+
+.vn-forkjoin #title {
+    border-bottom-width: 0;
+    justify-content: center;
+}
+
+.vn-forkjoin .vn-node-title {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #C8BFFF;
+    letter-spacing: 1px;
+}
+
+.vn-forkjoin--confirm > #node-border {
+    background-color: #2E3E2A;
+    border-color: #7FAC5B;
+}
+
+.vn-forkjoin--confirm .vn-node-title { color: #B8E8A8; }
+
+/* ---------------- 模板折叠胶囊 ---------------- */
+
+.vn-tplcapsule {
+    min-width: 300px;
+}
+
+.vn-tplcapsule > #node-border {
+    border-radius: 9px;
+    background-color: #3E4854;
+    border-width: 2px;
+    border-color: #6A7A96;
+    border-style: dashed;
+}
+
+.vn-tplcapsule .vn-node-title {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #C8D4E8;
+}
+
+.vn-tpl-expander {
+    font-size: 9px;
+    color: #8A9AB6;
+    margin-right: 5px;
+}
+
+.vn-tpl-count {
+    flex: 1;
+    font-size: 9px;
+    color: #8A9AB6;
+    -unity-text-align: middle-right;
+}
+
+.vn-tpl-chips {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 5px 10px 3px 10px;
+}
+
+.vn-refchip {
+    background-color: #2C4A66;
+    border-width: 1px;
+    border-color: #3E6A8E;
+    border-radius: 3px;
+    padding: 0 5px 1px 5px;
+    margin-right: 3px;
+    margin-bottom: 3px;
+    font-size: 9px;
+    color: #7FB8E8;
+}
+
+.vn-refchip--empty {
+    background-color: #3A3A3A;
+    border-color: #4A4A4A;
+    color: #6E6E6E;
+}
+
+.vn-tpl-note {
+    padding: 0 10px 8px 10px;
+    font-size: 9px;
+    color: #8A9AB6;
+    white-space: normal;
+}
+
+/* ---------------- 端口 ---------------- */
+
+.vn-node Port {
+    height: 16px;
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+.vn-node Port > #type { display: none; }
+
+.vn-port-par #connector {
+    border-color: #9C8FCE;
+}
+
+.vn-port-par #connector > #cap {
+    background-color: #9C8FCE;
+}
+
+.vn-port-confirm #connector {
+    border-color: #7FAC5B;
+}
+
+.vn-port-confirm #connector > #cap {
+    background-color: #7FAC5B;
+}
+
+/* ---------------- 右侧 Inspector ---------------- */
+
+.vn-inspector {
+    width: 284px;
+    flex-shrink: 0;
+    background-color: #333333;
+    border-left-width: 1px;
+    border-left-color: #212121;
+}
+
+.vn-insp-header {
+    flex-direction: row;
+    align-items: center;
+    padding: 8px 12px 8px 12px;
+    border-bottom-width: 1px;
+    border-bottom-color: #2A2A2A;
+}
+
+.vn-insp-cmdname {
+    font-size: 14px;
+    -unity-font-style: bold;
+    color: #E8E8E8;
+}
+
+.vn-insp-cattag {
+    margin-left: 8px;
+    padding: 1px 7px 2px 7px;
+    border-radius: 3px;
+    font-size: 9px;
+    background-color: #2C5D87;
+    color: #B8D8F0;
+}
+
+.vn-insp-section {
+    padding: 8px 12px 10px 12px;
+    border-bottom-width: 1px;
+    border-bottom-color: #2A2A2A;
+}
+
+.vn-insp-sectitle {
+    font-size: 9px;
+    -unity-font-style: bold;
+    color: #888888;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+}
+
+.vn-insp-desc {
+    font-size: 10px;
+    color: #9A9A9A;
+    white-space: normal;
+    margin-bottom: 4px;
+}
+
+.vn-insp-field {
+    margin-bottom: 4px;
+}
+
+.vn-insp-field Label {
+    min-width: 84px;
+    font-size: 11px;
+    color: #AAAAAA;
+}
+
+.vn-insp-bound {
+    flex-direction: row;
+    align-items: center;
+    background-color: #262626;
+    border-width: 1px;
+    border-color: #3E6A8E;
+    border-radius: 3px;
+    padding: 3px 8px 3px 8px;
+    margin-bottom: 4px;
+}
+
+.vn-insp-bound-label {
+    flex: 1;
+    font-size: 11px;
+    color: #8AB8D8;
+}
+
+.vn-insp-note {
+    padding: 6px 8px 6px 8px;
+    border-left-width: 3px;
+    border-radius: 0 4px 4px 0;
+    font-size: 10px;
+    white-space: normal;
+}
+
+.vn-insp-note--info {
+    background-color: rgba(127, 172, 91, 0.06);
+    border-left-color: #5A8A3E;
+    color: #8A9A8A;
+}
+
+.vn-insp-note--warn {
+    background-color: rgba(204, 122, 41, 0.07);
+    border-left-color: #8E6A3E;
+    color: #C8A87A;
+}
+
+.vn-insp-preview {
+    background-color: #232323;
+    border-width: 1px;
+    border-color: #3A3A3A;
+    border-radius: 4px;
+    padding: 7px 9px 7px 9px;
+    font-size: 10px;
+    color: #B8C8A8;
+    white-space: normal;
+}
+
+/* ---------------- 校验消息 ---------------- */
+
+.vn-issue {
+    flex-direction: row;
+    padding: 4px 7px 4px 7px;
+    margin-bottom: 3px;
+    border-radius: 3px;
+    border-left-width: 3px;
+}
+
+.vn-issue--fatal {
+    background-color: rgba(200, 90, 80, 0.10);
+    border-left-color: #C85A50;
+}
+
+.vn-issue--warning {
+    background-color: rgba(200, 160, 60, 0.10);
+    border-left-color: #C8A03C;
+}
+
+.vn-issue-text {
+    flex: 1;
+    font-size: 10px;
+    color: #BEBEBE;
+    white-space: normal;
+}
+
+.vn-validate-ok {
+    flex-direction: row;
+    align-items: center;
+    padding: 6px 8px 6px 8px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: #3E5A2E;
+    background-color: rgba(127, 172, 91, 0.08);
+}
+
+.vn-validate-ok Label {
+    font-size: 10px;
+    color: #7FAC5B;
+}
+
+/* ---------------- 空状态 ---------------- */
+
+.vn-empty-state {
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+}
+
+.vn-empty-state Label {
+    font-size: 12px;
+    color: #6E6E6E;
+    white-space: normal;
+    -unity-text-align: middle-center;
+    max-width: 380px;
+}

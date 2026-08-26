@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Commands.Meta;
 using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
@@ -11,8 +12,12 @@ namespace VNovelizer.Core.Commands
     /// 主背景演员 + 临时演员交叉淡化（视觉行为一致，状态始终反映终态）。
     /// 后续阶段将接入"资源名.过渡名"的着色器转场语法。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance, "交叉淡化切换背景（同时更新继承状态）")]
     public class BgFadeCommand : VNCommand
     {
+        [VNParam(0, "background", VNParamType.BackgroundName, Description = "目标背景资源名")]
+        [VNParam(1, "duration", VNParamType.Float, Min = 0f, Max = 10f, Default = "1.0",
+            Optional = true, Description = "淡化秒数")]
         public override string CommandName { get { return "bgfade"; } }
 
         private float defaultDuration = 1.0f;

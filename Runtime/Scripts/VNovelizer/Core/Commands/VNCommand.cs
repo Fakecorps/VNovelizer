@@ -59,6 +59,43 @@ namespace VNovelizer.Core.Commands
         public bool IsRunning => _runningCommandRefCount.Count > 0;
 
         /// <summary>
+        /// 已注册的命令数量（0 表示尚未 Init）。
+        /// </summary>
+        public int RegisteredCommandCount => _commandMap.Count;
+
+        /// <summary>
+        /// 命令名是否已注册（大小写不敏感）。
+        /// 行演出编辑器的图校验用它判定"未注册命令"（拼写错 / 未实现）。
+        /// </summary>
+        public bool IsCommandRegistered(string commandName)
+        {
+            return !string.IsNullOrEmpty(commandName) &&
+                   _commandMap.ContainsKey(commandName.ToLower());
+        }
+
+        /// <summary>
+        /// 枚举全部已注册命令实例（只读快照）。
+        /// 供命令节点化元数据读取器（<c>CommandMetaReader</c>）反射读取
+        /// <c>[VNCommandMeta]</c>/<c>[VNParam]</c> 特性，以及命令面板列表构建。
+        /// 含通过反射自动注册的**第三方自定义命令**——这是插件扩展点得以进入
+        /// 图编辑器的关键（详见 VNCommandMetaAttribute 的设计契约说明）。
+        /// </summary>
+        public IEnumerable<KeyValuePair<string, VNCommand>> EnumerateRegisteredCommands()
+        {
+            // 返回副本，避免调用方枚举期间注册新命令导致 InvalidOperationException
+            return new List<KeyValuePair<string, VNCommand>>(_commandMap);
+        }
+
+        /// <summary>
+        /// 确保命令表已初始化（幂等）。
+        /// Editor 工具在非播放模式下需要命令表时调用——运行时由 VNManager 负责 Init。
+        /// </summary>
+        public void EnsureInitialized()
+        {
+            if (_commandMap.Count == 0) Init();
+        }
+
+        /// <summary>
         /// 初始化
         /// </summary>
         public void Init()
@@ -67,8 +104,56 @@ namespace VNovelizer.Core.Commands
             RegisterCustomCommandsViaReflection();
         }
 
+        /// <summary>
+        /// 系统命令名集合（小写）。这六个命令构成默认演出模板，
+        /// 是**三层行形态判定**的依据：Command 列含其中任一 → 该行为「定制行」
+        /// （模板已实体化，引擎不再走隐式演出路径）。
+        /// 详见 VNCommandChainSpec.md §11.2。
+        /// </summary>
+        private static readonly HashSet<string> SystemCommandNames = new HashSet<string>
+        {
+            "showbg", "showchar", "showspeaker", "showdialogue", "playbgm", "playvoice"
+        };
+
+        /// <summary>命令名是否属于系统命令族（大小写不敏感）。</summary>
+        public static bool IsSystemCommand(string commandName)
+        {
+            return !string.IsNullOrEmpty(commandName) &&
+                   SystemCommandNames.Contains(commandName.ToLower());
+        }
+
+        /// <summary>
+        /// 判断一段命令链文本中是否含系统命令（三层行形态判定入口）。
+        /// 复用 <see cref="ChainParser"/> 解析后深度优先展开，因此
+        /// <c>&amp;</c> / <c>-&gt;</c> / <c>[]</c> 任意嵌套结构都能正确识别。
+        /// </summary>
+        public static bool ContainsSystemCommand(string commandString)
+        {
+            if (string.IsNullOrEmpty(commandString)) return false;
+
+            var parsed = ChainParser.Parse(commandString);
+            if (parsed.Root == null) return false;
+
+            var collected = new List<CommandNode>();
+            ChainExecutor.CollectCommands(parsed.Root, collected);
+            foreach (var node in collected)
+            {
+                if (IsSystemCommand(node.Name)) return true;
+            }
+            return false;
+        }
+
         private void RegisterDefaultCommands()
         {
+            // 系统命令族：构成默认演出模板，图编辑器与三层行形态判定均依赖其必然存在，
+            // 因此显式注册（不依赖反射扫描的偶然性）。详见 VNCommandChainSpec.md §11.4
+            RegisterCommand(new SystemCommands.ShowBgCommand());
+            RegisterCommand(new SystemCommands.ShowCharCommand());
+            RegisterCommand(new SystemCommands.ShowSpeakerCommand());
+            RegisterCommand(new SystemCommands.ShowDialogueCommand());
+            RegisterCommand(new SystemCommands.PlayBgmCommand());
+            RegisterCommand(new SystemCommands.PlayVoiceCommand());
+
             RegisterCommand(new LoadScriptCommand());
             RegisterCommand(new UnlockCGCommand());
             RegisterCommand(new UnlockMusicCommand());
@@ -110,6 +195,7 @@ namespace VNovelizer.Core.Commands
         private void RegisterCustomCommandsViaReflection()
         {
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            var autoRegistered = new List<string>();
 
             foreach (var assembly in assemblies)
             {
@@ -118,8 +204,28 @@ namespace VNovelizer.Core.Commands
                 if (name.StartsWith("Unity") || name.StartsWith("System") || name.StartsWith("mscorlib"))
                     continue;
 
-                var commandTypes = assembly.GetTypes()
-                    .Where(type => type.IsSubclassOf(typeof(VNCommand)) && !type.IsAbstract);
+                // 【健壮性 2026-08-26】GetTypes() 原在 try 之外：某个程序集类型加载失败抛出的
+                // ReflectionTypeLoadException 会中断整个 foreach，导致其后所有程序集的命令
+                // 全部注册不上。Editor 域程序集数量远多于运行时（各类插件/分析器），风险更高，
+                // 且这会直接破坏"第三方自定义命令可进图编辑器"这一核心扩展点。
+                // 现按程序集粒度隔离；ReflectionTypeLoadException 时取其已成功加载的部分类型。
+                Type[] allTypes;
+                try
+                {
+                    allTypes = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException e)
+                {
+                    allTypes = e.Types.Where(t => t != null).ToArray();
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[CommandManager] 跳过程序集 {name}（类型枚举失败）: {e.Message}");
+                    continue;
+                }
+
+                var commandTypes = allTypes
+                    .Where(type => type != null && type.IsSubclassOf(typeof(VNCommand)) && !type.IsAbstract);
 
                 foreach (var type in commandTypes)
                 {
@@ -134,7 +240,7 @@ namespace VNovelizer.Core.Commands
                             if (!_commandMap.ContainsKey(cmdNameKey))
                             {
                                 RegisterCommand(cmdInstance);
-                                Debug.Log($"[CommandManager] 自动注册命令成功 {type.Name} => {cmdNameKey}");
+                                autoRegistered.Add(cmdNameKey);
                             }
                         }
                     }
@@ -143,6 +249,13 @@ namespace VNovelizer.Core.Commands
                         Debug.LogError($"[CommandManager] 自动注册命令失败 {type.Name}: {e.Message}");
                     }
                 }
+            }
+
+            // 汇总为一条日志：逐条 Log 在 Editor 工具（如命令元数据检查器）触发初始化时会刷屏
+            if (autoRegistered.Count > 0)
+            {
+                Debug.Log($"[CommandManager] 反射自动注册 {autoRegistered.Count} 个命令: " +
+                          string.Join(", ", autoRegistered));
             }
         }
 
@@ -311,6 +424,38 @@ namespace VNovelizer.Core.Commands
             }
 
             // 旧逻辑（兼容模式）
+            string[] actions = commandString.Split('&');
+            foreach (string action in actions)
+            {
+                string trimmedAction = action.Trim();
+                if (!string.IsNullOrEmpty(trimmedAction)) ExecuteCommand(trimmedAction);
+            }
+        }
+
+        /// <summary>
+        /// 【skip / 快进落地专用】按深度优先展开顺序同步执行全部命令，**不打时序警告**。
+        ///
+        /// <para>
+        /// 与 <see cref="ExecuteCommands"/> 的区别仅在于不发出"同步模式忽略时序"的警告——
+        /// 因为在 skip 语境下"忽略时序、直接取终态"正是**预期语义**，而非误用。
+        /// 定制行的演出完全由命令链承载，skip 时必须走这里而非 <c>SimulateCommands</c>
+        /// （后者只更新状态，画面不会出现文本/背景/立绘）。
+        /// </para>
+        /// </summary>
+        public void ExecuteCommandsInstant(string commandString)
+        {
+            if (string.IsNullOrEmpty(commandString)) return;
+
+            var chainResult = ChainParser.Parse(commandString);
+            if (chainResult.UsesChainSyntax && chainResult.Root != null)
+            {
+                var collected = new List<CommandNode>();
+                ChainExecutor.CollectCommands(chainResult.Root, collected);
+                foreach (var cmd in collected)
+                    ExecuteSingleCommand(cmd.Name, cmd.Args);
+                return;
+            }
+
             string[] actions = commandString.Split('&');
             foreach (string action in actions)
             {

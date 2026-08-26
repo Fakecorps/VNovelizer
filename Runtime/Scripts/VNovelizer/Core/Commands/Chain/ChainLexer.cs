@@ -93,7 +93,10 @@ namespace VNovelizer.Core.Commands.Chain
 
                     if (inQuote)
                     {
-                        if (cc == '\\') { pos += 2; continue; } // 转义（如 \"）
+                        // 转义（如 \"）：跳过反斜杠与被转义字符。
+                        // 【边界】反斜杠位于串尾时只能前进 1，否则 pos 越过 len 导致后面的
+                        // Substring(start, pos - start) 抛 ArgumentOutOfRangeException。
+                        if (cc == '\\') { pos += (pos + 1 < len) ? 2 : 1; continue; }
                         if (cc == '"') inQuote = false;
                         pos++;
                         continue;
@@ -105,7 +108,10 @@ namespace VNovelizer.Core.Commands.Chain
 
                     if (cc == ')')
                     {
-                        parenDepth--;
+                        // 【边界】多余的 ')'（如 "showbg(a)) -> wait(1)"）不能让深度变负——
+                        // 否则 parenDepth == 0 的顶层判定永久失效，剩余整串被吞成一个 Token
+                        // （"-> wait(1)" 被静默吃掉）。下限 clamp 到 0，语法错误交由解析器报告。
+                        if (parenDepth > 0) parenDepth--;
                         pos++;
                         continue; // 括号闭合后仍可继续读取（顶层遇到分隔符才断开）
                     }

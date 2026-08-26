@@ -1,9 +1,15 @@
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
+    /// <summary>
+    /// 无条件跳转到指定行 ID。流程命令——必须置于命令链末尾。
+    /// </summary>
+    [VNCommandMeta(VNCommandCategory.Flow, "跳转到指定行 ID（流程命令，必须位于链尾）")]
     public class JumpCommand : VNCommand
     {
+        [VNParam(0, "targetLineId", VNParamType.LineId, Description = "目标行 ID")]
         public override string CommandName { get { return "jump"; } }
 
         public override bool Execute(string args)

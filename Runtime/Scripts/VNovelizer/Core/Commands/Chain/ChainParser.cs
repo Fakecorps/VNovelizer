@@ -26,11 +26,28 @@ namespace VNovelizer.Core.Commands.Chain
         /// 流程控制命令集合：会改变当前行/剧本/场景的命令。
         /// 语义约定：必须是整条命令链的最后一个命令，
         /// 否则其后的命令会在"行已切换"的上下文中执行（演出污染/对象失效）。
+        ///
+        /// 【2026-08-26 补全】条件跳转族（jumpif/jumpifnot/loadscriptif/loadscriptifnot）
+        /// 同样改写行索引/剧本数据源，此前遗漏导致其非链尾时不报警告。
+        /// 行演出编辑器的图结构校验（流程命令仅可连链尾）必须与本集合对齐。
         /// </summary>
         private static readonly HashSet<string> FlowCommands = new HashSet<string>
         {
-            "jump", "choice", "loadscript", "loadscene"
+            "jump", "jumpif", "jumpifnot",
+            "loadscript", "loadscriptif", "loadscriptifnot",
+            "choice", "loadscene"
         };
+
+        /// <summary>
+        /// 判断命令名是否为流程控制命令（大小写不敏感）。
+        /// 行演出编辑器的图结构校验（"流程命令仅可连在链尾"）应调用本方法，
+        /// 避免 Editor 侧另抄一份集合造成定义漂移。
+        /// </summary>
+        public static bool IsFlowCommand(string commandName)
+        {
+            return !string.IsNullOrEmpty(commandName) &&
+                   FlowCommands.Contains(commandName.ToLower());
+        }
 
         /// <summary>
         /// 解析命令串。无论是否使用链式语法都返回解析树，
@@ -56,7 +73,7 @@ namespace VNovelizer.Core.Commands.Chain
 
             int index = 0;
             int depth = 0;
-            ChainNode root = ParseSeq(tokens, ref index, errors, ref depth);
+            ChainNode root = ParseSeq(tokens, ref index, errors, result.Warnings, ref depth);
 
             // 尾部剩余 Token 检查（正常应恰好消费完）
             if (index < tokens.Count)
@@ -75,7 +92,8 @@ namespace VNovelizer.Core.Commands.Chain
 
         /// <summary>
         /// 语义校验（产生警告，不阻断执行）：
-        /// 1. 流程命令（jump/choice/loadscript/loadscene）必须是深度优先展开后的最后一个命令
+        /// 1. 流程命令（jump 族 / loadscript 族 / choice / loadscene，见 <see cref="FlowCommands"/>）
+        ///    必须是深度优先展开后的最后一个命令
         /// 2. playvideo 的"结束后命令"第二参数在链式语法下应改用 "-&gt;" 表达
         /// </summary>
         private static void ValidateFlowCommands(ChainNode root, ChainParseResult result)
@@ -106,7 +124,19 @@ namespace VNovelizer.Core.Commands.Chain
                     if (commaIndex >= 0)
                     {
                         string rest = cmd.Args.Substring(commaIndex + 1).ToLower();
-                        if (rest.Contains("jump(") || rest.Contains("loadscript(") || rest.Contains("loadscene("))
+                        // 【2026-08-26】改为遍历 FlowCommands 集合，与校验 1 共用同一份定义
+                        // （此前硬编码 jump/loadscript/loadscene 三个，漏掉条件跳转族）
+                        bool carriesFlowCommand = false;
+                        foreach (var flow in FlowCommands)
+                        {
+                            if (rest.Contains(flow + "("))
+                            {
+                                carriesFlowCommand = true;
+                                break;
+                            }
+                        }
+
+                        if (carriesFlowCommand)
                         {
                             result.Warnings.Add(new ChainError(
                                 "链式语法下建议使用 '-&gt;' 代替 playvideo 的第二参数（如 playvideo(a.mp4) -&gt; jump(x)），避免双重流程语义",
@@ -132,12 +162,12 @@ namespace VNovelizer.Core.Commands.Chain
         // ---------------- 串行表达式：并行组 { "->" 并行组 } ----------------
 
         private static ChainNode ParseSeq(List<ChainToken> tokens, ref int index,
-            List<ChainError> errors, ref int depth)
+            List<ChainError> errors, List<ChainError> warnings, ref int depth)
         {
             var node = new SeqNode();
             node.Position = index < tokens.Count ? tokens[index].Position : 0;
 
-            node.Children.Add(ParsePar(tokens, ref index, errors, ref depth));
+            node.Children.Add(ParsePar(tokens, ref index, errors, warnings, ref depth));
 
             while (index < tokens.Count && tokens[index].Type == ChainTokenType.Arrow)
             {
@@ -150,7 +180,7 @@ namespace VNovelizer.Core.Commands.Chain
                     break;
                 }
 
-                node.Children.Add(ParsePar(tokens, ref index, errors, ref depth));
+                node.Children.Add(ParsePar(tokens, ref index, errors, warnings, ref depth));
             }
 
             return node;
@@ -159,12 +189,12 @@ namespace VNovelizer.Core.Commands.Chain
         // ---------------- 并行组：单元 { "&" 单元 } ----------------
 
         private static ChainNode ParsePar(List<ChainToken> tokens, ref int index,
-            List<ChainError> errors, ref int depth)
+            List<ChainError> errors, List<ChainError> warnings, ref int depth)
         {
             var node = new ParNode();
             node.Position = index < tokens.Count ? tokens[index].Position : 0;
 
-            node.Children.Add(ParseUnit(tokens, ref index, errors, ref depth));
+            node.Children.Add(ParseUnit(tokens, ref index, errors, warnings, ref depth));
 
             while (index < tokens.Count && tokens[index].Type == ChainTokenType.Amp)
             {
@@ -180,7 +210,7 @@ namespace VNovelizer.Core.Commands.Chain
                     break;
                 }
 
-                node.Children.Add(ParseUnit(tokens, ref index, errors, ref depth));
+                node.Children.Add(ParseUnit(tokens, ref index, errors, warnings, ref depth));
             }
 
             return node;
@@ -189,7 +219,7 @@ namespace VNovelizer.Core.Commands.Chain
         // ---------------- 单元：命令 | "[" 命令链 "]" ----------------
 
         private static ChainNode ParseUnit(List<ChainToken> tokens, ref int index,
-            List<ChainError> errors, ref int depth)
+            List<ChainError> errors, List<ChainError> warnings, ref int depth)
         {
             if (index >= tokens.Count)
             {
@@ -201,7 +231,7 @@ namespace VNovelizer.Core.Commands.Chain
 
             if (token.Type == ChainTokenType.LBracket)
             {
-                return ParseGroup(tokens, ref index, errors, ref depth);
+                return ParseGroup(tokens, ref index, errors, warnings, ref depth);
             }
 
             if (token.Type == ChainTokenType.Command)
@@ -214,7 +244,7 @@ namespace VNovelizer.Core.Commands.Chain
             {
                 errors.Add(new ChainError("多余的 ']'（未开启的分组）", token.Position));
                 index++; // 错误恢复：跳过
-                return ParseUnit(tokens, ref index, errors, ref depth); // 重试解析下一个单元
+                return ParseUnit(tokens, ref index, errors, warnings, ref depth); // 重试解析下一个单元
             }
 
             // 其他意外符号（如残留的 ->）——报错并跳过
@@ -226,15 +256,18 @@ namespace VNovelizer.Core.Commands.Chain
         // ---------------- 分组："[" 命令链 "]" ----------------
 
         private static ChainNode ParseGroup(List<ChainToken> tokens, ref int index,
-            List<ChainError> errors, ref int depth)
+            List<ChainError> errors, List<ChainError> warnings, ref int depth)
         {
             var lbracket = tokens[index];
             index++; // 消费 [
             depth++;
 
+            // 【2026-08-26 修正】嵌套过深属"建议拆分"性质的提示，此前误入 Errors 导致
+            // ChainParseResult.Success == false + 上层 Debug.LogError；且行演出编辑器若以
+            // Success 作为保存闸门，3 层嵌套将无法保存。规范（§7.5）明确其为警告不阻断。
             if (depth > MaxRecommendedDepth)
             {
-                errors.Add(new ChainError(
+                warnings.Add(new ChainError(
                     $"命令分组嵌套过深（{depth} 层，建议 ≤{MaxRecommendedDepth} 层），可读性差，建议拆分",
                     lbracket.Position));
             }
@@ -248,7 +281,7 @@ namespace VNovelizer.Core.Commands.Chain
                 return CreatePlaceholderCommand();
             }
 
-            var child = ParseSeq(tokens, ref index, errors, ref depth);
+            var child = ParseSeq(tokens, ref index, errors, warnings, ref depth);
 
             if (index < tokens.Count && tokens[index].Type == ChainTokenType.RBracket)
             {

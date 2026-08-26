@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
 using VNovelizer.Core.Commands;
+using VNovelizer.Core.Commands.Meta;
 using UnityEngine.SceneManagement;
 using UnityEngine.Events;
 using VNovelizer.Core.API; // 引用 API 以便调用 ClearAllEffects
@@ -35,6 +36,18 @@ public class VNManager : BaseManager<VNManager>
     private string currentBG = null;
     private string currentBGM = null;
     private string currentScriptName;
+
+    /// <summary>
+    /// 当前正在处理的行的解析后上下文，供系统命令的隐式绑定读取
+    /// （<c>showDialogue()</c> / <c>showbg()</c> 等空参命令引用本行数据列）。
+    ///
+    /// 在 Execute 与 Simulate **两条路径**的行处理入口统一赋值，
+    /// 且必须早于命令执行/模拟——否则命令会读到上一行的数据。
+    /// 未在演出中（未加载剧本 / 已回主菜单）时为 null。
+    ///
+    /// 命令侧不要直接访问本属性，请用 <c>VNAPI.GetCurrentLineContext()</c>。
+    /// </summary>
+    public VNLineContext CurrentLineContext { get; private set; }
     private Dictionary<string, string> currentCharacters = new Dictionary<string, string>();
     private Dictionary<string, float> currentCharactersScaleX = new Dictionary<string, float>();
     /// <summary>读档后首帧播放：CSV 立绘列为空时，使用存档恢复的 currentCharacters，避免误清空槽位。</summary>
@@ -283,6 +296,8 @@ public class VNManager : BaseManager<VNManager>
         currentCharactersScaleX.Clear();
         isVoiceEnabled = true;
         lastLine = null;
+        // 与 lastLine 同一语义组：剧本卸载后系统命令不应再读到已失效的行数据
+        CurrentLineContext = null;
         autoSaveLineCounter = 0; // 新剧本/预演重置行数计数，避免跨剧本残留计数
     }
     
@@ -399,21 +414,13 @@ public class VNManager : BaseManager<VNManager>
                 encounteredChoice = true;
                 VNDebug.LogVerbose($"[VNManager] 快进过程中遇到选项命令，停止在第 {i} 行 (ID: {line.ID})");
                 
-                // 先应用当前行的状态（背景、立绘、BGM等）
-                if (!string.IsNullOrEmpty(line.Background)) currentBG = line.Background;
-                if (!string.IsNullOrEmpty(line.BGM))
-                {
-                    if (line.BGM == "stop") currentBGM = "";
-                    else if (line.BGM != "pause" && line.BGM != "resume") currentBGM = line.BGM;
-                }
-                SimulateCharacterUpdate("Left", line.CharLeft);
-                SimulateCharacterUpdate("MidLeft", line.CharMid_Left);
-                SimulateCharacterUpdate("Mid", line.CharMid);
-                SimulateCharacterUpdate("MidRight", line.CharMid_Right);
-                SimulateCharacterUpdate("Right", line.CharRight);
+                // 先应用当前行的状态（背景、立绘、BGM等）——按三层形态分流
+                SimulateLineVisualAudioState(line);
                 if (line.Voice == "false") isVoiceEnabled = false;
                 else if (!string.IsNullOrEmpty(line.Voice)) isVoiceEnabled = true;
+                // lastLine 与行上下文必须早于 SimulateCommands（隐式绑定的系统命令要读"正在预演的行"）
                 lastLine = line;
+                SetLineContextForSimulate(line, i);
                 
                 // 先应用其他命令（不包括 choice）
                 // [Flag 扩展] 模拟前复位跳转请求，模拟后按需消费
@@ -438,8 +445,7 @@ public class VNManager : BaseManager<VNManager>
                     {
                         encounteredChoice = false;
                         i = jumpTarget - 1;
-                        lastLine = line;
-                        continue;
+                        continue; // lastLine 已在本分支上方赋值
                     }
                     Debug.LogError($"[VNManager] 快进中跳转目标越界: index={jumpTarget}");
                 }
@@ -448,26 +454,21 @@ public class VNManager : BaseManager<VNManager>
                 break;
             }
 
-            // 1. 基础属性
-            if (!string.IsNullOrEmpty(line.Background)) currentBG = line.Background;
+            // 三层形态分流（与 Execute 路径一致）：定制行的视听状态由命令链的 Simulate 负责，
+            // 引擎不做隐式更新，否则会与命令链重复施加（如背景被隐式设置后又被 showbg 设置）。
+            SimulateLineVisualAudioState(line);
 
-            // 2. BGM (只记录状态，不播放)
-            if (!string.IsNullOrEmpty(line.BGM))
-            {
-                if (line.BGM == "stop") currentBGM = "";
-                else if (line.BGM != "pause" && line.BGM != "resume") currentBGM = line.BGM;
-            }
-
-            // 3. 立绘
-            SimulateCharacterUpdate("Left", line.CharLeft);
-            SimulateCharacterUpdate("MidLeft", line.CharMid_Left);
-            SimulateCharacterUpdate("Mid", line.CharMid);
-            SimulateCharacterUpdate("MidRight", line.CharMid_Right);
-            SimulateCharacterUpdate("Right", line.CharRight);
-
-            // 4. 语音
+            // 4. 语音开关（与形态无关：Voice 列的 false 是全局开关语义，非本行演出）
             if (line.Voice == "false") isVoiceEnabled = false;
             else if (!string.IsNullOrEmpty(line.Voice)) isVoiceEnabled = true;
+
+            // 【顺序修正 2026-08-26】lastLine 必须在 SimulateCommands 之前指向"正在预演的行"。
+            // 原实现在循环末尾（Command 模拟之后）才赋值，导致命令 Simulate 期间 lastLine 仍是上一行。
+            // 现有命令都不读 lastLine 所以未暴露；但隐式绑定的系统命令（showDialogue()/showbg() 等
+            // 空参引用本行数据列）一旦落地，会静默读到上一行的 Text/Background。
+            // choice 分支（上方）本就是"先赋值后模拟"，此处对齐，两条路径语义统一。
+            lastLine = line;
+            SetLineContextForSimulate(line, i);
 
             // 5. Command 模拟 (特效、Flags 等)
             // [Flag 扩展] 模拟前复位跳转请求；模拟后消费 jump/jumpif/loadscriptif 产生的快进跳转
@@ -497,8 +498,7 @@ public class VNManager : BaseManager<VNManager>
                 {
                     i = jumpIndex - 1; // for 自增后指向目标行
                 }
-                lastLine = line;
-                continue;
+                continue; // lastLine 已在上方赋值
             }
 
             // [Confirm 出口] 快进假设用户已点击本行：enter 段未产生跳转时模拟出口段并消费其跳转。
@@ -527,8 +527,6 @@ public class VNManager : BaseManager<VNManager>
                     }
                 }
             }
-
-            lastLine = line;
         }
 
         // 预演结束，应用 BGM 和 特效（只有完全快进到目标行时才应用）
@@ -702,6 +700,10 @@ public class VNManager : BaseManager<VNManager>
         this.CurrentLineIndex = 0;
         this.lastLine = null;
         this.currentScriptName = scriptName;
+
+        // 行形态判定缓存以 StoryLine 引用为键，换剧本后旧引用全部失效，必须清空
+        // （不清空不会出错，但会无上限累积——长时间游玩跨越多个剧本时形成泄漏）
+        this._customRowCache.Clear();
     }
 
     public string GetCurrentScriptName()
@@ -900,11 +902,28 @@ public class VNManager : BaseManager<VNManager>
 
         var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
+        SetLineContextForPlay(currentLine, resolved);
 
-        UpdateVisualState(resolved);
-        UpdateCharacterSlots(currentLine);
-        UpdateAudioState(resolved);
-        UpdateDialogue(currentLine, resolved);
+        // 三层行形态分流（详见 VNCommandChainSpec.md §11.2）：
+        //   普通行 / 增强行 → 引擎播放隐式演出，随后执行 Command 列（若有）
+        //   定制行           → 模板已实体化进 Command 列，引擎跳过隐式演出，全权交由命令链
+        // 判定 = Command 列是否含系统命令。这个规则让存量剧本零迁移：
+        // 老剧本的 Command 列不可能含系统命令（它们本次才引入），故恒为普通/增强行。
+        bool isCustomRow = IsCustomPerformanceRow(currentLine);
+
+        if (!isCustomRow)
+        {
+            UpdateVisualState(resolved);
+            UpdateCharacterSlots(currentLine);
+            UpdateAudioState(resolved);
+            UpdateDialogue(currentLine, resolved);
+        }
+        else
+        {
+            // 定制行：仅做与演出无关、但每行必须发生的准备工作。
+            // 立绘槽位基准需预先重置，否则 charmove 等"不继承"命令会叠加到上一行的偏移上。
+            PrepareCustomRowBaseline();
+        }
 
         GlobalDataManager.GetInstance().AddReadLineID(currentLine.ID);
 
@@ -1097,19 +1116,42 @@ public class VNManager : BaseManager<VNManager>
 
         var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
+        SetLineContextForPlay(currentLine, resolved);
 
-        UpdateVisualState(resolved);
-        UpdateCharacterSlots(currentLine);
-        UpdateAudioState(resolved);
-        UpdateDialogue(currentLine, resolved);
-        EventCenter.GetInstance().EventTrigger(VNGameEvents.DisplayAllText);
+        // 三层形态分流（与 PlayCurrentLine 一致）。
+        // 本路径用于 skip / 快进落地：不播动画，直接呈现终态。
+        bool isCustomRow = IsCustomPerformanceRow(currentLine);
+
+        if (!isCustomRow)
+        {
+            UpdateVisualState(resolved);
+            UpdateCharacterSlots(currentLine);
+            UpdateAudioState(resolved);
+            UpdateDialogue(currentLine, resolved);
+            EventCenter.GetInstance().EventTrigger(VNGameEvents.DisplayAllText);
+        }
+        else
+        {
+            PrepareCustomRowBaseline();
+        }
 
         GlobalDataManager.GetInstance().AddReadLineID(currentLine.ID);
 
         int preIndex = CurrentLineIndex;
         if (!string.IsNullOrEmpty(currentLine.Command))
         {
-            CommandManager.GetInstance().SimulateCommands(currentLine.Command);
+            // 定制行的演出完全由命令链承载，若此处只 Simulate（showDialogue.Simulate 是空实现），
+            // 画面会没有文本/背景/立绘。故对定制行改走同步瞬时执行：
+            // 系统命令的同步实现即"瞬时呈现终态"，恰好匹配 skip 语义。
+            if (isCustomRow)
+            {
+                CommandManager.GetInstance().ExecuteCommandsInstant(currentLine.Command);
+                EventCenter.GetInstance().EventTrigger(VNGameEvents.DisplayAllText);
+            }
+            else
+            {
+                CommandManager.GetInstance().SimulateCommands(currentLine.Command);
+            }
         }
 
         if (CurrentLineIndex != preIndex)
@@ -1120,6 +1162,109 @@ public class VNManager : BaseManager<VNManager>
         {
             CheckAndTriggerAutoPlay();
         }
+    }
+
+    // ===================== 三层行形态分流 =====================
+
+    /// <summary>
+    /// 行形态判定缓存：key = StoryLine 引用，value = 是否定制行。
+    /// <c>ContainsSystemCommand</c> 需要跑 ChainParser，每行播放都解析一次不可接受
+    /// （jump 回跳、AutoPlay 连播会反复经过同一行）。
+    /// StoryLine 在剧本生命周期内是稳定引用，故可直接作键；
+    /// 换剧本时 <c>SetScriptData</c> 会清空本缓存。
+    /// </summary>
+    private readonly Dictionary<StoryLine, bool> _customRowCache = new Dictionary<StoryLine, bool>();
+
+    /// <summary>
+    /// 该行是否为「定制行」——Command 列含系统命令，意味着默认演出模板已被实体化，
+    /// 引擎不应再播放隐式演出（否则与命令链重复执行，画面闪烁/音频重播）。
+    ///
+    /// <para>
+    /// <b>向后兼容的关键</b>：存量剧本的 Command 列不可能含系统命令
+    /// （showbg/showChar/showSpeaker/showDialogue/playBGM/playVoice 是本次才引入的名字），
+    /// 因此老剧本恒判为普通行/增强行，行为与改动前逐字一致——零迁移不靠兼容代码，
+    /// 而靠判定规则本身天然成立。
+    /// </para>
+    /// </summary>
+    private bool IsCustomPerformanceRow(StoryLine line)
+    {
+        if (line == null || string.IsNullOrEmpty(line.Command)) return false;
+
+        if (_customRowCache.TryGetValue(line, out bool cached)) return cached;
+
+        bool isCustom = CommandManager.ContainsSystemCommand(line.Command);
+        _customRowCache[line] = isCustom;
+        return isCustom;
+    }
+
+    /// <summary>
+    /// 定制行的每行准备工作：把跳过隐式演出后会丢失的**规则性行为**补回来。
+    ///
+    /// <para>
+    /// <b>预清空五个立绘槽位</b>——这是必需的，不是保险措施。普通行由
+    /// <c>UpdateCharacterSlots</c> 对五槽逐一调用 <c>UpdateCharacter</c>，
+    /// 空值即触发 HideCharacter，这正是框架「立绘列不继承，空 = 隐藏」规则的执行者。
+    /// 定制行跳过该步后，若作者的图里只写了 <c>showChar(M)</c>，
+    /// 其余四槽的上一行立绘会残留——既违反既定规则，也破坏「提升不改变演出」硬契约
+    /// （默认模板本会生成全部五个 showChar，其中四个为空值即隐藏）。
+    /// 因此先清空，再由命令链按需登台。
+    /// </para>
+    ///
+    /// <para>
+    /// <b>不需要重置槽位基准位置</b>：查证 <c>TheaterManager.OnShowCharacter</c>
+    /// （TheaterManager.cs:119-162）确认，每次显示角色都从
+    /// <c>SlotBasePositions[posCode] + profile.offset</c> 重新布局，
+    /// 故 <c>charmove</c> 的偏移不会跨行叠加。
+    /// </para>
+    /// </summary>
+    private void PrepareCustomRowBaseline()
+    {
+        UpdateCharacter("Left", null);
+        UpdateCharacter("MidLeft", null);
+        UpdateCharacter("Mid", null);
+        UpdateCharacter("MidRight", null);
+        UpdateCharacter("Right", null);
+    }
+
+    /// <summary>
+    /// 【Simulate 路径】按三层行形态更新本行的视听状态（背景 / BGM / 立绘字典）。
+    ///
+    /// 这是 <see cref="PrepareCustomRowBaseline"/> 在预演侧的对偶：
+    /// 普通行/增强行按数据列施加隐式状态；定制行清空立绘后交由命令链的
+    /// <c>Simulate</c> 负责（否则会与命令链重复施加，例如背景被隐式设置后又被
+    /// <c>showbg</c> 设置一次）。
+    ///
+    /// 抽成方法是因为 <c>FastForwardToLine</c> 的主循环与 choice 分支需要**完全一致**
+    /// 的处理——原先两处各写一份，分流规则一旦只改一处就会静默漂移。
+    /// </summary>
+    private void SimulateLineVisualAudioState(StoryLine line)
+    {
+        if (!IsCustomPerformanceRow(line))
+        {
+            // 背景（唯一继承列：空则沿用当前状态）
+            if (!string.IsNullOrEmpty(line.Background)) currentBG = line.Background;
+
+            // BGM（只记录状态，不播放）
+            if (!string.IsNullOrEmpty(line.BGM))
+            {
+                if (line.BGM == "stop") currentBGM = "";
+                else if (line.BGM != "pause" && line.BGM != "resume") currentBGM = line.BGM;
+            }
+
+            SimulateCharacterUpdate("Left", line.CharLeft);
+            SimulateCharacterUpdate("MidLeft", line.CharMid_Left);
+            SimulateCharacterUpdate("Mid", line.CharMid);
+            SimulateCharacterUpdate("MidRight", line.CharMid_Right);
+            SimulateCharacterUpdate("Right", line.CharRight);
+            return;
+        }
+
+        // 定制行：立绘清空，随后由命令链的 showChar.Simulate 按需登记
+        SimulateCharacterUpdate("Left", null);
+        SimulateCharacterUpdate("MidLeft", null);
+        SimulateCharacterUpdate("Mid", null);
+        SimulateCharacterUpdate("MidRight", null);
+        SimulateCharacterUpdate("Right", null);
     }
 
     /// <summary>
@@ -1192,6 +1337,72 @@ public class VNManager : BaseManager<VNManager>
         }
 
         return resolved;
+    }
+
+    // ===================== 隐式绑定行上下文 =====================
+
+    /// <summary>
+    /// 【Execute 路径】用已算好的 <see cref="ResolvedLine"/> 填充 <see cref="CurrentLineContext"/>。
+    /// 必须在 UpdateXxx / 命令执行之前调用。
+    /// </summary>
+    private void SetLineContextForPlay(StoryLine line, ResolvedLine resolved)
+    {
+        CurrentLineContext = new VNLineContext(
+            lineID: line.ID,
+            lineIndex: CurrentLineIndex,
+            speaker: resolved.Speaker,
+            text: resolved.Text,
+            headProfile: resolved.HeadProfile,
+            background: resolved.Background,
+            bgm: resolved.BGM,
+            voice: resolved.Voice,
+            charLeft: line.CharLeft,
+            charMidLeft: line.CharMid_Left,
+            charMid: line.CharMid,
+            charMidRight: line.CharMid_Right,
+            charRight: line.CharRight,
+            isSimulating: false);
+    }
+
+    /// <summary>
+    /// 【Simulate 路径】为快进预演填充 <see cref="CurrentLineContext"/>。
+    ///
+    /// 不复用 <see cref="ResolveLine"/>，因为该方法有**副作用**（写 isVoiceEnabled），
+    /// 而快进循环已按自己的顺序处理过继承与语音开关。
+    ///
+    /// <para>
+    /// <b>背景/BGM 的取值必须自行推导，不能直接读 currentBG/currentBGM</b>：
+    /// 定制行跳过了引擎的隐式状态更新（由命令链的 Simulate 负责），
+    /// 此时 <c>currentBG</c> 仍是上一行的值。若上下文直接取它，
+    /// <c>showbg()</c> 的隐式绑定就会读到上一行背景——形成"命令依赖状态、
+    /// 状态又依赖命令"的循环。故此处按与 <see cref="ResolveLine"/> 相同的
+    /// 继承规则推导：本行非空取本行，为空则继承当前状态。
+    /// </para>
+    ///
+    /// 语音路径在预演中不需要（不播放音频），置空即可——系统命令的
+    /// <c>Simulate</c> 只更新状态，不会用到语音文件名。
+    /// </summary>
+    private void SetLineContextForSimulate(StoryLine line, int lineIndex)
+    {
+        // 与 ResolveLine 一致的继承规则：本行有值用本行，无值继承当前状态
+        string background = string.IsNullOrEmpty(line.Background) ? currentBG : line.Background;
+        string bgm = string.IsNullOrEmpty(line.BGM) ? currentBGM : line.BGM;
+
+        CurrentLineContext = new VNLineContext(
+            lineID: line.ID,
+            lineIndex: lineIndex,
+            speaker: line.Speaker,
+            text: line.Text,
+            headProfile: line.HeadProfile,
+            background: background,
+            bgm: bgm,
+            voice: "",
+            charLeft: line.CharLeft,
+            charMidLeft: line.CharMid_Left,
+            charMid: line.CharMid,
+            charMidRight: line.CharMid_Right,
+            charRight: line.CharRight,
+            isSimulating: true);
     }
 
     private void UpdateVisualState(ResolvedLine line)
@@ -1334,9 +1545,149 @@ public class VNManager : BaseManager<VNManager>
         AddHistoryEntry(finalSpeaker, finalText, line.Voice);
     }
 
+    // ===================== 系统命令族复用入口 =====================
+    // 设计原则：系统命令（showDialogue/showbg/playBGM/...）**必须复用引擎既有实现**，
+    // 不得另写一套。否则「提升不改变演出」的硬契约会因双实现漂移而破裂
+    // （详见 VNCommandChainSpec.md §11.3.2）。
+    // 这些方法是既有私有逻辑的"显式参数"版本包装：内部走同一条代码路径。
+
+    /// <summary>
+    /// 【系统命令 showDialogue 用】显示对话（说话人 + 正文 + 头像 + 历史记录 + 本地化）。
+    /// 复用 <see cref="UpdateDialogue"/>：本地化解析、双事件广播、isTextDisplaying、
+    /// 历史记录全部与引擎隐式路径逐字一致。
+    /// </summary>
+    /// <param name="direct">true = 瞬间全显（额外广播 DisplayAllText）；false = 逐字打字机</param>
+    public void SysShowDialogue(bool direct)
+    {
+        if (CurrentLineIndex < 0 || CurrentLineIndex >= StoryLines.Count) return;
+
+        StoryLine line = StoryLines[CurrentLineIndex];
+        UpdateDialogue(line, ResolveLine(line));
+
+        if (direct)
+            EventCenter.GetInstance().EventTrigger(VNGameEvents.DisplayAllText);
+    }
+
+    /// <summary>
+    /// 【系统命令 showSpeaker 用】仅刷新说话人与头像（不触发正文与历史记录）。
+    /// 说明：引擎隐式路径中说话人与正文同属 <see cref="UpdateDialogue"/> 一步，
+    /// 因此模板里 showSpeaker 与 showDialogue 并列于同一并行组即等价；
+    /// 单独调用本方法仅用于用户在定制行中只想刷新说话人的场景。
+    /// </summary>
+    public void SysShowSpeaker(string speakerOverride, string headProfileOverride)
+    {
+        if (CurrentLineIndex < 0 || CurrentLineIndex >= StoryLines.Count) return;
+
+        StoryLine line = StoryLines[CurrentLineIndex];
+        string speaker = speakerOverride ?? line.Speaker;
+        string head = headProfileOverride ?? line.HeadProfile;
+
+        // 本地化：仅在未显式覆盖时才查译文（覆盖值是作者的显式意图，不应被译文顶掉）
+        if (speakerOverride == null && VNLocalizationService.IsEnabled())
+        {
+            bool fallbackToCsv = VNProjectConfig.Instance != null && VNProjectConfig.Instance.FallbackToCsvWhenMissing;
+            if (VNLocalizationService.TryGetSpeaker(currentScriptName, line.ID, out var localized) &&
+                !string.IsNullOrEmpty(localized))
+                speaker = localized;
+            else
+                speaker = fallbackToCsv ? line.Speaker : "";
+        }
+
+        _headProfileEventScratch.Clear();
+        _headProfileEventScratch[VNGameEvents.KeyHeadProfile] = string.IsNullOrEmpty(head) ? "hide" : head;
+        _headProfileEventScratch[VNGameEvents.KeySpeaker] = speaker;
+        EventCenter.GetInstance().EventTrigger(VNGameEvents.UpdateHeadProfile, _headProfileEventScratch);
+
+        // 说话人姓名框：走面板既有入口（含 CharacterProfile.SpeakerBox 自动判定）
+        var panel = UIManager.GetInstance().Get<VNGameplayPanel>();
+        if (panel != null) panel.UpdateSpeakerDisplay(speaker);
+    }
+
+    /// <summary>
+    /// 【系统命令 showbg 用】切换背景（瞬时，无过渡）。
+    /// 复用 <see cref="UpdateVisualState"/> 的分支语义：普通名 / "black" / "hide"。
+    /// </summary>
+    public void SysShowBackground(string bgName)
+    {
+        UpdateVisualState(new ResolvedLine { Background = bgName });
+    }
+
+    /// <summary>
+    /// 【系统命令 showbg 的 Simulate 用】只更新继承状态，不广播事件。
+    /// </summary>
+    public void SysSimulateBackground(string bgName)
+    {
+        if (!string.IsNullOrEmpty(bgName)) currentBG = bgName;
+    }
+
+    /// <summary>
+    /// 【系统命令 showChar 用】按槽位登台/隐藏立绘。
+    /// 复用 <see cref="UpdateCharacter"/>：空引用 = 隐藏该槽（与 CSV 规则一致）。
+    /// </summary>
+    public void SysShowCharacter(string slotId, string charRef)
+    {
+        UpdateCharacter(slotId, charRef);
+    }
+
+    /// <summary>【系统命令 showChar 的 Simulate 用】只更新槽位字典。</summary>
+    public void SysSimulateCharacter(string slotId, string charRef)
+    {
+        SimulateCharacterUpdate(slotId, charRef);
+    }
+
+    /// <summary>
+    /// 【系统命令 playBGM 用】播放 BGM。
+    /// 复用 <see cref="UpdateAudioState"/> 的分支语义：stop / pause / resume / 同名幂等跳过。
+    /// </summary>
+    public void SysPlayBGM(string bgmName)
+    {
+        UpdateAudioState(new ResolvedLine { BGM = bgmName, Voice = "" });
+    }
+
+    /// <summary>【系统命令 playBGM 的 Simulate 用】只更新 currentBGM 状态。</summary>
+    public void SysSimulateBGM(string bgmName)
+    {
+        if (string.IsNullOrEmpty(bgmName)) return;
+        if (bgmName == "stop") currentBGM = "";
+        else if (bgmName != "pause" && bgmName != "resume") currentBGM = bgmName;
+    }
+
+    /// <summary>
+    /// 【系统命令 playVoice 用】播放语音。
+    /// 复用 <see cref="UpdateAudioState"/> 的语音分支（含 URL 形式拒绝）。
+    /// </summary>
+    public void SysPlayVoice(string voicePath)
+    {
+        UpdateAudioState(new ResolvedLine { BGM = "", Voice = voicePath });
+    }
+
     public void UpdateCurrentBG_OnlyData(string bgName)
     {
         this.currentBG = bgName;
+    }
+
+    /// <summary>
+    /// 【测试专用】重播当前行的引擎隐式演出四步，不执行 Command 列、不推进行号。
+    ///
+    /// 供「模板等价性回归测试」（决策 s6）录制基准事件序列：
+    /// 对同一行分别跑本方法与默认模板命令链，比对 EventCenter 事件序列，
+    /// 验收「提升不改变演出」硬契约。
+    ///
+    /// 与 <c>PlayCurrentLine</c> 的区别：不碰协程、不写历史进度、不触发 AutoPlay、
+    /// 不做自动存档计数——只做纯粹的演出广播，使录制结果只含演出事件。
+    /// </summary>
+    public void ReplayImplicitPerformanceForTest()
+    {
+        if (CurrentLineIndex < 0 || CurrentLineIndex >= StoryLines.Count) return;
+
+        StoryLine line = StoryLines[CurrentLineIndex];
+        var resolved = ResolveLine(line);
+        SetLineContextForPlay(line, resolved);
+
+        UpdateVisualState(resolved);
+        UpdateCharacterSlots(line);
+        UpdateAudioState(resolved);
+        UpdateDialogue(line, resolved);
     }
 
     public void ToggleAutoPlay()
@@ -1565,6 +1916,12 @@ public class VNManager : BaseManager<VNManager>
 
     public bool IsAutoPlaying() { return isAutoPlaying; }
     public bool IsSkipping() { return isSkipping; }
+
+    /// <summary>
+    /// 是否正在逐字显示对话。由 <c>UpdateDialogue</c> 置 true、
+    /// 由 <c>TypingFinished</c> 事件经 <c>OnTypingFinished</c> 置 false。
+    /// 系统命令 <c>showDialogue(typewriter)</c> 据此阻塞等待打字机完成。
+    /// </summary>
     public bool IsTextDisplaying() { return isTextDisplaying; }
 
     /// <summary>[Confirm 出口] 将当前行的 @Confirm: 出口段标记为已消费（choice 选项即本行出口，出口段不再执行）</summary>
@@ -2396,6 +2753,7 @@ public class VNManager : BaseManager<VNManager>
         isTextDisplaying = false;
         isVoiceEnabled = true;
         lastLine = null;
+        CurrentLineContext = null;
         
         // 8. 停止所有协程
         if (_flowCoroutine != null)

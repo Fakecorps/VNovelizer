@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
@@ -13,8 +14,18 @@ namespace VNovelizer.Core.Commands
     ///
     /// 并发安全：token 列表登记活动动画（命令链 [charmove(L,...) & charmove(M,...)] 并行场景）。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "移动角色到指定坐标（不继承：下一行自动归位；要求同行对应立绘列已填）")]
     public class CharMoveCommand : VNCommand
     {
+        [VNParam(0, "pos", VNParamType.SlotCode,
+            Description = "槽位（L/ML/M/MR/R），要求同行对应立绘列非空")]
+        [VNParam(1, "x", VNParamType.Float, Min = -960f, Max = 960f, Default = "0",
+            Description = "目标 X（剧本像素，原点=画面中心）")]
+        [VNParam(2, "y", VNParamType.Float, Min = -540f, Max = 540f, Default = "0",
+            Description = "目标 Y（剧本像素，原点=画面中心）")]
+        [VNParam(3, "duration", VNParamType.Float, Min = 0f, Max = 10f, Default = "0.5",
+            Optional = true, Description = "移动秒数")]
         public override string CommandName { get { return "charmove"; } }
 
         private float defaultDuration = 0.5f;
