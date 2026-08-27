@@ -1,5 +1,6 @@
 using UnityEngine;
 using VNovelizer.Core.Theater;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -9,8 +10,18 @@ namespace VNovelizer.Core.Commands
     /// 坐标为剧本像素语义；缩放与翻转分离（scale 为正值大小，翻转符号独立保持）。
     /// 注意：此命令不继承，执行下一行时会自动恢复到默认 Transform（OnShowCharacter 重置）。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "设置立绘位置/缩放（剧本像素语义；不继承——下一行自动恢复默认 Transform）")]
     public class SetCharTransCommand : VNCommand
     {
+        [VNParam(0, "pos", VNParamType.SlotCode,
+            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+        [VNParam(1, "x", VNParamType.Float, Min = -2000f, Max = 2000f, Default = "0",
+            Description = "水平偏移（剧本像素，0=默认槽位）")]
+        [VNParam(2, "y", VNParamType.Float, Min = -2000f, Max = 2000f, Default = "0",
+            Description = "垂直偏移（剧本像素，0=默认槽位）")]
+        [VNParam(3, "scale", VNParamType.Float, Min = 0.1f, Max = 5f, Default = "1",
+            Description = "缩放（正值大小；翻转符号独立保持）")]
         public override string CommandName { get { return "setchartrans"; } }
 
         public override bool Execute(string args)

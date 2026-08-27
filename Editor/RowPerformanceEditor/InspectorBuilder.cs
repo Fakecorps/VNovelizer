@@ -13,16 +13,29 @@ using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
+    /// <summary>Inspector 页签：节点参数视图 / 命令链文本视图。</summary>
+    public enum InspectorTab
+    {
+        Node,
+        Text,
+    }
+
     /// <summary>
     /// 右侧属性检查器：由 <c>[VNParam]</c> 元数据**驱动生成**表单，而非为每个命令手写面板。
     ///
     /// <para>
-    /// 三种表单形态，由元数据可得性决定：
+    /// 两个页签（2026-08-27 用户需求 5）：
     /// </para>
     /// <list type="bullet">
-    /// <item>有元数据 → 按参数类型生成下拉 / 滑块 / 输入框，含隐式绑定切换</item>
+    /// <item><b>节点</b>：按参数类型生成下拉 / 滑块 / 输入框，含隐式绑定切换</item>
+    /// <item><b>文本</b>：命令链原始文本 ↔ 图双向联动编辑，选中节点的命令片段实时高亮</item>
+    /// </list>
+    ///
+    /// <para>三种节点表单形态，由元数据可得性决定：</para>
+    /// <list type="bullet">
+    /// <item>有元数据 → 结构化表单</item>
     /// <item>无元数据 → 单行原始参数文本框（通用节点态，功能完整）</item>
-    /// <item>非命令节点（Fork/Join/终端）→ 显示结构说明，无可编辑项</item>
+    /// <item>非命令节点（Fork/Join/终端）→ 结构说明，无可编辑项</item>
     /// </list>
     /// </summary>
     public class InspectorBuilder
@@ -33,8 +46,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>请求跳转到数据列（📎 徽章点击）</summary>
         public event Action<string> OnRequestJumpToColumn;
 
+        /// <summary>命令链文本被编辑（isConfirm, 新文本）——外部负责解析重建图</summary>
+        public event Action<bool, string> OnChainTextChanged;
+
         private readonly VisualElement _root;
         private VNNodeViewBase _current;
+
+        private InspectorTab _activeTab = InspectorTab.Node;
+        private string _entryText = "";
+        private string _confirmText = "";
 
         public InspectorBuilder(VisualElement root)
         {
@@ -42,29 +62,159 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _root.AddToClassList("vn-inspector");
         }
 
+        /// <summary>外部（Window）在图 Rebuild 后同步链文本。</summary>
+        public void SetChainTexts(string entry, string confirm)
+        {
+            _entryText = entry ?? "";
+            _confirmText = confirm ?? "";
+            if (_activeTab == InspectorTab.Text) RebuildForCurrentTab();
+        }
+
         /// <summary>切换到指定节点（null 显示空状态）。</summary>
         public void Show(VNNodeViewBase node)
         {
             _current = node;
-            _root.Clear();
+            RebuildForCurrentTab();
+        }
 
-            if (node == null)
+        /// <summary>刷新当前节点（外部改动后同步显示）。</summary>
+        public void Refresh() => RebuildForCurrentTab();
+
+        // ---------------- 页签骨架 ----------------
+
+        private void RebuildForCurrentTab()
+        {
+            _root.Clear();
+            BuildTabBar();
+
+            if (_activeTab == InspectorTab.Node) BuildNodePane();
+            else BuildTextPane();
+        }
+
+        private void BuildTabBar()
+        {
+            var bar = new VisualElement();
+            bar.AddToClassList("vn-insp-tabs");
+
+            var nodeTab = new Button(() => { _activeTab = InspectorTab.Node; RebuildForCurrentTab(); })
+                { text = "节点" };
+            nodeTab.AddToClassList("vn-insp-tab");
+            if (_activeTab == InspectorTab.Node) nodeTab.AddToClassList("vn-insp-tab--active");
+            bar.Add(nodeTab);
+
+            var textTab = new Button(() => { _activeTab = InspectorTab.Text; RebuildForCurrentTab(); })
+                { text = "文本" };
+            textTab.AddToClassList("vn-insp-tab");
+            if (_activeTab == InspectorTab.Text) textTab.AddToClassList("vn-insp-tab--active");
+            bar.Add(textTab);
+
+            _root.Add(bar);
+        }
+
+        private void BuildNodePane()
+        {
+            if (_current == null)
             {
                 BuildEmptyState();
                 return;
             }
 
-            if (node is CommandNodeView cmdView)
+            if (_current is CommandNodeView cmdView)
             {
                 BuildCommandInspector(cmdView);
                 return;
             }
 
-            BuildStructuralInspector(node);
+            BuildStructuralInspector(_current);
         }
 
-        /// <summary>刷新当前节点（外部改动后同步显示）。</summary>
-        public void Refresh() => Show(_current);
+        // ---------------- 文本页签 ----------------
+
+        /// <summary>
+        /// 命令链文本编辑器（双向联动）：
+        /// 上方只读高亮预览（选中节点的命令片段蓝色加粗），
+        /// 下方可编辑多行文本（失焦提交 → OnChainTextChanged → 图重建）。
+        /// </summary>
+        private void BuildTextPane()
+        {
+            BuildChainTextSection("进入段", isConfirm: false, _entryText);
+            BuildChainTextSection("出口段 @Confirm", isConfirm: true, _confirmText);
+
+            var help = new Label(
+                "编辑失焦后自动解析并重建图。文本与节点是同一真值的两个视图。\n" +
+                "语法：cmd(args) 串行 -> ；并行 & ；分组 [] ；出口段用 @Confirm: 分隔。");
+            help.AddToClassList("vn-insp-desc");
+            var section = new VisualElement();
+            section.AddToClassList("vn-insp-section");
+            section.Add(help);
+            _root.Add(section);
+        }
+
+        private void BuildChainTextSection(string title, bool isConfirm, string text)
+        {
+            var section = new VisualElement();
+            section.AddToClassList("vn-insp-section");
+
+            var t = new Label(title);
+            t.AddToClassList("vn-insp-sectitle");
+            section.Add(t);
+
+            // 高亮预览（选中节点的命令片段着色）
+            var preview = new Label(BuildHighlightedText(isConfirm, text));
+            preview.AddToClassList("vn-insp-preview");
+            preview.enableRichText = true;
+            section.Add(preview);
+
+            // 可编辑文本
+            var field = new TextField { value = text, multiline = true };
+            field.AddToClassList("vn-insp-chainfield");
+            field.tooltip = "失焦后提交：解析 → 重建图 → 校验";
+            field.RegisterCallback<FocusOutEvent>(_ =>
+            {
+                string newValue = field.value?.Trim() ?? "";
+                string old = (isConfirm ? _confirmText : _entryText)?.Trim() ?? "";
+                if (newValue == old) return;
+                OnChainTextChanged?.Invoke(isConfirm, newValue);
+            });
+            section.Add(field);
+
+            _root.Add(section);
+        }
+
+        /// <summary>
+        /// 转义为 rich-text 安全文本，并把选中命令节点的命令片段高亮（蓝色加粗）。
+        /// 命令链文本含 &、->、[] 等符号，& 与 &lt; 必须转义。
+        /// </summary>
+        private string BuildHighlightedText(bool isConfirm, string chainText)
+        {
+            if (string.IsNullOrEmpty(chainText)) return "<i>（空）</i>";
+
+            string escaped = EscapeRichText(chainText);
+
+            var cmdView = _current as CommandNodeView;
+            if (cmdView == null || cmdView.IsConfirmChain != isConfirm ||
+                string.IsNullOrEmpty(cmdView.Data?.CommandName))
+                return escaped;
+
+            string signature = EscapeRichText(
+                (cmdView.Data.CommandName ?? "") + "(" + (cmdView.Data.Args ?? "") + ")");
+            string bareName = EscapeRichText(cmdView.Data.CommandName + "(");
+
+            // 尽量匹配完整签名；找不到再退化为命令名前缀
+            if (escaped.Contains(signature))
+                escaped = escaped.Replace(signature,
+                    "<color=#6FB8E8><b>" + signature + "</b></color>");
+            else if (escaped.Contains(bareName))
+                escaped = escaped.Replace(bareName,
+                    "<color=#6FB8E8><b>" + bareName + "</b></color>");
+
+            return escaped;
+        }
+
+        private static string EscapeRichText(string s)
+        {
+            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+        }
 
         // ---------------- 空状态 ----------------
 
@@ -222,7 +372,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var row = new VisualElement();
             row.AddToClassList("vn-insp-bound");
 
-            var bound = new Label("📎 引用 " + (param.BoundColumn ?? "数据列") + " 列");
+            var bound = new Label(">> 引用 " + (param.BoundColumn ?? "数据列") + " 列");
             bound.AddToClassList("vn-insp-bound-label");
             bound.tooltip = "点击跳转到表格对应单元格";
             bound.RegisterCallback<MouseDownEvent>(evt =>
@@ -236,7 +386,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 var breakBtn = new Button(() => TryBreakBinding(view, info, param, index))
                 {
-                    text = "✏️ 断开"
+                    text = "断开引用"
                 };
                 breakBtn.tooltip = "改为在本节点内联写死一个值，不再引用数据列。";
                 row.Add(breakBtn);
@@ -350,7 +500,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 {
                     SetParamValue(view, info, index, "");
                     Refresh();
-                }) { text = "↩ 恢复引用 " + param.BoundColumn + " 列" };
+                }) { text = "恢复引用 " + param.BoundColumn + " 列" };
                 restore.tooltip = "清空本参数，重新引用数据列的值。";
                 row.Add(restore);
 
@@ -397,17 +547,74 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         // ---------------- 原始参数（通用节点态） ----------------
 
+        /// <summary>
+        /// 无元数据命令的参数编辑（2026-08-27 用户需求 6b）：
+        /// 按逗号拆分为独立 TextField（Param1/2/…N），替代单行原始文本框。
+        /// 位置参数无语义名——Param N 与节点上的 "P N:" 行一一对应。
+        /// </summary>
         private void BuildRawArgsSection(CommandNodeView view)
         {
             var section = new VisualElement();
             section.AddToClassList("vn-insp-section");
 
-            var title = new Label("原始参数");
+            var title = new Label("参数（按位置）");
             title.AddToClassList("vn-insp-sectitle");
             section.Add(title);
 
-            section.Add(BuildRawArgsField(view));
+            var values = SplitArgs(view.Data.Args, ',');
+
+            if (values.Count == 0)
+            {
+                var empty = new Label("（无参数）");
+                empty.AddToClassList("vn-insp-desc");
+                section.Add(empty);
+                _root.Add(section);
+                return;
+            }
+
+            for (int i = 0; i < values.Count; i++)
+            {
+                int index = i;
+                var field = new TextField("Param" + (i + 1)) { value = values[i].Trim() };
+                field.AddToClassList("vn-insp-field");
+                field.tooltip = $"第 {i + 1} 个位置参数（逗号分隔的第 {i + 1} 项）";
+                field.RegisterCallback<FocusOutEvent>(_ =>
+                {
+                    SetIndexedArg(view, index, field.value);
+                });
+                section.Add(field);
+            }
+
             _root.Add(section);
+        }
+
+        /// <summary>
+        /// 写入无元数据命令的第 index 个位置参数并重拼 args 串。
+        /// 尾部空参数裁剪与 SetParamValue 一致——保持 showbg() 而非 showbg(,,)。
+        /// </summary>
+        private void SetIndexedArg(CommandNodeView view, int index, string value)
+        {
+            var values = SplitArgs(view.Data.Args, ',');
+
+            while (values.Count <= index) values.Add("");
+            values[index] = value ?? "";
+
+            while (values.Count > 0 && string.IsNullOrWhiteSpace(values[values.Count - 1]))
+                values.RemoveAt(values.Count - 1);
+
+            var sb = new StringBuilder();
+            for (int i = 0; i < values.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(values[i].Trim());
+            }
+
+            string newArgs = sb.ToString();
+            if (view.Data.Args == newArgs) return;
+
+            view.Data.Args = newArgs;
+            view.RefreshParameters();
+            OnValueChanged?.Invoke();
         }
 
         private VisualElement BuildRawArgsField(CommandNodeView view)
@@ -466,15 +673,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var facts = new List<string>();
 
             if (info.IsAsync)
-                facts.Add("⏳ 异步：所在分支会等待它完成。不想阻塞其他演出就放进独立并行分支。");
+                facts.Add("[~] 异步：所在分支会等待它完成。不想阻塞其他演出就放进独立并行分支。");
             if (info.IsFlowCommand)
                 facts.Add("链尾：会改变当前行 / 剧本 / 场景，必须是命令链的最后一个命令。");
             if (!info.HasSimulate && !info.IsFlowCommand)
-                facts.Add("↩ 无预演：读档 / 快进经过本行时不重建其效果（纯演出命令属正常）。");
+                facts.Add("[no-sim] 无预演：读档 / 快进经过本行时不重建其效果（纯演出命令属正常）。");
             if (info.HasInterrupt)
                 facts.Add("可中断：玩家点击跳过时会快进到最终状态。");
             if (info.Planned)
-                facts.Add("⏳ 该命令标记为「计划中」，行为可能尚不完整。");
+                facts.Add("[计划中] 该命令标记为「计划中」，行为可能尚不完整。");
 
             if (facts.Count == 0) return;
 

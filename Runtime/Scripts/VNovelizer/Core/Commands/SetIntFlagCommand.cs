@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.Diagnostics;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -12,8 +13,14 @@ namespace VNovelizer.Core.Commands
     ///   setintflag(flagName, +10)   → 相对运算（当前值 +10；支持 + - * /，/ 为整数除法）
     /// 经 FlagService 按注册表作用域路由（Global 持久 / Save 随档回退）。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Logic,
+        "设置整数标志（支持 +10/-10/*2//2 相对运算）")]
     public class SetIntFlagCommand : VNCommand
     {
+        [VNParam(0, "flag", VNParamType.String,
+            Description = "标志名（区分大小写）")]
+        [VNParam(1, "value", VNParamType.String,
+            Description = "整数值或相对运算：100（绝对）/ +10 / -10 / *2 / /2（整数除法）")]
         public override string CommandName { get { return "setintflag"; } }
 
         public override bool Execute(string args)

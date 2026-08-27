@@ -1,14 +1,19 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
     /// 解锁音乐
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Logic,
+        "解锁音乐画廊条目（持久数据，读档快进也生效）")]
     public class UnlockMusicCommand : VNCommand
     {
+        [VNParam(0, "name", VNParamType.String,
+            Description = "音乐画廊条目名（画廊编辑器中登记的名称）")]
         public override string CommandName { get { return "unlockmusic"; } }
 
         public override bool Execute(string args)

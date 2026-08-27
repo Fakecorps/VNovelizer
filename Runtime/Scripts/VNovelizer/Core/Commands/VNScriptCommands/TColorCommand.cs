@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -8,8 +9,16 @@ namespace VNovelizer.Core.Commands
     /// 格式: t_color(R,G,B)
     /// 效果不会保存到下一行
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "临时修改对话文字颜色（仅本行生效，不保存到下一行）")]
     public class TColorCommand : VNCommand
     {
+        [VNParam(0, "r", VNParamType.Float, Min = 0f, Max = 255f, Default = "255",
+            Description = "红（0-255）")]
+        [VNParam(1, "g", VNParamType.Float, Min = 0f, Max = 255f, Default = "255",
+            Description = "绿（0-255）")]
+        [VNParam(2, "b", VNParamType.Float, Min = 0f, Max = 255f, Default = "255",
+            Description = "蓝（0-255）")]
         public override string CommandName { get { return "t_color"; } }
 
         public override bool Execute(string args)

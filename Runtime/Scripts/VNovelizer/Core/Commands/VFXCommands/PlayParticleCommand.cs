@@ -1,5 +1,6 @@
 using UnityEngine;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -8,8 +9,12 @@ namespace VNovelizer.Core.Commands
     /// 格式：playparticle(特效名)
     /// 示例：playparticle(Snow)
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "播放常驻粒子特效（雪/雨/花瓣等；同名特效自动去重不叠加）")]
     public class PlayParticleCommand : VNCommand
     {
+        [VNParam(0, "effect", VNParamType.String,
+            Description = "特效资源名（Particle 特效目录下的预制体）")]
         public override string CommandName { get { return "playparticle"; } }
 
         public override bool Execute(string args)

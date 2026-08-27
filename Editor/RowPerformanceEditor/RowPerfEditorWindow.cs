@@ -34,6 +34,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private int _currentRowIndex = -1;
         private bool _isDirty;
 
+        /// <summary>
+        /// 当前 EntryGraph 是否为视图合成的模板图（Normal/Enhanced 行展开的系统命令节点）。
+        /// 为 true 且用户未编辑（!_isDirty）时，保存跳过序列化——不把合成模板写进 Command 列。
+        /// </summary>
+        private bool _syntheticTemplate;
+
         // ---- 组件 ----
         private RowGraphView _graphView;
         private CommandPalette _palette;
@@ -144,7 +150,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _graphView.style.flexGrow = 1;
             _graphView.OnGraphChanged += HandleGraphChanged;
             _graphView.OnRequestPromotion += HandlePromotionRequest;
-            _graphView.OnRequestJumpToColumn += HandleJumpToColumn;
+            _graphView.OnRequestCreateNodeAt += (cmd, isConfirm, pos) => HandleCreateNode(cmd, isConfirm, pos);
             main.Add(_graphView);
 
             var inspectorRoot = new VisualElement();
@@ -152,6 +158,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _inspector = new InspectorBuilder(inspectorRoot);
             _inspector.OnValueChanged += HandleGraphChanged;
             _inspector.OnRequestJumpToColumn += HandleJumpToColumn;
+            _inspector.OnChainTextChanged += HandleChainTextChanged;
 
             // 先订阅 _graphView 事件再初始化显示——避免初始化 Show 期间
             // 因事件竞态而错过初次选中通知
@@ -206,29 +213,29 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             });
             bar.Add(_lineIdField);
 
-            var next = new Button(() => StepRow(1)) { text = "▶" };
+            var next = new Button(() => StepRow(1)) { text = "下一行 >" };
             next.tooltip = "下一行";
             bar.Add(next);
 
             bar.Add(MakeDivider());
 
-            var undo = new Button(PerformUndo) { text = "↶" };
+            var undo = new Button(PerformUndo) { text = "撤销" };
             undo.tooltip = "撤销 (Ctrl+Z)";
             bar.Add(undo);
 
-            var redo = new Button(PerformRedo) { text = "↷" };
+            var redo = new Button(PerformRedo) { text = "重做" };
             redo.tooltip = "重做 (Ctrl+Y)";
             bar.Add(redo);
 
-            var copy = new Button(CopyChain) { text = "⧉" };
+            var copy = new Button(CopyChain) { text = "复制" };
             copy.tooltip = "复制本行命令链 (Ctrl+C)——可粘到其他行、其他剧本，甚至发给同事";
             bar.Add(copy);
 
-            var paste = new Button(PasteChain) { text = "⎘" };
+            var paste = new Button(PasteChain) { text = "粘贴" };
             paste.tooltip = "粘贴命令链到当前行 (Ctrl+V)";
             bar.Add(paste);
 
-            var relayout = new Button(() => _graphView?.RelayoutAll()) { text = "⤢" };
+            var relayout = new Button(() => _graphView?.RelayoutAll()) { text = "整理布局" };
             relayout.tooltip = "整理布局：按执行顺序重新排布全部节点";
             bar.Add(relayout);
 
@@ -240,11 +247,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _formBadge.AddToClassList("vn-rowform-badge");
             bar.Add(_formBadge);
 
-            _resetButton = new Button(ResetToTemplate) { text = "⟲ 重置模板" };
+            _resetButton = new Button(ResetToTemplate) { text = "重置模板" };
             _resetButton.tooltip = "移除系统命令，恢复为数据列驱动的默认演出";
             bar.Add(_resetButton);
 
-            _saveButton = new Button(SaveCurrentRow) { text = "💾 保存到 CSV" };
+            _saveButton = new Button(SaveCurrentRow) { text = "保存到 CSV" };
             bar.Add(_saveButton);
 
             root.Add(bar);
@@ -506,17 +513,43 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             SplitCommandColumn(row.Command, out string entryText, out string confirmText);
 
-            var entryGraph = BuildGraph(entryText);
-            var confirmGraph = BuildGraph(confirmText);
-
             var form = RowPromotion.DetermineForm(row.Command);
-            bool showTemplate = form != RowForm.Custom;
+
+            // 2026-08-27（用户 Q1）：默认演出彻底展开，删除折叠胶囊。
+            // Normal 行 → 合成纯系统命令模板图；
+            // Enhanced 行 → 合成"系统命令 -> 用户链"完整模板图；
+            // Custom 行 → 原样渲染。
+            // 用户一旦编辑合成图（HandleGraphChanged 置 dirty），保存即"提升"写入 Command 列。
+            ChainGraph entryGraph;
+            switch (form)
+            {
+                case RowForm.Normal:
+                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(null));
+                    _syntheticTemplate = true;
+                    break;
+                case RowForm.Enhanced:
+                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(entryText));
+                    _syntheticTemplate = true;
+                    break;
+                default:
+                    entryGraph = BuildGraph(entryText);
+                    _syntheticTemplate = false;
+                    break;
+            }
+
+            var confirmGraph = BuildGraph(confirmText);
 
             _graphView.LineContext = BuildLineContext(row);
             _graphView.Rebuild(entryGraph, confirmGraph,
                 GraphPosStore.LoadPositions(_csvPath, row.Id),
-                GraphPosStore.LoadTemplateCollapsed(_csvPath, row.Id),
-                showTemplate);
+                templateCollapsed: false, showTemplate: false);
+
+            // 同步链文本到 Inspector 文本页签（合成模板时显示完整模板文本）
+            string entryDisplay = _syntheticTemplate
+                ? DefaultPerformanceTemplate.BuildText(
+                    form == RowForm.Enhanced ? entryText : null)
+                : entryText;
+            _inspector?.SetChainTexts(entryDisplay, confirmText);
 
             Validate();
             UpdateHeaderAndStatus();
@@ -694,18 +727,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             if (fatal > 0)
             {
-                _statusValidation.text = $"✗ {fatal} 个致命错误（无法保存）" +
+                _statusValidation.text = $"[X] {fatal} 个致命错误（无法保存）" +
                                          (warn > 0 ? $" · {warn} 警告" : "");
                 _statusValidation.style.color = new Color(0.78f, 0.35f, 0.31f);
             }
             else if (warn > 0)
             {
-                _statusValidation.text = $"⚠ {warn} 个警告（可保存）";
+                _statusValidation.text = $"[!] {warn} 个警告（可保存）";
                 _statusValidation.style.color = new Color(0.78f, 0.63f, 0.24f);
             }
             else
             {
-                _statusValidation.text = "✓ 校验通过";
+                _statusValidation.text = "[OK] 校验通过";
                 _statusValidation.style.color = new Color(0.50f, 0.67f, 0.36f);
             }
 
@@ -714,14 +747,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         // ==================== 交互处理 ====================
 
-        private void HandleCreateNode(string commandName, bool isConfirm)
+        private void HandleCreateNode(string commandName, bool isConfirm, Vector2? position)
         {
             if (CurrentRow == null) return;
 
-            // 在画布可见区域中心偏下创建，避免与既有节点重叠
-            Vector2 pos = new Vector2(
-                isConfirm ? ChainAutoLayout.ConfirmLaneX : ChainAutoLayout.EntryLaneX,
-                ChainAutoLayout.StartY + 60f + UnityEngine.Random.Range(0, 3) * 20f);
+            // 有拖拽落点用落点，否则在泳道起始位置创建
+            Vector2 pos = position ?? new Vector2(
+                ChainAutoLayout.StartX + 200f + UnityEngine.Random.Range(0, 3) * 30f,
+                isConfirm ? ChainAutoLayout.ConfirmLaneY : ChainAutoLayout.EntryLaneY);
 
             var info = CommandMetaReader.Get(commandName);
             string defaultArgs = BuildDefaultArgs(info);
@@ -758,8 +791,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (CurrentRow == null) return;
 
             Vector2 pos = new Vector2(
-                isConfirm ? ChainAutoLayout.ConfirmLaneX : ChainAutoLayout.EntryLaneX,
-                ChainAutoLayout.StartY + 80f);
+                ChainAutoLayout.StartX + 200f,
+                isConfirm ? ChainAutoLayout.ConfirmLaneY : ChainAutoLayout.EntryLaneY);
 
             _graphView.CreateForkJoinPair(pos, isConfirm);
         }
@@ -770,6 +803,34 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             Validate();
             UpdateHeaderAndStatus();
             PushUndoSnapshot("编辑");
+        }
+
+        /// <summary>
+        /// 命令链文本被编辑（Inspector 文本页签）→ 解析 → 重建对应图。
+        /// 文本与图是同一真值的两个视图（2026-08-27 用户需求 5）。
+        /// </summary>
+        private void HandleChainTextChanged(bool isConfirm, string newText)
+        {
+            if (_graphView == null) return;
+
+            var newGraph = BuildGraph(newText);
+            var positions = _graphView.CollectPositions();
+
+            var entryGraph = isConfirm ? _graphView.EntryGraph : newGraph;
+            var confirmGraph = isConfirm ? newGraph : _graphView.ConfirmGraph;
+
+            // 进入段文本编辑 = 用户显式定制，清除合成模板标志
+            if (!isConfirm) _syntheticTemplate = false;
+
+            _graphView.Rebuild(entryGraph, confirmGraph, positions,
+                templateCollapsed: false, showTemplate: false);
+
+            // 用规范化序列化文本回填（文本与图互相校准）
+            _inspector.SetChainTexts(
+                SerializeGraphSafe(entryGraph),
+                SerializeGraphSafe(confirmGraph));
+
+            HandleGraphChanged(); // dirty + 校验 + 快照
         }
 
         private void HandlePromotionRequest()
@@ -927,6 +988,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
 
             // 2. 图 → AST → 文本（含幂等自校验）
+            // 2026-08-27：合成模板图未被用户编辑时，保持原 Command 列文本不写回
+            // （Normal/Enhanced 行展开的模板节点是视图合成物，不主动"提升"）。
+            if (_syntheticTemplate && !_isDirty)
+            {
+                SavePositionsOnly(row);
+                ShowNotification(new GUIContent("命令链未修改（展开的模板为视图合成），已保存节点位置"));
+                return;
+            }
+
             if (!TrySerialize(_graphView.EntryGraph, out string entryText, out string error) ||
                 !TrySerialize(_graphView.ConfirmGraph, out string confirmText, out error))
             {

@@ -5,49 +5,63 @@ using VNovelizer.Core.Commands.Chain;
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
     /// <summary>
-    /// 命令链图的自动布局：按**执行深度**分层定 Y，按并行分支均分定 X。
+    /// 命令链图的自动布局（2026-08-27 重构：执行流从左到右）。
     ///
     /// <para>
-    /// 布局质量直接决定第一印象——用户打开编辑器看到的第一眼若是节点堆叠或错乱，
-    /// 后面的功能再好也会被判定为"不好用"。因此布局遵循三条原则：
+    /// <b>方向语义</b>：
     /// </para>
-    ///
-    /// <list type="number">
-    /// <item><b>执行顺序 = 视觉顺序</b>。同一深度的节点在同一水平线上，自上而下即执行流。</item>
-    /// <item><b>并行分支左右对称展开</b>，以 Fork 为中轴，视觉上立刻能看出"这几条同时跑"。</item>
-    /// <item><b>分支宽度自适应</b>：分支内节点多则该分支占更宽的通道，避免相邻分支挤在一起。</item>
+    /// <list type="bullet">
+    /// <item>执行深度 → <b>X 轴</b>（向右递增）。命令节点从左到右排列，符合阅读顺序。</item>
+    /// <item>并行分支 → <b>Y 轴</b>（纵向均分）。Fork 的多条分支上下展开。</item>
     /// </list>
+    /// <para>
+    /// <b>双泳道</b>：进入段在上半区（<see cref="EntryLaneY"/>），出口段在下半区（<see cref="ConfirmLaneY"/>），
+    /// 两条链各自从左到右流动。
+    /// </para>
     /// </summary>
     public static class ChainAutoLayout
     {
-        /// <summary>节点默认宽度（用于计算分支通道间距）</summary>
+        /// <summary>节点默认宽度</summary>
         public const float NodeWidth = 200f;
 
-        /// <summary>同一分支内相邻节点的垂直间距</summary>
-        public const float VerticalGap = 34f;
+        /// <summary>节点默认高度（估算值，实际由 UIElements 测量）</summary>
+        public const float NodeHeight = 62f;
 
-        /// <summary>相邻并行分支的水平间距</summary>
-        public const float BranchGap = 56f;
+        /// <summary>同一分支内相邻节点的水平间距（执行方向）</summary>
+        public const float HorizontalGap = 60f;
 
-        /// <summary>Fork/Join 胶囊与相邻分支节点的额外垂直留白</summary>
-        public const float ForkPadding = 12f;
+        /// <summary>相邻并行分支的垂直间距</summary>
+        public const float BranchGap = 40f;
 
-        /// <summary>进入段泳道的中心 X</summary>
-        public const float EntryLaneX = 300f;
+        /// <summary>Fork/Join 胶囊与相邻分支节点的额外水平留白</summary>
+        public const float ForkPadding = 20f;
 
-        /// <summary>出口段泳道的中心 X（与进入段保持 ≥100px 通道供点击虚线走线）</summary>
-        public const float ConfirmLaneX = 860f;
-
-        /// <summary>链起始 Y</summary>
-        public const float StartY = 60f;
+        /// <summary>进入段泳道的中心 Y（上半区）</summary>
+        public const float EntryLaneY = 200f;
 
         /// <summary>
-        /// 计算图中每个节点的坐标。
+        /// 出口段泳道的中心 Y（下半区）。
+        /// 2026-08-27：620 → 800，与进入段拉开距离——模板展开后节点变高，
+        /// 两条泳道过近会导致视觉重叠（用户需求 5）。
         /// </summary>
-        /// <param name="graph">待布局的图（必须是合法 SP 图）</param>
-        /// <param name="centerX">泳道中心 X</param>
-        /// <returns>节点 ID → 坐标</returns>
-        public static Dictionary<string, Vector2> Layout(ChainGraph graph, float centerX)
+        public const float ConfirmLaneY = 800f;
+
+        /// <summary>链起始 X</summary>
+        public const float StartX = 80f;
+
+        // 节点宽度估算（用于初始布局，实际宽度由 MeasureAndRelayout 修正）
+        private const float W_COMMAND = 200f;
+        private const float W_COMMAND_NOARGS = 160f;
+        private const float W_TERMINAL = 120f;
+        private const float W_FORKJOIN = 110f;
+        private const float W_CAPSULE = 320f;
+
+        /// <summary>
+        /// 计算图中每个节点的坐标（估算版，用于初始布局）。
+        /// </summary>
+        /// <param name="graph">图数据</param>
+        /// <param name="centerY">泳道中心 Y（该链沿此 Y 水平流动）</param>
+        public static Dictionary<string, Vector2> Layout(ChainGraph graph, float centerY)
         {
             var positions = new Dictionary<string, Vector2>();
             if (graph == null || graph.NodeCount == 0) return positions;
@@ -55,22 +69,45 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var sources = graph.FindSources();
             if (sources.Count != 1)
             {
-                // 非法图（多起点/有环）：退化为网格排列，保证节点不重叠可见
-                FallbackGrid(graph, centerX, positions);
+                FallbackGrid(graph, centerY, positions);
                 return positions;
             }
 
-            LayoutChain(graph, sources[0].Id, null, centerX, StartY, positions, 0);
+            LayoutChain(graph, sources[0].Id, null, StartX, centerY, positions, 0);
             return positions;
         }
 
         /// <summary>
-        /// 沿链布局，返回该段结束后的下一个 Y。
+        /// 测量并重布局：用实际渲染宽度重新计算节点 X 坐标。
+        /// </summary>
+        /// <param name="graph">图数据</param>
+        /// <param name="centerY">泳道中心 Y</param>
+        /// <param name="actualWidths">节点 ID → 实际渲染宽度（由视图层测量提供）</param>
+        public static Dictionary<string, Vector2> MeasureAndRelayout(
+            ChainGraph graph, float centerY, Dictionary<string, float> actualWidths)
+        {
+            var positions = new Dictionary<string, Vector2>();
+            if (graph == null || graph.NodeCount == 0) return positions;
+
+            var sources = graph.FindSources();
+            if (sources.Count != 1)
+            {
+                FallbackGrid(graph, centerY, positions);
+                return positions;
+            }
+
+            LayoutChainMeasured(graph, sources[0].Id, null, StartX, centerY,
+                positions, 0, actualWidths);
+            return positions;
+        }
+
+        /// <summary>
+        /// 沿链布局（估算宽度版），返回该段结束后的下一个 X。
         /// </summary>
         private static float LayoutChain(ChainGraph graph, string startId, string stopAtId,
-            float centerX, float y, Dictionary<string, Vector2> positions, int depth)
+            float x, float centerY, Dictionary<string, Vector2> positions, int depth)
         {
-            if (depth > 32) return y; // 防御畸形图
+            if (depth > 32) return x;
 
             string current = startId;
             var visited = new HashSet<string>();
@@ -84,38 +121,40 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 {
                     string joinId = FindJoin(graph, current);
 
-                    positions[current] = new Vector2(centerX - 65f, y);
-                    y += NodeHeight(node) + ForkPadding + VerticalGap;
+                    // Fork 节点放在当前 X 位置，垂直居中于其分支区域
+                    float forkWidth = NodeWidthEst(node);
+                    positions[current] = new Vector2(x, centerY - NodeHeight / 2f);
+                    x += forkWidth + ForkPadding + HorizontalGap;
 
-                    // 先测量每条分支的宽度需求，再据此分配水平通道
                     var branches = graph.GetSuccessors(current);
-                    var widths = new List<float>();
+                    var heights = new List<float>();
                     foreach (string branch in branches)
-                        widths.Add(MeasureBranchWidth(graph, branch, joinId));
+                        heights.Add(MeasureBranchHeight(graph, branch, joinId));
 
-                    float totalWidth = 0f;
-                    foreach (float w in widths) totalWidth += w;
-                    totalWidth += BranchGap * (branches.Count - 1);
+                    float totalHeight = 0f;
+                    foreach (float h in heights) totalHeight += h;
+                    totalHeight += BranchGap * (branches.Count - 1);
 
-                    float cursorX = centerX - totalWidth / 2f;
-                    float maxBranchBottom = y;
+                    float cursorY = centerY - totalHeight / 2f;
+                    float maxBranchRight = x;
 
                     for (int i = 0; i < branches.Count; i++)
                     {
-                        float branchCenterX = cursorX + widths[i] / 2f;
-                        float bottom = LayoutChain(graph, branches[i], joinId,
-                            branchCenterX, y, positions, depth + 1);
-                        if (bottom > maxBranchBottom) maxBranchBottom = bottom;
+                        float branchCenterY = cursorY + heights[i] / 2f;
+                        float right = LayoutChain(graph, branches[i], joinId,
+                            x, branchCenterY, positions, depth + 1);
+                        if (right > maxBranchRight) maxBranchRight = right;
 
-                        cursorX += widths[i] + BranchGap;
+                        cursorY += heights[i] + BranchGap;
                     }
 
-                    y = maxBranchBottom + ForkPadding;
+                    x = maxBranchRight + ForkPadding;
 
                     if (joinId != null)
                     {
-                        positions[joinId] = new Vector2(centerX - 65f, y);
-                        y += NodeHeight(graph.GetNode(joinId)) + VerticalGap;
+                        float joinWidth = NodeWidthEst(graph.GetNode(joinId));
+                        positions[joinId] = new Vector2(x, centerY - NodeHeight / 2f);
+                        x += joinWidth + HorizontalGap;
                         visited.Add(joinId);
 
                         var afterJoin = graph.GetSuccessors(joinId);
@@ -125,28 +164,113 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     {
                         current = null;
                     }
-                    continue; // Fork 段已处理完毕，不可落入下方的普通节点分支
+                    continue;
                 }
 
-                if (node.Kind == ChainGraphNodeKind.Join) break; // 由外层 Fork 处理
+                if (node.Kind == ChainGraphNodeKind.Join) break;
 
-                positions[current] = new Vector2(centerX - NodeWidth / 2f, y);
-                y += NodeHeight(node) + VerticalGap;
+                positions[current] = new Vector2(x, centerY - NodeHeight / 2f);
+                x += NodeWidthEst(node) + HorizontalGap;
 
                 var successors = graph.GetSuccessors(current);
                 current = successors.Count > 0 ? successors[0] : null;
             }
 
-            return y;
+            return x;
+        }
+
+        /// <summary>沿链布局（实际宽度版），返回该段结束后的下一个 X。</summary>
+        private static float LayoutChainMeasured(ChainGraph graph, string startId, string stopAtId,
+            float x, float centerY, Dictionary<string, Vector2> positions, int depth,
+            Dictionary<string, float> actualWidths)
+        {
+            if (depth > 32) return x;
+
+            string current = startId;
+            var visited = new HashSet<string>();
+
+            while (!string.IsNullOrEmpty(current) && current != stopAtId && visited.Add(current))
+            {
+                var node = graph.GetNode(current);
+                if (node == null) break;
+
+                float nodeW = GetMeasuredWidth(current, actualWidths, node);
+
+                if (node.Kind == ChainGraphNodeKind.Fork)
+                {
+                    string joinId = FindJoin(graph, current);
+
+                    positions[current] = new Vector2(x, centerY - NodeHeight / 2f);
+                    x += nodeW + ForkPadding + HorizontalGap;
+
+                    var branches = graph.GetSuccessors(current);
+                    var heights = new List<float>();
+                    foreach (string branch in branches)
+                        heights.Add(MeasureBranchHeight(graph, branch, joinId));
+
+                    float totalHeight = 0f;
+                    foreach (float h in heights) totalHeight += h;
+                    totalHeight += BranchGap * (branches.Count - 1);
+
+                    float cursorY = centerY - totalHeight / 2f;
+                    float maxBranchRight = x;
+
+                    for (int i = 0; i < branches.Count; i++)
+                    {
+                        float branchCenterY = cursorY + heights[i] / 2f;
+                        float right = LayoutChainMeasured(graph, branches[i], joinId,
+                            x, branchCenterY, positions, depth + 1, actualWidths);
+                        if (right > maxBranchRight) maxBranchRight = right;
+
+                        cursorY += heights[i] + BranchGap;
+                    }
+
+                    x = maxBranchRight + ForkPadding;
+
+                    if (joinId != null)
+                    {
+                        float joinW = GetMeasuredWidth(joinId, actualWidths, graph.GetNode(joinId));
+                        positions[joinId] = new Vector2(x, centerY - NodeHeight / 2f);
+                        x += joinW + HorizontalGap;
+                        visited.Add(joinId);
+
+                        var afterJoin = graph.GetSuccessors(joinId);
+                        current = afterJoin.Count > 0 ? afterJoin[0] : null;
+                    }
+                    else
+                    {
+                        current = null;
+                    }
+                    continue;
+                }
+
+                if (node.Kind == ChainGraphNodeKind.Join) break;
+
+                positions[current] = new Vector2(x, centerY - NodeHeight / 2f);
+                x += nodeW + HorizontalGap;
+
+                var successors = graph.GetSuccessors(current);
+                current = successors.Count > 0 ? successors[0] : null;
+            }
+
+            return x;
+        }
+
+        /// <summary>获取节点的实际测量宽度，fallback 到估算。</summary>
+        private static float GetMeasuredWidth(string nodeId,
+            Dictionary<string, float> actualWidths, ChainGraphNode node)
+        {
+            if (actualWidths != null && actualWidths.TryGetValue(nodeId, out float w) && w > 0)
+                return w;
+            return NodeWidthEst(node);
         }
 
         /// <summary>
-        /// 测量一条分支所需的水平宽度：分支内若有嵌套 Fork，宽度需容纳其全部子分支。
-        /// 这使"分支内还有分支"的情形不会挤压相邻分支。
+        /// 测量一条分支所需的垂直高度（用于 Fork 分支纵向均分）。
         /// </summary>
-        private static float MeasureBranchWidth(ChainGraph graph, string startId, string stopAtId)
+        private static float MeasureBranchHeight(ChainGraph graph, string startId, string stopAtId)
         {
-            float maxWidth = NodeWidth;
+            float maxHeight = NodeHeight;
             string current = startId;
             var visited = new HashSet<string>();
 
@@ -162,10 +286,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                     float sum = 0f;
                     foreach (string sub in subBranches)
-                        sum += MeasureBranchWidth(graph, sub, joinId);
+                        sum += MeasureBranchHeight(graph, sub, joinId);
                     sum += BranchGap * (subBranches.Count - 1);
 
-                    if (sum > maxWidth) maxWidth = sum;
+                    if (sum > maxHeight) maxHeight = sum;
 
                     if (joinId == null) break;
                     visited.Add(joinId);
@@ -180,10 +304,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 current = succ.Count > 0 ? succ[0] : null;
             }
 
-            return maxWidth;
+            return maxHeight;
         }
 
-        /// <summary>沿第一条分支找出配对的 Join（与 GraphToAst 同规则）。</summary>
+        /// <summary>沿第一条分支找出配对的 Join。</summary>
         private static string FindJoin(ChainGraph graph, string forkId)
         {
             var branches = graph.GetSuccessors(forkId);
@@ -207,35 +331,32 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             return null;
         }
 
-        // 节点高度估算（真实高度由 UIElements 布局后才确定，此处用类型近似）
-        private const float H_COMMAND = 58f;
-        private const float H_COMMAND_NOARGS = 30f;
-        private const float H_TERMINAL = 30f;
-        private const float H_FORKJOIN = 30f;
-        private const float H_CAPSULE = 112f;
-
-        private static float NodeHeight(ChainGraphNode node)
+        /// <summary>估算节点宽度（用于初始布局）。</summary>
+        private static float NodeWidthEst(ChainGraphNode node)
         {
             switch (node.Kind)
             {
                 case ChainGraphNodeKind.Fork:
                 case ChainGraphNodeKind.Join:
-                    return H_FORKJOIN;
+                    return W_FORKJOIN;
 
                 case ChainGraphNodeKind.Start:
                 case ChainGraphNodeKind.End:
-                    return H_TERMINAL;
+                    return W_TERMINAL;
 
                 default:
-                    return string.IsNullOrWhiteSpace(node.Args) ? H_COMMAND_NOARGS : H_COMMAND;
+                    return string.IsNullOrWhiteSpace(node.Args) ? W_COMMAND_NOARGS : W_COMMAND;
             }
         }
 
-        /// <summary>模板折叠胶囊的高度（供窗口层布局参考）。</summary>
-        public static float CapsuleHeight => H_CAPSULE;
+        /// <summary>模板折叠胶囊的宽度（供窗口层布局参考）。</summary>
+        public static float CapsuleWidth => W_CAPSULE;
 
-        /// <summary>非法图的退化布局：网格排列，保证全部节点可见不重叠。</summary>
-        private static void FallbackGrid(ChainGraph graph, float centerX,
+        /// <summary>模板折叠胶囊的高度</summary>
+        public static float CapsuleHeight => 200f;
+
+        /// <summary>非法图的退化布局：网格排列。</summary>
+        private static void FallbackGrid(ChainGraph graph, float centerY,
             Dictionary<string, Vector2> positions)
         {
             int i = 0;
@@ -244,8 +365,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 int row = i / 3;
                 int col = i % 3;
                 positions[node.Id] = new Vector2(
-                    centerX - NodeWidth + col * (NodeWidth + BranchGap),
-                    StartY + row * (H_COMMAND + VerticalGap));
+                    StartX + col * (W_COMMAND + HorizontalGap),
+                    centerY - NodeHeight + row * (NodeHeight + BranchGap));
                 i++;
             }
         }

@@ -1,5 +1,6 @@
 using UnityEngine;
 using VNovelizer.Core.Theater;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -11,8 +12,14 @@ namespace VNovelizer.Core.Commands
     /// 示例3：charflip(M, 1) -> 强制面朝右
     /// 翻转状态源仍为 VNManager.currentCharactersScaleX（纯数据，随存档持久化）。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "角色立绘水平翻转（要求同行对应立绘列已填；翻转状态随存档持久化）")]
     public class CharFlipCommand : VNCommand
     {
+        [VNParam(0, "pos", VNParamType.SlotCode,
+            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+        [VNParam(1, "direction", VNParamType.String, Optional = true,
+            Description = "缺省=切换翻转；-1 或 left=强制朝左；1 或 right=强制朝右")]
         public override string CommandName { get { return "charflip"; } }
 
         public override bool Execute(string args)

@@ -1,9 +1,14 @@
 ﻿using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "黑幕淡入（阻塞至淡入完成；配合 fadeBlackOut 使用）")]
     public class FadeBlackInCommand : VNCommand
     {
+        [VNParam(0, "duration", VNParamType.Float, Min = 0.05f, Max = 10f, Default = "0.5",
+            Description = "淡入秒数")]
         public override string CommandName => "fadeBlackIn";
 
         public override bool Execute(string args)

@@ -1,8 +1,13 @@
 /* ============================================================
-   VNovelizer 行演出编辑器 · 样式表
-   设计语言对齐 Docs/mockups/RowPerfEditorMockup.html (V8)
+   VNovelizer 行演出编辑器 · 样式表 V2（2026-08-26 重写）
+   设计目标：紧凑卡片式节点 + 清晰连接边 + 跨平台符号显示
 
-   色彩语义（全局一致，不要随意增改）：
+   字体策略：
+     - 主字体用 Unity 默认（Inter / Liberation Sans）
+     - 符号 fallback 到 Segoe UI Symbol (Win) / Apple Symbols (Mac)
+     - 所有 emoji 替换为 Unicode BMP 几何符号
+
+   色彩语义（全局一致）：
      蓝 #4A90D9  系统命令 / 数据列引用
      紫 #9C8FCE  并行（Fork/Join、并行边、进入段泳道）
      绿 #7FAC5B  出口段（@Confirm 链、点击虚线）
@@ -12,7 +17,7 @@
      黄 #C8A03C  警告
    ============================================================ */
 
-/* ---------------- 窗口骨架 ---------------- */
+/* ---------------- 全局字体 ---------------- */
 
 .vn-root {
     flex: 1;
@@ -20,41 +25,55 @@
     background-color: #383838;
 }
 
-.vn-root > .unity-base-field {
-    background-color: transparent;
+.vn-root Label,
+.vn-root Button {
+    /* 字体保持 Unity 默认（Inter / Liberation Sans）；
+       Unity USS 不支持 font-family 与 'default' 关键字 */
 }
 
-.vn-root > .unity-text-field__input {
-    background-color: #2A2A2A;
-    border-color: #555;
-    color: #DDD;
-}
-
-.vn-root > .unity-popup-field {
-    background-color: #2A2A2A;
-}
-
-.vn-root > .unity-slider {
-    margin: 2px 0;
-}
+/* ---------------- 工具栏 ---------------- */
 
 .vn-toolbar {
     height: 40px;
     flex-shrink: 0;
     flex-direction: row;
     align-items: center;
-    padding-left: 10px;
-    padding-right: 10px;
+    padding-left: 8px;
+    padding-right: 8px;
     background-color: #333333;
     border-bottom-width: 1px;
     border-bottom-color: #212121;
 }
 
+.vn-toolbar Button {
+    height: 26px;
+    font-size: 11px;
+    color: #CCCCCC;
+    background-color: #3E3E3E;
+    border-width: 1px;
+    border-color: #555555;
+    border-radius: 3px;
+    margin-left: 0;
+    margin-right: 3px;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+.vn-toolbar Button:hover {
+    background-color: #4E4E4E;
+    color: #FFFFFF;
+}
+
+.vn-toolbar Button:active {
+    background-color: #2A6A9E;
+    color: #FFFFFF;
+}
+
 .vn-toolbar-divider {
     width: 1px;
-    height: 20px;
-    margin-left: 6px;
-    margin-right: 6px;
+    height: 18px;
+    margin-left: 4px;
+    margin-right: 4px;
     background-color: #555555;
 }
 
@@ -72,6 +91,8 @@
     flex: 1;
     flex-direction: row;
 }
+
+/* ---------------- 状态栏 ---------------- */
 
 .vn-statusbar {
     height: 24px;
@@ -193,7 +214,7 @@
 .vn-cmd-item {
     flex-direction: row;
     align-items: center;
-    padding: 3px 10px 3px 22px;
+    padding: 4px 10px 4px 22px;
     border-radius: 3px;
     margin-left: 4px;
     margin-right: 4px;
@@ -201,9 +222,16 @@
 
 .vn-cmd-item:hover { background-color: #2C5D87; }
 
+.vn-cmd-item--dragging {
+    background-color: #4A7AAA;
+    border-width: 1px;
+    border-color: #6A9AD0;
+}
+
 .vn-cmd-item-name {
     font-size: 11px;
     color: #B8B8B8;
+    -unity-font-style: bold;
 }
 
 .vn-cmd-item:hover .vn-cmd-item-name { color: #FFFFFF; }
@@ -214,6 +242,7 @@
     color: #6A6A6A;
     -unity-text-align: middle-right;
     overflow: hidden;
+    margin-left: 6px;
 }
 
 .vn-cmd-item--generic .vn-cmd-item-sig { color: #8A7A5A; }
@@ -236,6 +265,20 @@
     flex: 1;
 }
 
+/* contentViewContainer 背景必须透明——否则会盖住 GridBackground 的网格线（2026-08-27 用户需求 2） */
+.vn-graph > .unity-graph-viewing#contentViewContainer {
+    background-color: transparent;
+}
+
+/* 网格背景：可见的网格线（2026-08-27 用户需求 2） */
+.vn-graph > GridBackground {
+    --grid-background-color: rgb(32, 32, 36);
+    --line-color: rgba(70, 70, 76, 0.45);
+    --thick-line-color: rgba(96, 96, 104, 0.55);
+    --spacing: 25;
+    --thick-line-every-nth-line: 8;
+}
+
 .vn-lane-label {
     position: absolute;
     padding: 2px 10px 2px 10px;
@@ -245,7 +288,9 @@
     letter-spacing: 1px;
     background-color: #2B2B2B;
     border-width: 1px;
-    border-style: dashed;
+    border-color: #5A5478;
+    /* Unity USS 不支持 border-style: dashed；用半透明色模拟虚线感 */
+    opacity: 0.85;
     white-space: nowrap;
 }
 
@@ -259,51 +304,94 @@
     border-color: #4A6E3E;
 }
 
-/* ---------------- 节点：通用 ---------------- */
+/* ---------------- 节点：UE 蓝图风格 ---------------- */
 
 .vn-node {
-    min-width: 180px;
+    /* 2026-08-27（用户需求 4）：加宽——端口回到节点内（left/right:8px）+
+       参数显示 name: value 两列（用户需求 6）需要更多横向空间 */
+    min-width: 210px;
+    max-width: 290px;
+    /* 2026-08-27：必须 visible——否则端口溢出到节点外侧时被 GraphView 内置 overflow:hidden 裁剪，
+       这是之前端口不可见的根因。Node 自身与 #node-border 都要设。 */
+    overflow: visible;
 }
 
 .vn-node > #node-border {
-    border-radius: 5px;
+    border-radius: 6px;
     border-width: 1px;
-    border-color: #666666;
-    background-color: #464646;
+    border-color: #1A1A1A;
+    background-color: #3A3A3A;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: visible;
 }
 
-/* 标题栏容器：去掉底部分隔与默认 padding，由自定义 label 全权控制 */
+/* 标题栏：UE 蓝图式整条分类着色（默认灰）+ 底部白色细线 */
 .vn-node > #title {
-    height: auto;
-    min-height: 24px;
-    padding: 3px 8px 3px 8px;
-    background-color: transparent;
+    height: 26px;
+    min-height: 26px;
+    padding: 3px 10px 3px 10px;
+    background-color: #4A4A4A;
     border-bottom-width: 1px;
-    border-bottom-color: #3A3A3A;
+    border-bottom-color: #FFFFFF;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
     flex-direction: row;
     align-items: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow: hidden;
 }
 
 .vn-node-title {
-    font-size: 13px;
+    font-size: 12px;
     -unity-font-style: bold;
-    color: #E0E0E0;
+    color: #FFFFFF;
     margin: 0;
-    -unity-font-definition: initial;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.vn-node #contents { padding: 0; }
+.vn-node #contents {
+    padding: 4px 0 4px 0;
+}
 
-/* 分类色带（左侧 4px 竖条） */
+/* ---- 分类标题栏着色（UE 蓝图核心特征） ---- */
+
+.vn-node--cat-system > #title {
+    background-color: #2C5D87;
+}
+
+.vn-node--cat-performance > #title {
+    background-color: #5C5480;
+}
+
+.vn-node--cat-flow > #title {
+    background-color: #8A5420;
+}
+
+.vn-node--cat-logic > #title {
+    background-color: #3E7060;
+}
+
+.vn-node--cat-audio > #title {
+    background-color: #7A5068;
+}
+
+.vn-node--cat-generic > #title {
+    background-color: #5A5244;
+}
+
+/* 分类色带（左侧竖条，保留作为分类色的辅助标识） */
 .vn-node-accent {
     position: absolute;
     left: 0;
     top: 0;
     bottom: 0;
-    width: 4px;
-    border-top-left-radius: 4px;
-    border-bottom-left-radius: 4px;
+    width: 3px;
+    border-top-left-radius: 5px;
+    border-bottom-left-radius: 5px;
     background-color: #9C94B2;
 }
 
@@ -314,45 +402,48 @@
 .vn-accent-audio       { background-color: #C87FA8; }
 .vn-accent-generic     { background-color: #8A7A5A; }
 
-/* 参数区 */
+/* ---- 参数行（设计稿式：名+值紧贴左侧，UE 蓝图式） ---- */
+
 .vn-node-params {
-    flex-direction: row;
-    flex-wrap: wrap;
-    padding: 4px 8px 5px 8px;
+    padding: 3px 0 4px 0;
 }
 
-.vn-param-chip {
+.vn-param-row {
     flex-direction: row;
     align-items: center;
-    background-color: #383838;
-    border-width: 1px;
-    border-color: #555555;
-    border-radius: 3px;
-    padding: 0 5px 1px 5px;
-    margin-right: 3px;
-    margin-bottom: 2px;
+    padding: 3px 10px 3px 10px;
+    min-height: 18px;
 }
 
 .vn-param-key {
-    font-size: 9px;
-    color: #8E8E8E;
-    margin-right: 3px;
+    font-size: 11px;
+    color: #A0A0A0;
+    -unity-text-align: middle-left;
+    flex-shrink: 0;
 }
 
 .vn-param-value {
-    font-size: 10px;
+    font-size: 11px;
     -unity-font-style: bold;
-    color: #E8E8E8;
+    color: #FFFFFF;
+    margin-left: 4px;
+    flex-shrink: 0;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .vn-param-empty {
-    font-size: 9px;
+    font-size: 11px;
     color: #6A6A6A;
+    -unity-font-style: italic;
+    margin-left: 4px;
+    flex-shrink: 0;
 }
 
 /* 原始参数（通用节点态） */
 .vn-node-rawargs {
-    padding: 4px 8px 5px 8px;
+    padding: 3px 10px 4px 10px;
     font-size: 10px;
     color: #B8AC90;
     white-space: normal;
@@ -367,11 +458,13 @@
 }
 
 .vn-badge {
-    padding: 0 5px 1px 5px;
+    padding: 1px 5px 1px 5px;
     margin-left: 4px;
     border-radius: 3px;
     border-width: 1px;
     font-size: 9px;
+    -unity-font-style: bold;
+    flex-shrink: 0;
 }
 
 .vn-badge-ref       { background-color: #2C4A66; border-color: #3E6A8E; color: #7FB8E8; }
@@ -386,6 +479,7 @@
 .vn-node--error > #node-border {
     border-color: #C85A50;
     border-width: 2px;
+    background-color: #4A3838;
 }
 
 .vn-node--warning > #node-border {
@@ -400,9 +494,8 @@
 
 .vn-node--confirm .vn-node-title { color: #D8E8C8; }
 
-.vn-node--confirm .vn-param-chip {
-    background-color: #2E3A2C;
-    border-color: #4A6E3E;
+.vn-node--confirm .vn-param-row {
+    background-color: rgba(127, 172, 91, 0.06);
 }
 
 .vn-node--confirm .vn-param-value { color: #C8D8B8; }
@@ -417,92 +510,176 @@
     border-color: #6A7A96;
 }
 
-/* ---------------- 终端胶囊 ---------------- */
+/* ---------------- 终端节点（UE 蓝图式子弹形设计稿） ---------------- */
 
-.vn-terminal > #node-border {
-    border-radius: 16px;
-    background-color: #333333;
-    border-color: #666666;
+/* 终端节点公共：子弹形 + 白字 */
+.vn-terminal {
+    min-width: 150px;
+    max-width: 200px;
+    min-height: 50px;
 }
 
-.vn-terminal #title { border-bottom-width: 0; }
+.vn-terminal > #node-border {
+    border-width: 2px;
+    border-color: #1A1A1A;
+    background-color: #4A4A4A;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+.vn-terminal #title {
+    border-bottom-width: 0;
+    justify-content: center;
+    height: 50px;
+    min-height: 50px;
+    background-color: transparent;
+    border-radius: 0;
+}
 
 .vn-terminal .vn-node-title {
-    font-size: 11px;
-    color: #AAAAAA;
+    font-size: 14px;
     -unity-font-style: bold;
+    color: #FFFFFF;
 }
 
 .vn-terminal-hint {
-    font-size: 9px;
-    color: #777777;
+    font-size: 10px;
+    color: #FFFFFF;
     margin-left: 5px;
 }
 
-.vn-terminal--confirm > #node-border {
-    background-color: #3A4A38;
-    border-color: #5A8A3E;
+/* ---- Line Entry：行入口，绿色子弹·左直右圆（无入端口） ---- */
+.vn-term--lineentry > #node-border {
+    background-color: #6FA84A;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+    border-top-right-radius: 25px;
+    border-bottom-right-radius: 25px;
 }
 
-.vn-terminal--confirm .vn-node-title { color: #C8E8B0; }
-.vn-terminal--confirm .vn-terminal-hint { color: #A8C898; }
+.vn-term--lineentry #title {
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+    border-top-right-radius: 25px;
+    border-bottom-right-radius: 25px;
+}
 
-/* ---------------- FORK / JOIN 胶囊 ---------------- */
+/* ---- Line Exit：行出口，绿色子弹·左圆右直（双端口） ---- */
+.vn-term--lineexit > #node-border {
+    background-color: #6FA84A;
+    border-top-left-radius: 25px;
+    border-bottom-left-radius: 25px;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
+
+.vn-term--lineexit #title {
+    border-top-left-radius: 25px;
+    border-bottom-left-radius: 25px;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+
+/* ---- OnConfirm Entry：确认入口，橙色子弹·左直右圆 ---- */
+.vn-term--confirmentry > #node-border {
+    background-color: #D17B26;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+    border-top-right-radius: 25px;
+    border-bottom-right-radius: 25px;
+}
+
+.vn-term--confirmentry #title {
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+    border-top-right-radius: 25px;
+    border-bottom-right-radius: 25px;
+}
+
+/* ---- OnConfirm Exit：确认出口，橙色子弹·左圆右直 ---- */
+.vn-term--confirmextit > #node-border {
+    background-color: #D17B26;
+    border-top-left-radius: 25px;
+    border-bottom-left-radius: 25px;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
+
+.vn-term--confirmextit #title {
+    border-top-left-radius: 25px;
+    border-bottom-left-radius: 25px;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+
+/* ---------------- FORK / JOIN（UE 蓝图式紫色标题） ---------------- */
 
 .vn-forkjoin {
-    min-width: 130px;
+    min-width: 110px;
+    max-width: 140px;
 }
 
 .vn-forkjoin > #node-border {
-    border-radius: 15px;
-    background-color: #3E3454;
-    border-width: 2px;
-    border-color: #9C8FCE;
+    border-radius: 6px;
+    background-color: #3A3A3A;
+    border-width: 1px;
+    border-color: #1A1A1A;
 }
 
 .vn-forkjoin #title {
+    background-color: #5C5480;
     border-bottom-width: 0;
     justify-content: center;
+    height: 26px;
+    min-height: 26px;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
 }
 
 .vn-forkjoin .vn-node-title {
     font-size: 11px;
     -unity-font-style: bold;
-    color: #C8BFFF;
+    color: #FFFFFF;
     letter-spacing: 1px;
 }
 
-.vn-forkjoin--confirm > #node-border {
-    background-color: #2E3E2A;
-    border-color: #7FAC5B;
+.vn-forkjoin--confirm > #title {
+    background-color: #3E5A2E;
 }
 
-.vn-forkjoin--confirm .vn-node-title { color: #B8E8A8; }
+.vn-forkjoin--confirm .vn-node-title { color: #E8FFD8; }
 
-/* ---------------- 模板折叠胶囊 ---------------- */
+/* ---------------- 模板折叠胶囊（UE 蓝图式蓝色标题） ---------------- */
 
 .vn-tplcapsule {
     min-width: 300px;
+    max-width: 360px;
 }
 
 .vn-tplcapsule > #node-border {
-    border-radius: 9px;
-    background-color: #3E4854;
-    border-width: 2px;
-    border-color: #6A7A96;
-    border-style: dashed;
+    border-radius: 6px;
+    background-color: #3A3A3A;
+    border-width: 1px;
+    border-color: #1A1A1A;
+}
+
+.vn-tplcapsule > #title {
+    background-color: #2C5D87;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
 }
 
 .vn-tplcapsule .vn-node-title {
     font-size: 11px;
     -unity-font-style: bold;
-    color: #C8D4E8;
+    color: #FFFFFF;
 }
 
 .vn-tpl-expander {
     font-size: 9px;
     color: #8A9AB6;
     margin-right: 5px;
+    -unity-font-style: bold;
 }
 
 .vn-tpl-count {
@@ -515,7 +692,7 @@
 .vn-tpl-chips {
     flex-direction: row;
     flex-wrap: wrap;
-    padding: 5px 10px 3px 10px;
+    padding: 4px 8px 3px 8px;
 }
 
 .vn-refchip {
@@ -523,53 +700,250 @@
     border-width: 1px;
     border-color: #3E6A8E;
     border-radius: 3px;
-    padding: 0 5px 1px 5px;
+    padding: 1px 5px 1px 5px;
     margin-right: 3px;
     margin-bottom: 3px;
     font-size: 9px;
     color: #7FB8E8;
+    -unity-font-style: bold;
 }
 
 .vn-refchip--empty {
     background-color: #3A3A3A;
     border-color: #4A4A4A;
     color: #6E6E6E;
+    -unity-font-style: italic;
 }
 
 .vn-tpl-note {
-    padding: 0 10px 8px 10px;
+    padding: 0 8px 6px 8px;
     font-size: 9px;
     color: #8A9AB6;
     white-space: normal;
 }
 
-/* ---------------- 端口 ---------------- */
+/* =====================================================================
+   端口（V3 重构 2026-08-27）
+   原则：端口是节点外部附件，圆心精确贴节点边，垂直居中，
+         connector/cap 绝对定位 + border-radius:50% 强制正圆。
+   ===================================================================== */
 
+/* ---- 端口容器：与 connector 同尺寸 14x14（避免圆外露 1px 容器边框呈"方块包裹"），背景透明 ---- */
+.vn-node > #inputContainer,
+.vn-node > #outputContainer {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    padding: 0;
+    background-color: transparent;
+    border-width: 0;
+    border-color: transparent;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+}
+
+/* 单端口命令节点 / 终端节点 / 模板胶囊：端口完全在节点内（距边缘 8px），垂直居中 */
+.vn-node > #inputContainer {
+    left: 8px;
+    top: 50%;
+    margin-top: -8px;
+}
+.vn-node > #outputContainer {
+    right: 8px;
+    top: 50%;
+    margin-top: -8px;
+}
+
+/* ---- Port 元素本身：清零所有继承 ---- */
 .vn-node Port {
-    height: 16px;
-    padding-left: 4px;
-    padding-right: 4px;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    background-color: transparent;
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    min-height: 14px;
+    max-width: 14px;
+    max-height: 14px;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
 }
 
-.vn-node Port > #type { display: none; }
-
-.vn-port-par #connector {
-    border-color: #9C8FCE;
+/* #type 永远 display none，且不占布局空间 */
+.vn-node Port > #type {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+    padding: 0;
 }
 
-.vn-port-par #connector > #cap {
+/* portName Label 即使为空也可能占 flex 空间——彻底隐藏 */
+.vn-node Port > Label {
+    display: none;
+    width: 0;
+    height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* ---- #connector：绝对定位，正圆 ---- */
+.vn-node Port > #connector {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border-width: 2px;
+    border-color: #1A1A1A;
+    background-color: #F0F0F0;
+    margin: 0;
+    padding: 0;
+}
+
+/* ---- #cap：内圈圆点，绝对定位，正圆 ---- */
+.vn-node Port > #connector > #cap {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background-color: #F0F0F0;
+    margin: 0;
+    padding: 0;
+}
+
+/* ---- 端口悬停高亮 ---- */
+.vn-node Port:hover > #connector {
+    background-color: #FFFFFF;
+    border-color: #4A90D9;
+}
+.vn-node Port:hover > #connector > #cap {
+    background-color: #FFFFFF;
+}
+
+/* ---- 端口类型颜色 ---- */
+/* 并行端口（紫色，Fork/Join 专用） */
+.vn-port-par > #connector {
+    border-color: #1A1A1A;
     background-color: #9C8FCE;
 }
-
-.vn-port-confirm #connector {
-    border-color: #7FAC5B;
+.vn-port-par > #connector > #cap {
+    background-color: #9C8FCE;
+}
+.vn-port-par:hover > #connector {
+    background-color: #BCB0E8;
+    border-color: #FFFFFF;
+}
+.vn-port-par:hover > #connector > #cap {
+    background-color: #BCB0E8;
 }
 
-.vn-port-confirm #connector > #cap {
+/* 出口段端口（绿色） */
+.vn-port-confirm > #connector {
+    border-color: #1A1A1A;
     background-color: #7FAC5B;
+}
+.vn-port-confirm > #connector > #cap {
+    background-color: #7FAC5B;
+}
+.vn-port-confirm:hover > #connector {
+    background-color: #A0CC80;
+    border-color: #FFFFFF;
+}
+.vn-port-confirm:hover > #connector > #cap {
+    background-color: #A0CC80;
+}
+
+/* ---- 节点类型覆写（保留端口位置语义） ---- */
+/* 终端节点：圆心贴边（与默认一致，无需覆写） */
+
+/* ---- Fork/Join 多端口垂直分布 ---- */
+/* 当前实现：Fork/Join 用 Port.Capacity.Multi 单端口承载多边，所有节点仍为单端口。
+   端口继承 .vn-node 的默认垂直居中规则。预留 .vn-forkjoin--multi 类名供未来真多端口使用。 */
+.vn-forkjoin > #inputContainer,
+.vn-forkjoin > #outputContainer {
+    left: 8px;
+    top: 50%;
+    margin-top: -8px;
+}
+.vn-forkjoin > #outputContainer {
+    left: auto;
+    right: 8px;
+}
+
+/* 预留：未来若改用真多 Port 实例（每个分支一个 Port），启用本规则 */
+.vn-forkjoin--multi > #inputContainer,
+.vn-forkjoin--multi > #outputContainer {
+    top: 0;
+    margin-top: 0;
+    flex-direction: column;
+    justify-content: space-around;
+    align-items: center;
+}
+.vn-forkjoin--multi > #inputContainer { left: 8px; }
+.vn-forkjoin--multi > #outputContainer { right: 8px; }
+
+/* ---------------- 边（UE 蓝图式白色 exec 线） ---------------- */
+
+.vn-graph Edge {
+    border-width: 2.5px;
+}
+
+.vn-graph Edge.selected {
+    border-width: 3.5px;
+    border-color: #4A90D9;
 }
 
 /* ---------------- 右侧 Inspector ---------------- */
+
+/* 页签栏（节点 / 文本） */
+.vn-insp-tabs {
+    flex-direction: row;
+    background-color: #2A2A2A;
+    border-bottom-width: 1px;
+    border-bottom-color: #212121;
+}
+
+.vn-insp-tab {
+    flex: 1;
+    height: 28px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #888888;
+    background-color: transparent;
+    border-width: 0;
+    border-bottom-width: 2px;
+    border-bottom-color: transparent;
+    margin: 0;
+}
+
+.vn-insp-tab:hover { color: #CCCCCC; }
+
+.vn-insp-tab--active {
+    color: #DDDDDD;
+    border-bottom-color: #4A90D9;
+}
+
+/* 命令链多行文本编辑区（文本页签） */
+.vn-insp-chainfield {
+    margin-top: 4px;
+}
+
+.vn-insp-chainfield .unity-text-element__input {
+    font-size: 11px;
+    color: #D8D8D8;
+    white-space: normal;
+}
 
 .vn-inspector {
     width: 284px;
@@ -737,4 +1111,29 @@
     white-space: normal;
     -unity-text-align: middle-center;
     max-width: 380px;
+}
+
+/* ---------------- 拖拽视觉反馈 ---------------- */
+
+.vn-graph--drag-target {
+    background-color: #3A4A5E;
+}
+
+.vn-drag-hint {
+    position: absolute;
+    padding: 4px 10px 4px 10px;
+    background-color: rgba(74, 144, 217, 0.85);
+    color: #FFFFFF;
+    font-size: 11px;
+    -unity-font-style: bold;
+    border-radius: 4px;
+    /* Unity USS 不支持 pointer-events: none；用 picking-mode 在 C# 层设置 */
+}
+
+/* 框选矩形（自实现 DragBoxSelector 绘制） */
+.vn-rect-box {
+    position: absolute;
+    border-width: 1px;
+    border-color: #4A90D9;
+    background-color: rgba(74, 144, 217, 0.12);
 }

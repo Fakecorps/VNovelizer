@@ -3,11 +3,16 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine.UI;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
+    [VNCommandMeta(VNCommandCategory.System,
+        "设置自动播放换行间隔（秒/字；持久保存到全局设置）")]
     public class SetAutoSpeedCommand : VNCommand
     {
+        [VNParam(0, "speed", VNParamType.Float, Min = 0.01f, Max = 2f, Default = "1",
+            Description = "秒/字（0.01-2，越小换行越快）")]
         public override string CommandName { get { return "setautospeed"; } }
 
         public override bool Execute(string args)

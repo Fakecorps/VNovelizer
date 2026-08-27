@@ -1,14 +1,19 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
     /// 配置命令
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.System,
+        "运行时修改游戏配置项（key:value 冒号格式）")]
     public class ConfigCommand : VNCommand
     {
+        [VNParam(0, "setting", VNParamType.String,
+            Description = "配置项:值。可用项 voice:true|false、textspeed:秒/字、autospeed:秒/字，如 voice:false")]
         public override string CommandName { get { return "config"; } }
         
         public override bool Execute(string args)

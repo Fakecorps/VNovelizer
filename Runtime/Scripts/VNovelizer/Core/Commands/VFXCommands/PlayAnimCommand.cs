@@ -3,11 +3,20 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "播放 Animator 动画特效（挂在特效层；loop 结尾缀名表循环播放）")]
     public class PlayAnimCommand : VNCommand
     {
+        [VNParam(0, "anim", VNParamType.String,
+            Description = "动画资源名（Animation 目录下的预制体）")]
+        [VNParam(1, "pos", VNParamType.String, Default = "M", Optional = true,
+            Description = "显示位置：L/ML/M/MR/R 槽位或 left/center/right 屏幕三区（默认 M）")]
+        [VNParam(2, "loop", VNParamType.String, Optional = true,
+            Description = "填 loop 则循环播放（stopanim 对应回收）")]
         public override string CommandName { get { return "playanim"; } }
 
         // --- 多实例并行支持（活动列表） ---

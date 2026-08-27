@@ -29,7 +29,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (IsFork)
             {
-                SetTitle("FORK ∥ 分流");
+                SetTitle("FORK");
                 tooltip = "并行分流：以下分支同时启动。\n" +
                           "对应命令链的 & 运算符。全部分支完成后才继续 JOIN 之后的命令。";
 
@@ -40,7 +40,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
             else
             {
-                SetTitle("JOIN ⏫ 汇合");
+                SetTitle("JOIN");
                 tooltip = "并行汇合：等待全部分支完成后，继续执行后续命令。\n" +
                           "每个 FORK 必须有配对的 JOIN，否则命令链无法保存。";
 

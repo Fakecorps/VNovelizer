@@ -113,8 +113,8 @@ namespace VNovelizer.Editor
                 _expanded[info.Name], info.Signature, true, EditorStyles.foldout);
 
             GUILayout.FlexibleSpace();
-            if (!info.HasMeta) Tag("⚙ 通用节点", new Color(0.85f, 0.78f, 0.55f));
-            if (info.Planned) Tag("⏳ 未实现", new Color(0.7f, 0.7f, 0.75f));
+            if (!info.HasMeta) Tag("[G] 通用节点", new Color(0.85f, 0.78f, 0.55f));
+            if (info.Planned) Tag("[计划中]", new Color(0.7f, 0.7f, 0.75f));
             if (info.IsFlowCommand) Tag("链尾", new Color(0.9f, 0.78f, 0.5f));
             if (info.IsAsync) Tag("async", new Color(0.6f, 0.78f, 0.9f));
             if (info.HasSimulate) Tag("Sim", new Color(0.6f, 0.85f, 0.55f));
@@ -156,7 +156,7 @@ namespace VNovelizer.Editor
             if (p.Options.Length > 0) parts.Add(string.Join("|", p.Options));
             if (!string.IsNullOrEmpty(p.Default)) parts.Add($"默认 {p.Default}");
             if (p.Optional) parts.Add("可选");
-            if (p.ImplicitBinding) parts.Add($"📎 引用 {p.BoundColumn} 列");
+            if (p.ImplicitBinding) parts.Add($">> 引用 {p.BoundColumn} 列");
             if (p.InlineForbidden) parts.Add("禁止内联");
 
             EditorGUILayout.LabelField($"  {p.Index}. {p.Name}",

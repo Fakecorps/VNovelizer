@@ -1,6 +1,7 @@
 ﻿using UnityEngine;
 using VNovelizer.Core.API;
 using VNovelizer.Core.Compat;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -11,6 +12,8 @@ namespace VNovelizer.Core.Commands
     /// 主菜单是面板而非场景，不切换场景——旧实现 LoadScene("VNMainMenu")
     /// 依赖已被删除的内置场景，在重构后的引擎里必然报"场景未加入 Build Settings"。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Flow,
+        "返回主菜单（面板切换不加载场景；仅可置于链尾）")]
     public class ExitCommand : VNCommand
     {
         public override string CommandName { get { return "exit"; } }

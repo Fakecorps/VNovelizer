@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.Theater;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -10,8 +11,14 @@ namespace VNovelizer.Core.Commands
     /// 格式：charfadein(位置, [时长])
     /// 经 TheaterManager 驱动 IActor，不再接触 UGUI 类型。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "角色立绘淡入（要求同行对应立绘列已填；多个淡入自动并行播放）")]
     public class CharFadeInCommand : VNCommand
     {
+        [VNParam(0, "pos", VNParamType.SlotCode,
+            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+        [VNParam(1, "duration", VNParamType.Float, Min = 0.05f, Max = 10f, Default = "0.5",
+            Optional = true, Description = "淡入秒数（默认 0.5）")]
         public override string CommandName { get { return "charfadein"; } }
 
         private float defaultDuration = 0.5f;

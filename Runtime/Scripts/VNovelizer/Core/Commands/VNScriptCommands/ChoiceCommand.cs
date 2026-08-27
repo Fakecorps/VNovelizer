@@ -3,11 +3,19 @@ using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.Localization;
 using VNovelizer.Core.Diagnostics;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
+    [VNCommandMeta(VNCommandCategory.Flow,
+        "添加选项按钮（同一行多个 choice 会汇集成同一面板；本地化用 @loc:key，仅可置于链尾）",
+        ArgSeparator = '|')]
     public class ChoiceCommand : VNCommand
     {
+        [VNParam(0, "text", VNParamType.String,
+            Description = "选项文字；本地化写 @loc:表名.键，如 @loc:VNScript_CH1.choice_a")]
+        [VNParam(1, "command", VNParamType.String, Optional = true,
+            Description = "点击后执行的命令链，如 jump(Scene_010) 或 loadscript(Chapter2)")]
         public override string CommandName { get { return "choice"; } }
 
         public override bool Execute(string args)

@@ -3,11 +3,16 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine.UI;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
+    [VNCommandMeta(VNCommandCategory.System,
+        "设置打字机速度（秒/字，越小越快；持久保存到全局设置）")]
     public class SetTextSpeedCommand : VNCommand
     {
+        [VNParam(0, "speed", VNParamType.Float, Min = 0.001f, Max = 1f, Default = "0.05",
+            Description = "秒/字（0.001-1，越小越快）")]
         public override string CommandName { get { return "settextspeed"; } }
 
         public override bool Execute(string args)

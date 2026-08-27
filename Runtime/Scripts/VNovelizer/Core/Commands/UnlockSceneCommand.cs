@@ -1,14 +1,19 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
     /// 解锁回忆
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Logic,
+        "解锁场景回想条目（持久数据，读档快进也生效）")]
     public class UnlockSceneCommand : VNCommand
     {
+        [VNParam(0, "name", VNParamType.String,
+            Description = "场景回想条目名（画廊编辑器中登记的名称）")]
         public override string CommandName { get { return "unlockscene"; } }
 
         public override bool Execute(string args)

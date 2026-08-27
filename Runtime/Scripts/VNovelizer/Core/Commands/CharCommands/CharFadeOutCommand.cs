@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using VNovelizer.Core.Theater;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -10,8 +11,14 @@ namespace VNovelizer.Core.Commands
     /// 格式：charfadeout(位置, [时长])
     /// 淡出到 0 后隐藏并将透明度复位为 1（与旧行为一致：隐藏时归位 alpha）。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "角色立绘淡出并隐藏（要求同行对应立绘列已填；多个淡出自动并行播放）")]
     public class CharFadeOutCommand : VNCommand
     {
+        [VNParam(0, "pos", VNParamType.SlotCode,
+            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+        [VNParam(1, "duration", VNParamType.Float, Min = 0.05f, Max = 10f, Default = "0.5",
+            Optional = true, Description = "淡出秒数（默认 0.5）")]
         public override string CommandName { get { return "charfadeout"; } }
 
         private float defaultDuration = 0.5f;

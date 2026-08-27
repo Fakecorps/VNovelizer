@@ -107,8 +107,8 @@ namespace VNovelizer.Editor
                 GUI.color = _setComparison.IsEquivalent
                     ? new Color(0.6f, 0.9f, 0.55f) : new Color(1f, 0.55f, 0.5f);
                 GUILayout.Label(_setComparison.IsEquivalent
-                        ? "✓ 契约成立（集合等价）"
-                        : $"✗ 契约破裂：{_setComparison.Differences.Count} 处事件差异",
+                        ? "[OK] 契约成立（集合等价）"
+                        : $"[X] 契约破裂：{_setComparison.Differences.Count} 处事件差异",
                     EditorStyles.miniLabel);
                 GUI.color = prev;
             }

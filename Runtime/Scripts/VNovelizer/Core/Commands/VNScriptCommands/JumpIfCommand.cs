@@ -1,4 +1,5 @@
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -8,8 +9,14 @@ namespace VNovelizer.Core.Commands
     /// 条件语法：Amy_Favor >= 50 / Met_Amy / !Met_Amy / PlayerName == "Alice"
     /// 行为与 jump 完全对齐（Execute 走 jump 逻辑；Simulate 写入 PendingJumpIndex）。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Flow,
+        "条件跳转：条件为真时等价 jump，为假时继续下一行（仅可置于链尾）")]
     public class JumpIfCommand : VNCommand
     {
+        [VNParam(0, "condition", VNParamType.String,
+            Description = "条件表达式，如 Amy_Favor >= 50 / Met_Amy / !Met_Amy / PlayerName == \"Alice\"")]
+        [VNParam(1, "targetId", VNParamType.String,
+            Description = "目标行 ID（本剧本内）")]
         public override string CommandName { get { return "jumpif"; } }
 
         /// <summary>子类覆写为 true 即得到 jumpifnot</summary>

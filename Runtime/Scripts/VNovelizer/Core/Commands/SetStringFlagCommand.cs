@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -10,8 +11,14 @@ namespace VNovelizer.Core.Commands
     /// 示例：setstringflag(playerName, Alice) -> 设置playerName标志为"Alice"
     /// 注意：如果value包含逗号，需要用引号包裹，例如：setstringflag(message, "Hello, World")
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Logic,
+        "设置字符串标志（值含逗号时用引号包裹）")]
     public class SetStringFlagCommand : VNCommand
     {
+        [VNParam(0, "flag", VNParamType.String,
+            Description = "标志名（区分大小写）")]
+        [VNParam(1, "value", VNParamType.String,
+            Description = "字符串值；含逗号时用双引号包裹，如 \"Hello, World\"")]
         public override string CommandName { get { return "setstringflag"; } }
         
         public override bool Execute(string args)

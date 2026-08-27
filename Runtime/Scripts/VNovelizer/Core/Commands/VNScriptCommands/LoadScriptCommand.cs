@@ -1,9 +1,16 @@
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
+    [VNCommandMeta(VNCommandCategory.Flow,
+        "切换剧本（跨剧本自动存档；仅可置于链尾）")]
     public class LoadScriptCommand : VNCommand
     {
+        [VNParam(0, "script", VNParamType.String,
+            Description = "剧本名（CSV 文件名，不含扩展名）")]
+        [VNParam(1, "startId", VNParamType.String, Optional = true,
+            Description = "起始行 ID（缺省从头开始；跳转目标行会自动预演重建状态）")]
         public override string CommandName { get { return "loadscript"; } }
 
         public override bool Execute(string args)

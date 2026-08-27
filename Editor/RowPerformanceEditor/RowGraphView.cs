@@ -11,35 +11,24 @@ using VNovelizer.Core.Commands.Meta;
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
     /// <summary>
-    /// 行演出编辑器的画布：双泳道（进入段 / 出口段）+ 自由拖拽 + 实时校验。
+    /// 行演出编辑器的画布（2026-08-27 重构：执行流从左到右）。
     ///
     /// <para>
-    /// <b>双泳道是平级关系而非主从</b>：进入段是"进入本行时执行"，
-    /// 出口段是"玩家点击后执行"，两者都是本行演出的一部分，因此同起始高度并排展示。
-    /// 若把出口段做成折叠的次要区域，作者容易忘记它的存在而漏掉转场编排。
+    /// <b>双泳道</b>：进入段在上半区（<see cref="ChainAutoLayout.EntryLaneY"/>），
+    /// 出口段在下半区（<see cref="ChainAutoLayout.ConfirmLaneY"/>），两条链各自从左到右流动。
     /// </para>
     /// </summary>
     public class RowGraphView : GraphView
     {
-        /// <summary>选中节点变化（null 表示取消选中）</summary>
         public event Action<VNNodeViewBase> OnNodeSelected;
-
-        /// <summary>图结构发生变更（连线/删除/移动/参数修改）——用于触发校验与脏标记</summary>
         public event Action OnGraphChanged;
-
-        /// <summary>请求把模板提升为定制行（用户触碰了影子节点）</summary>
         public event Action OnRequestPromotion;
 
-        /// <summary>徽章点击请求跳转数据列</summary>
-        public event Action<string> OnRequestJumpToColumn;
+        /// <summary>请求在画布指定位置创建命令节点（命令名, 是否出口段, 画布坐标）</summary>
+        public event Action<string, bool, Vector2> OnRequestCreateNodeAt;
 
-        /// <summary>进入段图数据</summary>
         public ChainGraph EntryGraph { get; private set; } = new ChainGraph();
-
-        /// <summary>出口段图数据</summary>
         public ChainGraph ConfirmGraph { get; private set; } = new ChainGraph();
-
-        /// <summary>当前行的解析后上下文（模板胶囊显示数据列值用）</summary>
         public VNLineContext LineContext { get; set; }
 
         private readonly Dictionary<string, VNNodeViewBase> _nodeViews =
@@ -47,39 +36,84 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private readonly List<VisualElement> _decorations = new List<VisualElement>();
 
-        /// <summary>抑制 graphViewChanged 回调（重建图期间避免误触发脏标记）</summary>
         private bool _suppressChangeEvents;
+
+        /// <summary>拖拽悬停提示</summary>
+        private Label _dragHint;
 
         public RowGraphView()
         {
             AddToClassList("vn-graph");
 
-            // 画布交互：缩放 / 平移 / 框选 / 拖拽
+            // 2026-08-27：端口完全外置（left/right:-14）——确保画布任何上层都不裁剪节点溢出区域
+            // 2026-08-27（用户需求 1 修复）：移除画布 overflow:visible——
+            // 否则节点会渲染到上层兄弟元素（如左侧命令面板）上方造成视觉重叠。
+            // 端口不可见的根因是 #node-border 的 overflow:hidden，已在 VNNodeViewBase 修；
+            // 端口只需溢出 #node-border（节点自身 overflow:visible），无需溢出整个画布。
+
             SetupZoom(0.35f, 2.0f);
             this.AddManipulator(new ContentDragger());
             this.AddManipulator(new SelectionDragger());
-            this.AddManipulator(new RectangleSelector());
+            this.AddManipulator(new ClickSelector());
+            this.AddManipulator(new DragBoxSelector());
 
             Insert(0, new GridBackground());
 
             graphViewChanged = OnGraphViewChanged;
 
-            RegisterCallback<GeometryChangedEvent>(_ => UpdateDecorationPositions());
+            RegisterCallback<DragUpdatedEvent>(OnDragUpdated);
+            RegisterCallback<DragPerformEvent>(OnDragPerform);
+            RegisterCallback<DragExitedEvent>(OnDragExited);
+
+            _dragHint = new Label("松开创建命令节点");
+            _dragHint.AddToClassList("vn-drag-hint");
+            _dragHint.style.display = DisplayStyle.None;
+            _dragHint.pickingMode = PickingMode.Ignore;
+            Add(_dragHint);
+        }
+
+        // ---------------- 拖拽接收 ----------------
+
+        private void OnDragUpdated(DragUpdatedEvent evt)
+        {
+            if (CommandPalette.TryGetDragCommand(out _))
+            {
+                DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+                _dragHint.style.display = DisplayStyle.Flex;
+                _dragHint.style.left = evt.mousePosition.x + 12;
+                _dragHint.style.top = evt.mousePosition.y + 12;
+            }
+        }
+
+        private void OnDragPerform(DragPerformEvent evt)
+        {
+            if (!CommandPalette.TryGetDragCommand(out string commandName)) return;
+
+            Vector2 canvasPos = contentViewContainer.WorldToLocal(evt.mousePosition);
+            // 上半区=进入段，下半区=出口段
+            bool isConfirm = canvasPos.y >
+                             (ChainAutoLayout.EntryLaneY + ChainAutoLayout.ConfirmLaneY) / 2f;
+
+            OnRequestCreateNodeAt?.Invoke(commandName, isConfirm, canvasPos);
+            CommandPalette.ClearDragData();
+            _dragHint.style.display = DisplayStyle.None;
+            evt.StopPropagation();
+        }
+
+        private void OnDragExited(DragExitedEvent evt)
+        {
+            _dragHint.style.display = DisplayStyle.None;
         }
 
         // ---------------- 图重建 ----------------
 
         /// <summary>
-        /// 用给定的两段图重建画布。
+        /// 重建画布。
+        /// 2026-08-27 决策（用户 Q1）：彻底删除折叠胶囊——默认演出直接展开为
+        /// 独立节点（由 RowPerfEditorWindow 合成完整模板图后传入）。
+        /// savedPositions 有值时恢复保存位置；无值时做一次基础布局，
+        /// 之后完全由用户拖拽掌控（不再有任何自动重排）。
         /// </summary>
-        /// <param name="entryGraph">进入段</param>
-        /// <param name="confirmGraph">出口段（可为空图）</param>
-        /// <param name="savedPositions">
-        /// 已保存的节点位置（节点身份 → 坐标）。命中的节点恢复位置，
-        /// 未命中的走 AutoLayout——位置永不阻塞编辑，丢了只是重排。
-        /// </param>
-        /// <param name="templateCollapsed">模板是否折叠显示</param>
-        /// <param name="showTemplate">是否显示模板影子（普通行/增强行为 true）</param>
         public void Rebuild(ChainGraph entryGraph, ChainGraph confirmGraph,
             Dictionary<string, Vector2> savedPositions = null,
             bool templateCollapsed = true, bool showTemplate = false)
@@ -91,20 +125,21 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             EntryGraph = entryGraph ?? new ChainGraph();
             ConfirmGraph = confirmGraph ?? new ChainGraph();
 
-            BuildLane(EntryGraph, isConfirm: false, centerX: ChainAutoLayout.EntryLaneX,
-                savedPositions: savedPositions,
-                showTemplate: showTemplate, templateCollapsed: templateCollapsed);
+            float entryStartX = ChainAutoLayout.StartX;
 
-            BuildLane(ConfirmGraph, isConfirm: true, centerX: ChainAutoLayout.ConfirmLaneX,
-                savedPositions: savedPositions,
-                showTemplate: false, templateCollapsed: true);
+            BuildLane(EntryGraph, isConfirm: false, centerY: ChainAutoLayout.EntryLaneY,
+                savedPositions: savedPositions, startX: entryStartX);
 
-            BuildLaneLabels();
+            BuildLane(ConfirmGraph, isConfirm: true, centerY: ChainAutoLayout.ConfirmLaneY,
+                savedPositions: savedPositions, startX: ChainAutoLayout.StartX);
 
             _suppressChangeEvents = false;
 
-            // 重建后延后一帧再自动聚焦，等 UIElements 完成实际布局
             schedule.Execute(FrameAllIfNeeded).ExecuteLater(50);
+            // 2026-08-27 决策（用户 Q2）：不再自动 MeasureAndRelayout。
+            // 自动重排是"拖一下节点全图乱跑"的元凶之一；
+            // 现在：无保存位置时 BuildLane 内做一次基础布局，之后完全由用户掌控，
+            // "整理布局"工具栏按钮才触发完整重排（RelayoutAll → MeasureAndRelayout）。
         }
 
         private void ClearCanvas()
@@ -116,42 +151,25 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _nodeViews.Clear();
         }
 
-        private void BuildLane(ChainGraph graph, bool isConfirm, float centerX,
-            Dictionary<string, Vector2> savedPositions, bool showTemplate, bool templateCollapsed)
+        private void BuildLane(ChainGraph graph, bool isConfirm, float centerY,
+            Dictionary<string, Vector2> savedPositions, float startX)
         {
-            // 出口段为空 → 整条泳道不画（避免空荡荡的"出口开始/结束"孤儿终端）
-            if (graph.NodeCount == 0 && isConfirm) return;
-
-            var layout = graph.NodeCount > 0
-                ? ChainAutoLayout.Layout(graph, centerX)
-                : new Dictionary<string, Vector2>();
-
-            float templateOffset = 0f;
-
-            // 模板影子（折叠胶囊）——普通行的主视觉，**即使无命令也必须显示**
-            // （普通行 = Command 列为空，画布上唯一的内容就是它）
-            if (showTemplate && templateCollapsed)
+            if (graph.NodeCount == 0)
             {
-                var capsuleData = new ChainGraphNode("__template__", ChainGraphNodeKind.Command,
-                    "默认演出", "");
-                var capsule = new TemplateCapsuleNodeView(capsuleData, LineContext);
-                capsule.OnRequestExpand += () => OnRequestPromotion?.Invoke();
-                capsule.OnColumnClicked += col => OnRequestJumpToColumn?.Invoke(col);
-                capsule.SetPosition(new Rect(
-                    centerX - 160f, ChainAutoLayout.StartY, 320f, ChainAutoLayout.CapsuleHeight));
-                AddElement(capsule);
-                _nodeViews["__template__"] = capsule;
-
-                templateOffset = ChainAutoLayout.CapsuleHeight + ChainAutoLayout.VerticalGap * 2f;
+                if (isConfirm)
+                {
+                    // 2026-08-27（用户需求 4）：出口段为空时也显示默认结构——
+                    // OnConfirmEntry → [NextLine 引擎隐式影子] → OnConfirmExit。
+                    // 影子节点与连线纯视图层（不写入 ChainGraph），序列化天然不含。
+                    BuildEmptyConfirmLane(centerY, startX);
+                    return;
+                }
+                BuildTerminalsOnly(graph, isConfirm, centerY, startX);
+                return;
             }
 
-            // 进入段空（普通行且未展开模板）：只有胶囊，无节点无终端
-            if (graph.NodeCount == 0) return;
+            var layout = ChainAutoLayout.Layout(graph, centerY);
 
-            // 起点终端占位：整条链下移，避免与首节点重叠
-            float contentOffset = templateOffset + TerminalReserved + 14f;
-
-            // 建节点（数据图节点：命令 / Fork / Join）
             foreach (var node in graph.Nodes)
             {
                 var view = CreateNodeView(node, isConfirm);
@@ -163,15 +181,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 if (!restored)
                 {
                     if (layout.TryGetValue(node.Id, out var layoutPos)) pos = layoutPos;
-                    pos.y += contentOffset;
+                    pos.x += (startX - ChainAutoLayout.StartX);
                 }
 
-                view.SetPosition(new Rect(pos, new Vector2(ChainAutoLayout.NodeWidth, 0f)));
+                view.SetPosition(new Rect(pos, new Vector2(0f, 0f)));
                 AddElement(view);
                 _nodeViews[NodeViewKey(isConfirm, node.Id)] = view;
             }
 
-            // 连边（数据图边）
             foreach (var edge in graph.Edges)
             {
                 var from = GetNodeView(isConfirm, edge.FromId);
@@ -182,49 +199,89 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 AddElement(e);
             }
 
-            // 视觉终端（纯视图装饰，**不入数据图**——校验/序列化/边同步都不感知它们，
-            // 否则起点终端会与真实首节点构成"双起点"致命错误）
-            BuildTerminals(graph, isConfirm, centerX, layout, contentOffset);
+            // 传 layout 给终端定位（同步可得；view.GetPosition().xMax 不可靠——SetPosition 时 size=(0,0)）
+            BuildTerminalsOnly(graph, isConfirm, centerY, startX, layout);
         }
 
         /// <summary>
-        /// 构建泳道的起点 / 终点终端与锚点边。
-        /// 仅在图结构合法（唯一 source / 唯一 sink）时渲染；畸形图交给校验器报错，
-        /// 这里不添乱。
+        /// 测量所有节点的实际渲染宽度并重新布局。
         /// </summary>
-        private void BuildTerminals(ChainGraph graph, bool isConfirm, float centerX,
-            Dictionary<string, Vector2> layout, float contentOffset)
+        private void MeasureAndRelayout()
+        {
+            if (EntryGraph.NodeCount == 0 && ConfirmGraph.NodeCount == 0) return;
+
+            var measured = new Dictionary<string, float>();
+            foreach (var pair in _nodeViews)
+            {
+                var view = pair.Value;
+                if (view == null || view.Data == null) continue;
+                float w = view.localBound.width;
+                if (w > 0) measured[view.Data.Id] = w;
+            }
+
+            float entryStartX = ChainAutoLayout.StartX;
+
+            if (EntryGraph.NodeCount > 0)
+                ApplyMeasuredLayout(EntryGraph, isConfirm: false,
+                    ChainAutoLayout.EntryLaneY, measured, entryStartX);
+
+            if (ConfirmGraph != null && ConfirmGraph.NodeCount > 0)
+                ApplyMeasuredLayout(ConfirmGraph, isConfirm: true,
+                    ChainAutoLayout.ConfirmLaneY, measured, ChainAutoLayout.StartX);
+        }
+
+        private void ApplyMeasuredLayout(ChainGraph graph, bool isConfirm, float centerY,
+            Dictionary<string, float> measured, float startX)
+        {
+            var positions = ChainAutoLayout.MeasureAndRelayout(graph, centerY, measured);
+            foreach (var pair in positions)
+            {
+                var view = GetNodeView(isConfirm, pair.Key);
+                if (view == null) continue;
+                var rect = view.GetPosition();
+                view.SetPosition(new Rect(
+                    pair.Value.x + (startX - ChainAutoLayout.StartX),
+                    pair.Value.y, rect.width, rect.height));
+            }
+        }
+
+        private void BuildTerminalsOnly(ChainGraph graph, bool isConfirm, float centerY,
+            float startX, Dictionary<string, Vector2> layout = null)
         {
             var sources = graph.FindSources();
             var sinks = graph.FindSinks();
 
-            // ---- 起点终端 + 锚点边 ----
             if (sources.Count == 1)
             {
                 var kind = isConfirm ? TerminalKind.ConfirmStart : TerminalKind.LineStart;
-                var startView = AddTerminalView(kind, isConfirm, centerX,
-                    ChainAutoLayout.StartY + contentOffset - TerminalReserved);
+                // 起始终端在第一个命令节点左侧——用 layout 字典算位置（同步可知）
+                float firstX = layout != null && layout.TryGetValue(sources[0].Id, out var sp)
+                    ? sp.x : startX;
+                var startView = AddTerminalView(kind, isConfirm,
+                    firstX - TerminalReserved, centerY);
 
                 var first = GetNodeView(isConfirm, sources[0].Id);
                 if (startView?.OutputPort != null && first?.InputPort != null)
                 {
                     var anchor = startView.OutputPort.ConnectTo(first.InputPort);
-                    anchor.capabilities &= ~Capabilities.Deletable; // 锚点边不可删（删了链就"无头"）
+                    anchor.capabilities &= ~Capabilities.Deletable;
                     AddElement(anchor);
                 }
             }
 
-            // ---- 终点终端 + 锚点边 ----
             if (sinks.Count == 1)
             {
-                // 用布局结果推末端 Y（此时命令节点刚定位完，取最大 y + 节点高 + 间距）
-                float maxBottom = ChainAutoLayout.StartY + contentOffset;
-                foreach (var p in layout.Values)
-                    if (p.y + 66f > maxBottom) maxBottom = p.y + 66f;
+                // 结束终端在链最右端——用 layout 字典的 sink 节点位置 + 估算宽度。
+                // view.GetPosition().xMax 不可靠（SetPosition 时 size=(0,0)，GraphView 异步测量还没跑）。
+                float sinkX = layout != null && layout.TryGetValue(sinks[0].Id, out var lp)
+                    ? lp.x
+                    : ComputeMaxRight(graph, startX);
+                float sinkWidth = EstimateNodeWidth(sinks[0]);
+                float maxRight = sinkX + sinkWidth;
 
                 var kind = isConfirm ? TerminalKind.ChainEnd : TerminalKind.WaitConfirm;
-                var endView = AddTerminalView(kind, isConfirm, centerX,
-                    maxBottom + ChainAutoLayout.VerticalGap);
+                var endView = AddTerminalView(kind, isConfirm,
+                    maxRight + ChainAutoLayout.HorizontalGap, centerY);
 
                 var last = GetNodeView(isConfirm, sinks[0].Id);
                 if (endView?.InputPort != null && last?.OutputPort != null)
@@ -236,21 +293,52 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
         }
 
-        /// <summary>起点终端占位高度（终端 30 + 间距 14），BuildLane 用它给整条链下移让位。</summary>
-        private const float TerminalReserved = 44f;
+        private float ComputeMaxRight(ChainGraph graph, float startX)
+        {
+            float maxRight = startX;
+            foreach (var pair in _nodeViews)
+            {
+                if (pair.Value == null || pair.Value.Data == null) continue;
+                var view = pair.Value;
+                if (graph.Nodes.Any(n => n.Id == view.Data.Id))
+                {
+                    // 用 pos.x + 估算宽度——view.GetPosition().xMax 此时 size=(0,0) 不可靠
+                    float right = view.GetPosition().x + EstimateNodeWidth(view.Data);
+                    if (right > maxRight) maxRight = right;
+                }
+            }
+            return maxRight;
+        }
 
-        /// <summary>创建一个纯视图终端（不写入任何 ChainGraph）。</summary>
+        /// <summary>同步估算节点宽度（不依赖 GraphView 异步测量）。</summary>
+        private static float EstimateNodeWidth(ChainGraphNode node)
+        {
+            if (node == null) return 200f;
+            switch (node.Kind)
+            {
+                case ChainGraphNodeKind.Fork:
+                case ChainGraphNodeKind.Join:
+                    return 120f;
+                case ChainGraphNodeKind.Start:
+                case ChainGraphNodeKind.End:
+                    return 150f;
+                default:
+                    return string.IsNullOrWhiteSpace(node.Args) ? 160f : 200f;
+            }
+        }
+
+        private const float TerminalReserved = 140f;
+
         private TerminalNodeView AddTerminalView(TerminalKind kind, bool isConfirm,
-            float centerX, float y)
+            float x, float centerY)
         {
             bool isStart = kind == TerminalKind.LineStart || kind == TerminalKind.ConfirmStart;
-            string id = "__terminal_" + kind + "__"; // 每种形态独立 ID，位置持久化互不覆盖
+            string id = "__terminal_" + kind + "__";
 
             var data = new ChainGraphNode(id, isStart ? ChainGraphNodeKind.Start : ChainGraphNodeKind.End);
             var view = new TerminalNodeView(data, kind, isConfirm);
-            view.SetPosition(new Rect(centerX - 75f, y, 150f, 30f));
+            view.SetPosition(new Rect(x, centerY - 15f, 130f, 30f));
             AddElement(view);
-            // 记入视图表仅供位置持久化与选中高亮；其 ID 不在数据图中，边同步天然忽略
             _nodeViews[NodeViewKey(isConfirm, id)] = view;
             return view;
         }
@@ -280,48 +368,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         // ---------------- 泳道标签 ----------------
-
-        private void BuildLaneLabels()
-        {
-            AddLaneLabel("进入段 · 进入本行时自动执行",
-                "vn-lane-entry", ChainAutoLayout.EntryLaneX);
-
-            // 出口段标签只在出口链非空时显示——空泳道配标签会误导"这里有东西可编辑"
-            if (ConfirmGraph != null && ConfirmGraph.NodeCount > 0)
-            {
-                AddLaneLabel("出口段 · 玩家点击后执行",
-                    "vn-lane-confirm", ChainAutoLayout.ConfirmLaneX);
-            }
-        }
-
-        private void AddLaneLabel(string text, string styleClass, float centerX)
-        {
-            var label = new Label(text);
-            label.AddToClassList("vn-lane-label");
-            label.AddToClassList(styleClass);
-            label.pickingMode = PickingMode.Ignore;
-            label.style.left = centerX - 100f;
-            label.style.top = 10f;
-
-            contentViewContainer.Add(label);
-            _decorations.Add(label);
-        }
-
-        private void UpdateDecorationPositions()
-        {
-            // 泳道标签固定在内容坐标系，随画布平移缩放——无需额外处理
-        }
+        // 2026-08-27（用户需求 1）：进入段/出口段文字标签已移除——泳道通过
+        // 出口段的绿色配色与 OnConfirmEntry 弹头自然区分，无需文字说明。
 
         // ---------------- 连线规则 ----------------
 
-        /// <summary>
-        /// 端口兼容性：只允许"输出 → 输入"、不同节点、且不跨泳道。
-        ///
-        /// <b>跨泳道禁止</b>是必要的：进入段与出口段是两条独立的命令链，
-        /// 分别序列化为 <c>Command</c> 与 <c>@Confirm:</c> 两段文本。
-        /// 若允许跨接，图就无法拆回两段文本。
-        /// 两段之间唯一的连接是「等待确认 → 出口开始」的点击关系，由结构固定表达。
-        /// </summary>
         public override List<Port> GetCompatiblePorts(Port startPort, NodeAdapter nodeAdapter)
         {
             var compatible = new List<Port>();
@@ -336,7 +387,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 var portView = port.node as VNNodeViewBase;
                 if (portView == null) return;
-                if (portView.IsConfirmChain != startView.IsConfirmChain) return; // 禁止跨泳道
+                if (portView.IsConfirmChain != startView.IsConfirmChain) return;
 
                 compatible.Add(port);
             });
@@ -352,7 +403,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                               (change.elementsToRemove != null && change.elementsToRemove.Count > 0);
             bool moved = change.movedElements != null && change.movedElements.Count > 0;
 
-            // 拦截模板影子节点的删除——应走"提升"确认流程而非直接移除
             if (change.elementsToRemove != null)
             {
                 var ghosts = change.elementsToRemove
@@ -372,23 +422,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 SyncGraphDataFromView(change);
                 OnGraphChanged?.Invoke();
+                // 2026-08-27：删除连线/删节点后的自动重排——任何结构变化都不许移动用户摆好的节点。
+                // 需要重排时点工具栏「整理布局」。
             }
             else if (moved)
             {
-                OnGraphChanged?.Invoke(); // 位置变更也算脏（需写 sidecar）
+                OnGraphChanged?.Invoke();
             }
 
             return change;
         }
 
-        /// <summary>
-        /// 把视图侧的连线/删除变更同步回 <see cref="ChainGraph"/> 数据模型。
-        /// 数据模型是保存链路的输入，必须与视图一致。
-        /// </summary>
         private void SyncGraphDataFromView(GraphViewChange change)
         {
-            // 重建两段图的边集：直接从当前视图的全部 Edge 反推，
-            // 比逐条增删更不易出错（图规模是行级，全量重建开销可忽略）
             RebuildEdgesFromView(EntryGraph, isConfirm: false);
             RebuildEdgesFromView(ConfirmGraph, isConfirm: true);
         }
@@ -396,11 +442,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void RebuildEdgesFromView(ChainGraph graph, bool isConfirm)
         {
             var rebuilt = new ChainGraph();
+            var validIds = new HashSet<string>();
             foreach (var node in graph.Nodes)
             {
-                // 视图中已被删除的节点不再纳入
                 if (GetNodeView(isConfirm, node.Id) == null) continue;
                 rebuilt.AddNode(node);
+                validIds.Add(node.Id);
             }
 
             edges.ForEach(edge =>
@@ -411,6 +458,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 if (from.IsConfirmChain != isConfirm || to.IsConfirmChain != isConfirm) return;
                 if (from.Data == null || to.Data == null) return;
 
+                // 引擎隐式影子（NextLine 等）与终端锚点不进图数据
+                if (!validIds.Contains(from.Data.Id) || !validIds.Contains(to.Data.Id)) return;
+
                 rebuilt.AddEdge(from.Data.Id, to.Data.Id);
             });
 
@@ -418,9 +468,66 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             else EntryGraph = rebuilt;
         }
 
+        /// <summary>
+        /// 出口段为空时的默认结构（2026-08-27 用户需求 4）：
+        /// OnConfirmEntry → [NextLine 影子] → OnConfirmExit。
+        ///
+        /// <para>
+        /// NextLine 是引擎隐式行为（出口段执行完自动推进下一行），此处显式画出
+        /// 仅为可读性——影子节点与全部连线均为<b>纯视图层</b>（不进 ChainGraph，
+        /// 序列化天然不含；<see cref="RebuildEdgesFromView"/> 亦会过滤）。
+        /// 用户一旦往出口段拖入真实命令，Rebuild 后走正常链渲染路径。
+        /// </para>
+        /// </summary>
+        private void BuildEmptyConfirmLane(float centerY, float startX)
+        {
+            // OnConfirmEntry：橙色弹头（左直右圆，输出端口）
+            var entryView = AddTerminalView(TerminalKind.ConfirmStart, isConfirm: true,
+                x: startX, centerY: centerY);
+
+            // NextLine 影子命令节点
+            const string shadowId = "__implicit_nextline__";
+            var shadowData = new ChainGraphNode(shadowId, ChainGraphNodeKind.Command,
+                "nextline", "");
+            var shadowView = new CommandNodeView(shadowData, isConfirmChain: true)
+            {
+                tooltip = "引擎隐式行为：出口段执行完毕后自动推进到下一行。\n" +
+                          "此节点为只读影子——不会写入 Command 列。\n" +
+                          "往出口段拖入命令后，它会替换为你的真实编排。"
+            };
+            shadowView.MarkAsTemplateGhost();
+            shadowView.SetTitle("NextLine（引擎默认）");
+            // 只读影子：禁止删除/复制（删除会误触提升流程；它是引擎行为不可移除）
+            shadowView.capabilities &= ~Capabilities.Deletable;
+            shadowView.capabilities &= ~Capabilities.Copiable;
+            float entryWidth = 150f;
+            shadowView.SetPosition(new Rect(
+                startX + entryWidth + ChainAutoLayout.HorizontalGap, centerY - 30f, 0f, 0f));
+            AddElement(shadowView);
+            _nodeViews[NodeViewKey(true, shadowId)] = shadowView;
+
+            // OnConfirmExit：橙色弹头（左圆右直，输入端口）
+            float shadowRight = startX + entryWidth + ChainAutoLayout.HorizontalGap + 190f;
+            var exitView = AddTerminalView(TerminalKind.ChainEnd, isConfirm: true,
+                x: shadowRight + ChainAutoLayout.HorizontalGap, centerY: centerY);
+
+            // 视图连线：entry → nextline → exit（锚点边不可删）
+            if (entryView?.OutputPort != null && shadowView.InputPort != null)
+            {
+                var e1 = entryView.OutputPort.ConnectTo(shadowView.InputPort);
+                e1.capabilities &= ~Capabilities.Deletable;
+                AddElement(e1);
+            }
+            if (shadowView.OutputPort != null && exitView?.InputPort != null)
+            {
+                var e2 = shadowView.OutputPort.ConnectTo(exitView.InputPort);
+                e2.capabilities &= ~Capabilities.Deletable;
+                AddElement(e2);
+            }
+        }
+
         // ---------------- 校验状态可视化 ----------------
 
-        /// <summary>把校验结果映射到节点视觉状态（标红 / 高亮）。</summary>
         public void ApplyValidation(ChainGraphValidationResult entryResult,
             ChainGraphValidationResult confirmResult)
         {
@@ -458,7 +565,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             OnNodeSelected?.Invoke(null);
         }
 
-        /// <summary>在指定画布坐标处创建一个命令节点（命令面板拖拽 / 右键菜单调用）。</summary>
+        /// <summary>在指定画布坐标处创建一个命令节点。</summary>
         public CommandNodeView CreateCommandNode(string commandName, string args,
             Vector2 canvasPosition, bool isConfirm)
         {
@@ -467,16 +574,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             var data = graph.AddNode(id, ChainGraphNodeKind.Command, commandName, args ?? "");
             var view = new CommandNodeView(data, isConfirm);
-            view.SetPosition(new Rect(canvasPosition, new Vector2(ChainAutoLayout.NodeWidth, 0f)));
+            view.SetPosition(new Rect(canvasPosition, new Vector2(0f, 0f)));
 
             AddElement(view);
             _nodeViews[NodeViewKey(isConfirm, id)] = view;
 
             OnGraphChanged?.Invoke();
+            // 2026-08-27：新建节点不再触发全图重排（节点已在用户指定位置）
             return view;
         }
 
-        /// <summary>创建一对 FORK / JOIN 胶囊（并行编排的入口）。</summary>
         public void CreateForkJoinPair(Vector2 canvasPosition, bool isConfirm)
         {
             var graph = isConfirm ? ConfirmGraph : EntryGraph;
@@ -490,9 +597,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var forkView = new ForkJoinNodeView(forkData, isConfirm);
             var joinView = new ForkJoinNodeView(joinData, isConfirm);
 
-            forkView.SetPosition(new Rect(canvasPosition, new Vector2(130f, 0f)));
+            // Fork 在左，Join 在右（水平间隔）
+            forkView.SetPosition(new Rect(canvasPosition, new Vector2(0f, 0f)));
             joinView.SetPosition(new Rect(
-                canvasPosition + new Vector2(0f, 190f), new Vector2(130f, 0f)));
+                canvasPosition + new Vector2(300f, 0f), new Vector2(0f, 0f)));
 
             AddElement(forkView);
             AddElement(joinView);
@@ -500,19 +608,23 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _nodeViews[NodeViewKey(isConfirm, joinId)] = joinView;
 
             OnGraphChanged?.Invoke();
+            // 2026-08-27：新建 Fork/Join 不再触发全图重排（固定 300px 水平间隔已足够）
         }
 
-        /// <summary>重新自动布局（工具栏"整理布局"按钮）。</summary>
+        /// <summary>
+        /// 整理布局：按执行顺序重新排布全部节点。
+        /// **唯一**触发全图自动布局的入口（工具栏按钮 / 右键菜单）。
+        /// </summary>
         public void RelayoutAll()
         {
-            ApplyLayout(EntryGraph, isConfirm: false, centerX: ChainAutoLayout.EntryLaneX);
-            ApplyLayout(ConfirmGraph, isConfirm: true, centerX: ChainAutoLayout.ConfirmLaneX);
-            OnGraphChanged?.Invoke();
+            ApplyLayout(EntryGraph, isConfirm: false, centerY: ChainAutoLayout.EntryLaneY);
+            ApplyLayout(ConfirmGraph, isConfirm: true, centerY: ChainAutoLayout.ConfirmLaneY);
+            MeasureAndRelayout();
         }
 
-        private void ApplyLayout(ChainGraph graph, bool isConfirm, float centerX)
+        private void ApplyLayout(ChainGraph graph, bool isConfirm, float centerY)
         {
-            var layout = ChainAutoLayout.Layout(graph, centerX);
+            var layout = ChainAutoLayout.Layout(graph, centerY);
             foreach (var pair in layout)
             {
                 var view = GetNodeView(isConfirm, pair.Key);
@@ -522,7 +634,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
         }
 
-        /// <summary>收集当前全部节点位置（写 sidecar 用）。</summary>
         public Dictionary<string, Vector2> CollectPositions()
         {
             var result = new Dictionary<string, Vector2>();
@@ -541,7 +652,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private static string NodeViewKey(bool isConfirm, string nodeId)
             => (isConfirm ? "c:" : "e:") + nodeId;
 
-        /// <summary>位置持久化的键：与 <see cref="AstToGraph"/> 生成的节点身份一致。</summary>
         private static string PositionKey(bool isConfirm, string nodeId)
             => (isConfirm ? "confirm/" : "entry/") + nodeId;
 
@@ -570,22 +680,155 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             FrameAll();
         }
 
-        /// <summary>画布右键菜单。</summary>
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt)
         {
             Vector2 canvasPos = contentViewContainer.WorldToLocal(evt.mousePosition);
-            bool isConfirm = canvasPos.x >
-                             (ChainAutoLayout.EntryLaneX + ChainAutoLayout.ConfirmLaneX) / 2f;
+            bool isConfirm = canvasPos.y >
+                             (ChainAutoLayout.EntryLaneY + ChainAutoLayout.ConfirmLaneY) / 2f;
 
             string laneName = isConfirm ? "出口段" : "进入段";
 
-            evt.menu.AppendAction($"添加 FORK / JOIN 并行组（{laneName}）",
+            evt.menu.AppendAction("添加 FORK / JOIN 并行组 (" + laneName + ")",
                 _ => CreateForkJoinPair(canvasPos, isConfirm));
             evt.menu.AppendSeparator();
             evt.menu.AppendAction("整理布局", _ => RelayoutAll());
             evt.menu.AppendAction("聚焦全部节点", _ => FrameAll());
 
             base.BuildContextualMenu(evt);
+        }
+    }
+
+    /// <summary>
+    /// 自实现拖拽框选器。选框绘制到 contentViewContainer，坐标系与画布缩放/平移同步。
+    /// </summary>
+    public class DragBoxSelector : Manipulator
+    {
+        private VisualElement _box;
+        private Vector2 _startLocal;
+        private bool _active;
+
+        protected override void RegisterCallbacksOnTarget()
+        {
+            target.RegisterCallback<PointerDownEvent>(OnPointerDown);
+            target.RegisterCallback<PointerMoveEvent>(OnPointerMove);
+            target.RegisterCallback<PointerUpEvent>(OnPointerUp);
+            target.RegisterCallback<PointerCancelEvent>(OnPointerCancel);
+            target.RegisterCallback<PointerCaptureOutEvent>(OnPointerCaptureOut);
+        }
+
+        protected override void UnregisterCallbacksFromTarget()
+        {
+            target.UnregisterCallback<PointerDownEvent>(OnPointerDown);
+            target.UnregisterCallback<PointerMoveEvent>(OnPointerMove);
+            target.UnregisterCallback<PointerUpEvent>(OnPointerUp);
+            target.UnregisterCallback<PointerCancelEvent>(OnPointerCancel);
+            target.UnregisterCallback<PointerCaptureOutEvent>(OnPointerCaptureOut);
+        }
+
+        private void OnPointerDown(PointerDownEvent evt)
+        {
+            if (evt.button != 0) return;
+
+            var graphView = target as GraphView;
+            if (graphView == null) return;
+
+            // 仅当点在空白区域时启动框选
+            if (evt.target != target) return;
+
+            _startLocal = graphView.contentViewContainer.WorldToLocal(evt.position);
+
+            _box = new VisualElement();
+            _box.AddToClassList("vn-rect-box");
+            _box.pickingMode = PickingMode.Ignore;
+            _box.style.left = _startLocal.x;
+            _box.style.top = _startLocal.y;
+            _box.style.width = 0;
+            _box.style.height = 0;
+            graphView.contentViewContainer.Add(_box);
+
+            target.CapturePointer(evt.pointerId);
+            _active = true;
+            evt.StopPropagation();
+        }
+
+        private void OnPointerCancel(PointerCancelEvent evt)
+        {
+            EndBoxSelection();
+        }
+
+        private void OnPointerCaptureOut(PointerCaptureOutEvent evt)
+        {
+            EndBoxSelection();
+        }
+
+        private void EndBoxSelection()
+        {
+            if (!_active) return;
+            _active = false;
+            if (_box != null)
+            {
+                _box.RemoveFromHierarchy();
+                _box = null;
+            }
+        }
+
+        private void OnPointerMove(PointerMoveEvent evt)
+        {
+            if (!_active || _box == null) return;
+
+            var graphView = target as GraphView;
+            if (graphView == null) return;
+
+            Vector2 curLocal = graphView.contentViewContainer.WorldToLocal(evt.position);
+            float x = Mathf.Min(_startLocal.x, curLocal.x);
+            float y = Mathf.Min(_startLocal.y, curLocal.y);
+            float w = Mathf.Abs(curLocal.x - _startLocal.x);
+            float h = Mathf.Abs(curLocal.y - _startLocal.y);
+
+            _box.style.left = x;
+            _box.style.top = y;
+            _box.style.width = w;
+            _box.style.height = h;
+
+            var selection = new Rect(x, y, w, h);
+            UpdateSelection(graphView, selection, evt.shiftKey);
+        }
+
+        private void OnPointerUp(PointerUpEvent evt)
+        {
+            if (!_active) return;
+            _active = false;
+
+            if (_box != null)
+            {
+                _box.RemoveFromHierarchy();
+                _box = null;
+            }
+            target.ReleasePointer(evt.pointerId);
+            evt.StopPropagation();
+        }
+
+        private void UpdateSelection(GraphView graphView, Rect rect, bool additive)
+        {
+            if (!additive) graphView.ClearSelection();
+
+            foreach (var node in graphView.nodes.ToList())
+            {
+                var ve = node as VisualElement;
+                if (ve == null) continue;
+                var worldRect = ve.worldBound;
+                var localTopLeft = graphView.contentViewContainer.WorldToLocal(
+                    new Vector2(worldRect.x, worldRect.y));
+                var localBottomRight = graphView.contentViewContainer.WorldToLocal(
+                    new Vector2(worldRect.xMax, worldRect.yMax));
+                var nodeRect = new Rect(localTopLeft.x, localTopLeft.y,
+                    localBottomRight.x - localTopLeft.x, localBottomRight.y - localTopLeft.y);
+
+                if (rect.Overlaps(nodeRect) || rect.Contains(nodeRect.center))
+                {
+                    graphView.AddToSelection(node);
+                }
+            }
         }
     }
 }

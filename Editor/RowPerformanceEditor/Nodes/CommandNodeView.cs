@@ -33,7 +33,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             SetTitle(Data.CommandName ?? "(未指定)");
 
             CreateStandardPorts();
-            AddAccentBar(ResolveAccentClass());
+            // UE 蓝图式：标题栏整条分类着色
+            AddToClassList(ResolveCategoryClass());
             AddSemanticBadges();
             BuildParameterArea();
 
@@ -41,19 +42,22 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             RefreshPorts();
         }
 
-        /// <summary>分类色带：按元数据分类；无元数据统一用"通用"土色，视觉上即可辨识。</summary>
-        private string ResolveAccentClass()
+        /// <summary>
+        /// 分类标题色类名（UE 蓝图式整条着色）。
+        /// 无元数据统一用"通用"土色，视觉上即可辨识。
+        /// </summary>
+        private string ResolveCategoryClass()
         {
-            if (Info == null || !Info.HasMeta) return "vn-accent-generic";
+            if (Info == null || !Info.HasMeta) return "vn-node--cat-generic";
 
             switch (Info.Category)
             {
-                case VNCommandCategory.System:      return "vn-accent-system";
-                case VNCommandCategory.Performance: return "vn-accent-performance";
-                case VNCommandCategory.Flow:        return "vn-accent-flow";
-                case VNCommandCategory.Logic:       return "vn-accent-logic";
-                case VNCommandCategory.Audio:       return "vn-accent-audio";
-                default:                            return "vn-accent-generic";
+                case VNCommandCategory.System:      return "vn-node--cat-system";
+                case VNCommandCategory.Performance: return "vn-node--cat-performance";
+                case VNCommandCategory.Flow:        return "vn-node--cat-flow";
+                case VNCommandCategory.Logic:       return "vn-node--cat-logic";
+                case VNCommandCategory.Audio:       return "vn-node--cat-audio";
+                default:                            return "vn-node--cat-generic";
             }
         }
 
@@ -68,7 +72,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var manager = CommandManager.GetInstance();
             if (manager.RegisteredCommandCount > 0 && !manager.IsCommandRegistered(name))
             {
-                AddBadge("⚠ 未注册", "vn-badge-generic",
+                AddBadge("[!] 未注册", "vn-badge-generic",
                     $"命令 {name} 未在 CommandManager 中注册。可能是拼写错误，或该命令尚未实现——运行时会被忽略。");
                 return; // 未注册时其余角标无意义
             }
@@ -76,7 +80,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 无元数据 → 通用节点态
             if (Info == null || !Info.HasMeta)
             {
-                AddBadge("⚙ 通用", "vn-badge-generic",
+                AddBadge("[G] 通用", "vn-badge-generic",
                     "该命令尚未标注 [VNCommandMeta] 元数据，参数以原始文本编辑。\n" +
                     "功能完整（可连线、可拖拽、可保存），只是没有结构化表单。");
             }
@@ -89,7 +93,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     if (!p.ImplicitBinding) continue;
                     if (!IsArgEmpty()) break; // 有内联值则不显示引用角标
 
-                    AddBadge("📎 " + (p.BoundColumn ?? "数据列"), "vn-badge-ref",
+                    AddBadge(">> " + (p.BoundColumn ?? "数据列"), "vn-badge-ref",
                         $"参数留空 = 引用本行 {p.BoundColumn} 列的值。\n" +
                         (p.InlineForbidden
                             ? "该参数不允许内联，只能改数据列——这保障本地化键不会失效。"
@@ -109,7 +113,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 阻塞（异步命令，会让所在分支等待）
             if (Info != null && Info.IsAsync)
             {
-                AddBadge("⏳", "vn-badge-blocking",
+                AddBadge("[~]", "vn-badge-blocking",
                     "异步命令：所在分支会等待它完成后才继续。\n" +
                     "若不希望阻塞其他演出，把它放进独立的并行分支。");
             }
@@ -117,7 +121,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 无 Simulate（读档 / 快进时状态可能不一致）
             if (Info != null && Info.HasMeta && !Info.HasSimulate && !ChainParser.IsFlowCommand(name))
             {
-                AddBadge("↩", "vn-badge-noinherit",
+                AddBadge("[no-sim]", "vn-badge-nosim",
                     "该命令未实现 Simulate：读档或快进经过本行时不会重建其效果。\n" +
                     "纯演出命令（震动、等待等）属正常；若它会改变持久状态则需补 Simulate。");
             }
@@ -138,6 +142,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         public void RefreshParameters()
         {
             _paramsContainer.Clear();
+            _paramsContainer.RemoveFromClassList("vn-node-params");
+            _paramsContainer.RemoveFromClassList("vn-node-rawargs");
 
             bool structured = Info != null && Info.HasMeta && Info.Parameters.Count > 0;
 
@@ -147,9 +153,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
             else if (!IsArgEmpty())
             {
-                // 通用节点态：原始参数单行显示
-                _paramsContainer.AddToClassList("vn-node-rawargs");
-                _paramsContainer.Add(new Label(Data.Args));
+                // 2026-08-27（用户需求 6a）：无元数据命令也按逗号拆分为
+                // "P1: value" 两列——不再显示整串原始文本。
+                BuildPositionalParamRows();
             }
             else if (Info != null && Info.HasMeta)
             {
@@ -157,8 +163,45 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
         }
 
+        /// <summary>
+        /// 无元数据命令的参数显示：按逗号（顶层）拆分，
+        /// 每行 "P{index}: value"（2026-08-27 用户需求 6a）。
+        /// 位置参数无语义名——P1/P2 是位置序号，Inspector 中可按同一序号独立编辑。
+        /// </summary>
+        private void BuildPositionalParamRows()
+        {
+            _paramsContainer.AddToClassList("vn-node-params");
+
+            var values = SplitArgs();
+            bool anyShown = false;
+
+            for (int i = 0; i < values.Count; i++)
+            {
+                string value = values[i].Trim();
+                if (string.IsNullOrEmpty(value)) continue;
+
+                var row = new VisualElement();
+                row.AddToClassList("vn-param-row");
+                row.tooltip = $"第 {i + 1} 个位置参数";
+
+                var key = new Label("P" + (i + 1) + ":");
+                key.AddToClassList("vn-param-key");
+                row.Add(key);
+
+                var val = new Label(value);
+                val.AddToClassList("vn-param-value");
+                row.Add(val);
+
+                _paramsContainer.Add(row);
+                anyShown = true;
+            }
+
+            if (!anyShown) _paramsContainer.RemoveFromClassList("vn-node-params");
+        }
+
         private void BuildStructuredChips()
         {
+            // UE 蓝图式：参数垂直行排列（名左值右）
             _paramsContainer.AddToClassList("vn-node-params");
 
             var values = SplitArgs();
@@ -169,34 +212,34 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 var p = Info.Parameters[i];
                 string value = i < values.Count ? values[i].Trim() : "";
 
-                // 空值且支持隐式绑定 → 已由 📎 角标表达，不重复占位
+                // 空值且支持隐式绑定 → 已由 >> 角标表达，不重复占位
                 if (string.IsNullOrEmpty(value) && p.ImplicitBinding) continue;
 
                 // 空值且可选 → 省略（显示默认值会误导用户以为已显式设置）
                 if (string.IsNullOrEmpty(value) && p.Optional) continue;
 
-                var chip = new VisualElement();
-                chip.AddToClassList("vn-param-chip");
-                chip.tooltip = BuildParamTooltip(p, value);
+                var row = new VisualElement();
+                row.AddToClassList("vn-param-row");
+                row.tooltip = BuildParamTooltip(p, value);
 
                 var key = new Label(p.Name + ":");
                 key.AddToClassList("vn-param-key");
-                chip.Add(key);
+                row.Add(key);
 
                 if (string.IsNullOrEmpty(value))
                 {
                     var empty = new Label("(空)");
                     empty.AddToClassList("vn-param-empty");
-                    chip.Add(empty);
+                    row.Add(empty);
                 }
                 else
                 {
                     var val = new Label(value);
                     val.AddToClassList("vn-param-value");
-                    chip.Add(val);
+                    row.Add(val);
                 }
 
-                _paramsContainer.Add(chip);
+                _paramsContainer.Add(row);
                 anyShown = true;
             }
 
@@ -204,13 +247,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (values.Count > Info.Parameters.Count)
             {
                 int extra = values.Count - Info.Parameters.Count;
-                var chip = new VisualElement();
-                chip.AddToClassList("vn-param-chip");
-                chip.tooltip = "超出元数据声明的额外参数（可变长命令属正常）";
-                var label = new Label("+" + extra);
-                label.AddToClassList("vn-param-value");
-                chip.Add(label);
-                _paramsContainer.Add(chip);
+                var row = new VisualElement();
+                row.AddToClassList("vn-param-row");
+                row.tooltip = "超出元数据声明的额外参数（可变长命令属正常）";
+
+                var key = new Label("额外参数");
+                key.AddToClassList("vn-param-key");
+                row.Add(key);
+
+                var val = new Label("+" + extra);
+                val.AddToClassList("vn-param-value");
+                row.Add(val);
+
+                _paramsContainer.Add(row);
                 anyShown = true;
             }
 

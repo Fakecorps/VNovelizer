@@ -4,19 +4,19 @@ using VNovelizer.Core.Commands.Chain;
 
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
-    /// <summary>终端胶囊的四种形态。</summary>
+    /// <summary>终端胶囊的四种形态（2026-08-27 命名更新：UE 蓝图式"子弹形"）。</summary>
     public enum TerminalKind
     {
-        /// <summary>▷ 行开始（进入链起点，无入端口）</summary>
+        /// <summary>行入口 LineEntry：进入链起点，无入端口（绿色子弹·左直右圆）</summary>
         LineStart,
 
-        /// <summary>⏸ 等待确认（进入链终点 + 出口链触发点，**双端口**）</summary>
+        /// <summary>行出口 LineExit：进入链终点 + 出口链触发点，**双端口**（绿色子弹·左圆右直）</summary>
         WaitConfirm,
 
-        /// <summary>⏵ 出口开始（出口链起点，入端口来自点击虚线）</summary>
+        /// <summary>确认入口 OnConfirmEntry：出口链起点（橙色子弹·左直右圆）</summary>
         ConfirmStart,
 
-        /// <summary>⏭ 链结束（出口链终点，无出端口）</summary>
+        /// <summary>确认出口 OnConfirmExit：出口链终点，无出端口（橙色子弹·左圆右直）</summary>
         ChainEnd,
     }
 
@@ -37,8 +37,26 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             Kind = kind;
             AddToClassList("vn-terminal");
-            if (isConfirmChain) AddToClassList("vn-terminal--confirm");
+            // 按 Kind 加子弹形类名（决定颜色 + 方向）
+            AddToClassList(ResolveTerminalShapeClass());
             Build();
+        }
+
+        /// <summary>
+        /// 终端节点形状类（颜色 + 子弹方向）。
+        /// Entry 类：行入口（绿）+ 确认入口（橙），形状左直右圆（入在左直、出在右圆头）。
+        /// Exit 类：行出口（绿）+ 确认出口（橙），形状左圆右直（入在左圆头、出在右直边）。
+        /// </summary>
+        private string ResolveTerminalShapeClass()
+        {
+            switch (Kind)
+            {
+                case TerminalKind.LineStart:    return "vn-term--lineentry";
+                case TerminalKind.WaitConfirm:  return "vn-term--lineexit";
+                case TerminalKind.ConfirmStart: return "vn-term--confirmentry";
+                case TerminalKind.ChainEnd:     return "vn-term--confirmextit";
+                default:                        return "vn-term--lineentry";
+            }
         }
 
         protected override void Build()
@@ -55,24 +73,26 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             tooltip = ResolveTooltip();
 
-            // 端口按形态决定——「等待确认」双端口是关键
+            // 端口按形态决定（2026-08-27 重构：UE 蓝图式单引脚）
             switch (Kind)
             {
                 case TerminalKind.LineStart:
+                    // LineEntry：行入口，引脚在右圆头（输出）
                     OutputPort = CreatePort(Direction.Output, Port.Capacity.Single);
                     break;
 
                 case TerminalKind.WaitConfirm:
+                    // LineExit：行出口，引脚在左圆头（单输入）
                     InputPort = CreatePort(Direction.Input, Port.Capacity.Single);
-                    OutputPort = CreatePort(Direction.Output, Port.Capacity.Single, "vn-port-confirm");
                     break;
 
                 case TerminalKind.ConfirmStart:
-                    InputPort = CreatePort(Direction.Input, Port.Capacity.Single, "vn-port-confirm");
+                    // OnConfirmEntry：确认入口，引脚在右圆头（单输出）
                     OutputPort = CreatePort(Direction.Output, Port.Capacity.Single);
                     break;
 
                 case TerminalKind.ChainEnd:
+                    // OnConfirmExit：确认出口，引脚在左圆头（单输入）
                     InputPort = CreatePort(Direction.Input, Port.Capacity.Single);
                     break;
             }
@@ -89,11 +109,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             switch (Kind)
             {
-                case TerminalKind.LineStart:    return "▷ 行开始";
-                case TerminalKind.WaitConfirm:  return "⏸ 等待确认";
-                case TerminalKind.ConfirmStart: return "⏵ 出口开始";
-                case TerminalKind.ChainEnd:     return "⏭ 链结束";
-                default:                        return "终端";
+                case TerminalKind.LineStart:    return "Line Entry";
+                case TerminalKind.WaitConfirm:  return "Line Exit";
+                case TerminalKind.ConfirmStart: return "OnConfirm Entry";
+                case TerminalKind.ChainEnd:     return "OnConfirm Exit";
+                default:                        return "Terminal";
             }
         }
 

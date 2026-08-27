@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -8,8 +9,12 @@ namespace VNovelizer.Core.Commands
     /// 格式: t_size(fontsize)
     /// 效果不会保存到下一行
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "临时修改对话字号（仅本行生效，不保存到下一行）")]
     public class TSizeCommand : VNCommand
     {
+        [VNParam(0, "size", VNParamType.Float, Min = 10f, Max = 200f, Default = "32",
+            Description = "字号（10-200，超出自动钳制）")]
         public override string CommandName { get { return "t_size"; } }
 
         public override bool Execute(string args)

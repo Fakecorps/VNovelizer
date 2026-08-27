@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using VNovelizer.Core.API;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -10,8 +11,14 @@ namespace VNovelizer.Core.Commands
     /// 示例1：playvideo(op.mp4)
     /// 示例2：playvideo(ending.mp4, loadscript(Chapter2))
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Audio,
+        "全屏播放视频（播放期间阻断交互；结束后可接命令链）")]
     public class PlayVideoCommand : VNCommand
     {
+        [VNParam(0, "video", VNParamType.String,
+            Description = "视频资源名（视频目录下，含扩展名如 op.mp4）")]
+        [VNParam(1, "nextCommand", VNParamType.String, Optional = true,
+            Description = "视频结束后执行的命令链，如 loadscript(Chapter2)（可选）")]
         public override string CommandName { get { return "playvideo"; } }
 
         private bool isFinished = false;

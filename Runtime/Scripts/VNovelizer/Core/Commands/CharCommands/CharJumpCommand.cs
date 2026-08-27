@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 using VNovelizer.Core.Theater;
 
 namespace VNovelizer.Core.Commands
@@ -10,8 +11,18 @@ namespace VNovelizer.Core.Commands
     /// 格式：charjump(位置, [时长], [次数], [高度px])
     /// 高度为剧本像素语义。多实例并行：token 列表登记全部活动跳跃。
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Performance,
+        "角色跳跃动画（不继承：下一行自动归位；要求同行对应立绘列已填）")]
     public class CharJumpCommand : VNCommand
     {
+        [VNParam(0, "pos", VNParamType.SlotCode,
+            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+        [VNParam(1, "duration", VNParamType.Float, Min = 0.05f, Max = 10f, Default = "0.4",
+            Optional = true, Description = "单次跳跃秒数")]
+        [VNParam(2, "times", VNParamType.Int, Min = 1, Max = 20, Default = "1",
+            Optional = true, Description = "跳跃次数")]
+        [VNParam(3, "height", VNParamType.Float, Min = 0f, Max = 500f, Default = "30",
+            Optional = true, Description = "跳跃高度（剧本像素）")]
         public override string CommandName { get { return "charjump"; } }
 
         private float defaultDuration = 0.4f;

@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -10,8 +11,14 @@ namespace VNovelizer.Core.Commands
     /// 示例2：playsfx(click, 3) -> 播放3次点击音效
     /// 示例3：playsfx(click) -> 播放一次（默认）
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Audio,
+        "播放音效（按次数顺序播放，等全部播完才推进下一行）")]
     public class PlaySFXCommand : VNCommand
     {
+        [VNParam(0, "name", VNParamType.String,
+            Description = "音效资源名（SFX 资源目录下，不含扩展名）")]
+        [VNParam(1, "times", VNParamType.Int, Min = 1, Max = 50, Default = "1",
+            Optional = true, Description = "播放次数（默认 1）")]
         public override string CommandName { get { return "playsfx"; } }
 
         public override bool Execute(string args)

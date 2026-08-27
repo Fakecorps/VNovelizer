@@ -11,18 +11,24 @@ using VNovelizer.Core.Commands.Meta;
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
     /// <summary>
-    /// 左侧命令面板：命令列表 + 泳道切换 + 拖拽建节点。
+    /// 左侧命令面板：命令列表 + 泳道切换 + 拖拽建节点 + 双击建节点。
     ///
     /// <para>
-    /// 数据源是 <see cref="CommandMetaReader"/>——因此**通过反射注册的第三方自定义命令
-    /// 同样出现在这里**。未标注元数据的命令照常列出（拖入后为通用节点），
-    /// 不隐藏：任何人写的任何命令都能上图，这是插件开放性的底线。
+    /// <b>交互方式</b>（2026-08-26 修订）：
+    /// </para>
+    /// <list type="bullet">
+    /// <item><b>拖拽</b>：按住命令项拖到画布，落点即节点位置。用 Unity 全局 DragAndDrop API。</item>
+    /// <item><b>双击</b>：双击命令项，在画布中心创建节点。快捷添加的备选路径。</item>
+    /// </list>
+    /// <para>
+    /// 数据源是 <see cref="CommandMetaReader"/>——因此通过反射注册的第三方自定义命令
+    /// 同样出现在这里。未标注元数据的命令照常列出（拖入后为通用节点）。
     /// </para>
     /// </summary>
     public class CommandPalette
     {
-        /// <summary>请求在画布上创建命令节点（命令名, 是否出口段）</summary>
-        public event Action<string, bool> OnRequestCreateNode;
+        /// <summary>请求在画布上创建命令节点（命令名, 是否出口段, 画布坐标）</summary>
+        public event Action<string, bool, Vector2?> OnRequestCreateNode;
 
         /// <summary>请求创建 FORK/JOIN 并行组</summary>
         public event Action<bool> OnRequestCreateForkJoin;
@@ -35,6 +41,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         /// <summary>当前编辑的泳道：false = 进入段，true = 出口段</summary>
         public bool TargetConfirmChain { get; private set; }
+
+        /// <summary>DragAndDrop 传输用的数据键</summary>
+        private const string DragDataKey = "VN_PaletteCommand";
 
         public CommandPalette(VisualElement root)
         {
@@ -52,7 +61,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void BuildHeader()
         {
-            var title = new Label("命令面板 · 元数据驱动");
+            var title = new Label("命令面板 · 拖拽或双击添加");
             title.AddToClassList("vn-panel-title");
             _root.Add(title);
 
@@ -71,7 +80,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _entryTab.AddToClassList("vn-chain-tab");
             tabs.Add(_entryTab);
 
-            _confirmTab = new Button(() => SetTarget(true)) { text = "出口段 @Confirm" };
+            _confirmTab = new Button(() => SetTarget(true)) { text = "出口段" };
             _confirmTab.AddToClassList("vn-chain-tab");
             tabs.Add(_confirmTab);
 
@@ -80,7 +89,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             var forkBtn = new Button(() => OnRequestCreateForkJoin?.Invoke(TargetConfirmChain))
             {
-                text = "＋ 添加 FORK / JOIN 并行组"
+                text = "添加 FORK / JOIN 并行组"
             };
             forkBtn.style.marginLeft = 6;
             forkBtn.style.marginRight = 6;
@@ -108,8 +117,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void BuildFooterNote()
         {
             var note = new Label(
-                "签名由命令类上的 [VNParam] 特性反射生成——第三方自定义命令加特性即自动出现在此。\n" +
-                "标 ⚙ 者尚无元数据，拖入后为「通用节点」（原始参数文本框，功能完整）。");
+                "拖拽命令到画布建节点，或双击在画布中心创建。\n" +
+                "签名由 [VNParam] 特性反射生成。标 [G] 者无元数据，为通用节点。");
             note.AddToClassList("vn-panel-note");
             _root.Add(note);
         }
@@ -176,7 +185,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             dot.style.backgroundColor = CategoryColor(category);
             header.Add(dot);
 
-            header.Add(new Label(CategoryName(category) + $"（{count}）"));
+            header.Add(new Label(CategoryName(category) + " (" + count + ")"));
             return header;
         }
 
@@ -190,23 +199,59 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             name.AddToClassList("vn-cmd-item-name");
             item.Add(name);
 
-            var sig = new Label(info.HasMeta ? BuildSignatureTail(info) : "⚙ 无元数据");
+            var sig = new Label(info.HasMeta ? BuildSignatureTail(info) : "[G] 无元数据");
             sig.AddToClassList("vn-cmd-item-sig");
             item.Add(sig);
 
             item.tooltip = BuildItemTooltip(info);
 
-            // 单击即在画布上创建节点。
-            // 说明：GraphView 的原生 DragAndDrop 在 UIElements 面板间传递体验不稳定，
-            // 单击创建 + 随后自由拖拽定位，交互更可靠且更快。
-            item.RegisterCallback<MouseDownEvent>(evt =>
+            // 拖拽：MouseDown 启动 DragAndDrop
+            item.RegisterCallback<PointerDownEvent>(evt =>
             {
                 if (evt.button != 0) return;
-                OnRequestCreateNode?.Invoke(info.Name, TargetConfirmChain);
+                StartDrag(info.Name, item);
                 evt.StopPropagation();
             });
 
+            // 双击：在画布中心创建
+            item.RegisterCallback<ClickEvent>(evt =>
+            {
+                if (evt.clickCount >= 2)
+                {
+                    OnRequestCreateNode?.Invoke(info.Name, TargetConfirmChain, null);
+                    evt.StopPropagation();
+                }
+            });
+
             return item;
+        }
+
+        /// <summary>
+        /// 启动 Unity 全局拖拽。DragAndDrop API 在面板间传递稳定可靠。
+        /// 拖拽期间画布会通过 DragUpdated/DragPerform 接收。
+        /// </summary>
+        private static void StartDrag(string commandName, VisualElement source)
+        {
+            DragAndDrop.PrepareStartDrag();
+            DragAndDrop.SetGenericData(DragDataKey, commandName);
+            DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+            DragAndDrop.StartDrag("添加命令节点: " + commandName);
+        }
+
+        /// <summary>
+        /// 检查当前 DragAndDrop 是否携带面板命令数据。
+        /// 画布在 DragPerform 时调用本方法取出命令名。
+        /// </summary>
+        public static bool TryGetDragCommand(out string commandName)
+        {
+            commandName = DragAndDrop.GetGenericData(DragDataKey) as string;
+            return !string.IsNullOrEmpty(commandName);
+        }
+
+        /// <summary>清除拖拽数据（DragPerform 后调用）。</summary>
+        public static void ClearDragData()
+        {
+            DragAndDrop.SetGenericData(DragDataKey, null);
         }
 
         private static string BuildSignatureTail(VNCommandInfo info)
@@ -227,15 +272,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 sb.Append('\n').Append(info.Description);
 
             if (!info.HasMeta)
-                sb.Append("\n\n该命令尚未标注元数据，将以「通用节点」形态添加（原始参数文本框）。");
+                sb.Append("\n\n该命令尚未标注元数据，将以通用节点形态添加。");
 
             if (info.IsFlowCommand)
-                sb.Append("\n\n⚠ 流程命令：必须置于命令链末尾。");
+                sb.Append("\n\n[!] 流程命令：必须置于命令链末尾。");
 
             if (info.IsAsync)
-                sb.Append("\n⏳ 异步命令：所在分支会等待它完成。");
+                sb.Append("\n[~] 异步命令：所在分支会等待它完成。");
 
-            sb.Append("\n\n单击添加到画布。");
+            sb.Append("\n\n拖拽到画布建节点，或双击在画布中心创建。");
             return sb.ToString();
         }
 
@@ -258,7 +303,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 case VNCommandCategory.System:      return "系统命令";
                 case VNCommandCategory.Performance: return "演出命令";
-                case VNCommandCategory.Flow:        return "流程命令（仅链尾）";
+                case VNCommandCategory.Flow:        return "流程命令(仅链尾)";
                 case VNCommandCategory.Logic:       return "逻辑与变量";
                 case VNCommandCategory.Audio:       return "音频";
                 default:                            return "其他";

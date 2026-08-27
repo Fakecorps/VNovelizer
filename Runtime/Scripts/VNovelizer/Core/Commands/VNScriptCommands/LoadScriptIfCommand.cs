@@ -1,4 +1,5 @@
 using UnityEngine;
+using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
 {
@@ -10,8 +11,16 @@ namespace VNovelizer.Core.Commands
     ///   loadscriptif(Amy_Favor >= 50, Chapter2B, Scene_000)
     ///   loadscript(Chapter2C)   ← 兜底
     /// </summary>
+    [VNCommandMeta(VNCommandCategory.Flow,
+        "条件加载剧本：条件为真时等价 loadscript（仅可置于链尾）")]
     public class LoadScriptIfCommand : VNCommand
     {
+        [VNParam(0, "condition", VNParamType.String,
+            Description = "条件表达式，如 Amy_Favor >= 80 / Met_Amy / !Met_Amy / PlayerName == \"Alice\"")]
+        [VNParam(1, "script", VNParamType.String,
+            Description = "剧本名（CSV 文件名，不含扩展名）")]
+        [VNParam(2, "startId", VNParamType.String, Optional = true,
+            Description = "起始行 ID（可选）")]
         public override string CommandName { get { return "loadscriptif"; } }
 
         /// <summary>子类覆写为 true 即得到 loadscriptifnot</summary>

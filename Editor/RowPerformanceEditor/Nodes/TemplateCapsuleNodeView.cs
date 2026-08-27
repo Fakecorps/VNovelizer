@@ -42,7 +42,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         protected override void Build()
         {
-            SetTitle("🔒 默认演出");
+            SetTitle("[默认演出]");
             tooltip = "本行使用引擎默认演出（数据列驱动），未占用 Command 列。\n\n" +
                       "双击展开查看完整结构。修改任一节点会把整行「提升」为定制行——" +
                       "届时完整命令链将写入 Command 列，由你完全掌控。";
@@ -72,7 +72,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void BuildHeaderExtras()
         {
-            var expander = new Label("▶");
+            var expander = new Label("[+]");
             expander.AddToClassList("vn-tpl-expander");
             titleContainer.Insert(0, expander);
 
@@ -94,7 +94,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 bool hasValue = !string.IsNullOrWhiteSpace(entry.Value);
 
-                var chip = new Label("📎 " + entry.Label + (hasValue ? "" : " ∅"));
+                var chip = new Label(">> " + entry.Label + (hasValue ? "" : " (空)"));
                 chip.AddToClassList("vn-refchip");
                 if (!hasValue) chip.AddToClassList("vn-refchip--empty");
 

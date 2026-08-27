@@ -108,7 +108,7 @@ namespace VNovelizer.Editor
 
             var prev = GUI.color;
             GUI.color = ok ? new Color(0.6f, 0.9f, 0.55f) : new Color(1f, 0.55f, 0.5f);
-            EditorGUILayout.LabelField((ok ? "✓ " : "✗ ") + r.Input, EditorStyles.boldLabel);
+            EditorGUILayout.LabelField((ok ? "[OK] " : "[X] ") + r.Input, EditorStyles.boldLabel);
             GUI.color = prev;
 
             EditorGUI.indentLevel++;
