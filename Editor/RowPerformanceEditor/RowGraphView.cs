@@ -176,7 +176,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void BuildLane(ChainGraph graph, bool isConfirm, float centerY,
             Dictionary<string, Vector2> savedPositions, float startX)
         {
+            // 2026-08-28 R8：savedPositions 参数当前不被读取——所有节点统一走 Layout。
+            // 参数保留：Undo 快照（Positions 字段）可能仍需向后兼容；将来若加
+            // "用户主动保存布局" 快捷键，可在此处恢复读取逻辑。
             bool hasContent = ChainGraphDumper.HasContent(graph);
+
+            // 端点 ID（RowGraphView 视图层与图数据通过固定 ID 约定）
+            string startId = ChainGraphDumper.SentinelId(isConfirm, true);
+            string endId = ChainGraphDumper.SentinelId(isConfirm, false);
 
             // 空链（仅哨兵、无连接）时 Layout 无从展开——哨兵用固定站位
             var layout = hasContent ? ChainAutoLayout.Layout(graph, centerY) : null;
@@ -190,22 +197,38 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 var view = CreateNodeView(node, isConfirm);
                 if (view == null) continue;
 
+                bool isStartSentinel = node.Id == startId;
+                bool isEndSentinel = node.Id == endId;
+
                 Vector2 pos = Vector2.zero;
-                bool restored = savedPositions != null &&
-                                savedPositions.TryGetValue(PositionKey(isConfirm, node.Id), out pos);
-                if (!restored)
+
+                if (isStartSentinel || isEndSentinel)
                 {
+                    // 2026-08-28 端点固定：哨兵永远由 Layout 算（保证 LineEntry/Exit 总在
+                    // 最左/最右）。savedPositions 即使有哨兵键也忽略——用户拖动过的位置不
+                    // 应破坏结构约束。
+                    if (layout != null && layout.TryGetValue(node.Id, out var sentinelPos))
+                        pos = sentinelPos;
+                    else
+                    {
+                        // 空链 fallback：哨兵左右站位（与 BuildEmptyConfirmShadow 风格一致）
+                        pos = isStartSentinel
+                            ? new Vector2(startX, centerY - 15f)
+                            : new Vector2(startX + 460f, centerY - 15f);
+                    }
+                }
+                else
+                {
+                    // 2026-08-28 R8：所有非端点节点统一走 Layout，savedPositions 不再覆盖。
+                    // 旧实现让用户上次拖动（或旧算法）保存的位置直接套用——既不保证
+                    // "每次打开都整齐"（R8 核心需求），又会出现"Line Entry 不在最左"、
+                    // "Fork 跑到了 LineEntry 左边"等结构错位（用户 2026-08-28 14:32 截图）。
+                    // 用户拖动仍然立即生效（OnNodesMoved 实时更新位置），只是切行/重开
+                    // 会被 Layout 重排——R8 优先级高于 R5 的"自由拖动保留"。
                     if (layout != null && layout.TryGetValue(node.Id, out var layoutPos))
                     {
                         pos = layoutPos;
                         pos.x += (startX - ChainAutoLayout.StartX);
-                    }
-                    else if (!hasContent)
-                    {
-                        // 空链：两个终端左右排开，中间留给 NextLine 影子
-                        pos = node.Kind == ChainGraphNodeKind.Start
-                            ? new Vector2(startX, centerY - 15f)
-                            : new Vector2(startX + 460f, centerY - 15f);
                     }
                     else
                     {
@@ -242,45 +265,20 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
-        /// 测量所有节点的实际渲染宽度并重新布局。
+        /// 测量所有节点当前渲染宽度（id → 像素）。供 RelayoutAll 使用，让 Layer 间距
+        /// 反映真实节点尺寸——长命令节点不会挤压邻居、也不会与 Fork/Join 重叠。
         /// </summary>
-        private void MeasureAndRelayout()
+        private Dictionary<string, float> MeasureAllWidths()
         {
-            if (EntryGraph.NodeCount == 0 && ConfirmGraph.NodeCount == 0) return;
-
-            var measured = new Dictionary<string, float>();
+            var widths = new Dictionary<string, float>();
             foreach (var pair in _nodeViews)
             {
                 var view = pair.Value;
                 if (view == null || view.Data == null) continue;
                 float w = view.localBound.width;
-                if (w > 0) measured[view.Data.Id] = w;
+                if (w > 0) widths[view.Data.Id] = w;
             }
-
-            float entryStartX = ChainAutoLayout.StartX;
-
-            if (EntryGraph.NodeCount > 0)
-                ApplyMeasuredLayout(EntryGraph, isConfirm: false,
-                    ChainAutoLayout.EntryLaneY, measured, entryStartX);
-
-            if (ConfirmGraph != null && ConfirmGraph.NodeCount > 0)
-                ApplyMeasuredLayout(ConfirmGraph, isConfirm: true,
-                    ChainAutoLayout.ConfirmLaneY, measured, ChainAutoLayout.StartX);
-        }
-
-        private void ApplyMeasuredLayout(ChainGraph graph, bool isConfirm, float centerY,
-            Dictionary<string, float> measured, float startX)
-        {
-            var positions = ChainAutoLayout.MeasureAndRelayout(graph, centerY, measured);
-            foreach (var pair in positions)
-            {
-                var view = GetNodeView(isConfirm, pair.Key);
-                if (view == null) continue;
-                var rect = view.GetPosition();
-                view.SetPosition(new Rect(
-                    pair.Value.x + (startX - ChainAutoLayout.StartX),
-                    pair.Value.y, rect.width, rect.height));
-            }
+            return widths;
         }
 
         private VNNodeViewBase CreateNodeView(ChainGraphNode node, bool isConfirm)
@@ -883,19 +881,32 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
-        /// 整理布局：按执行顺序重新排布全部节点。
+        /// 整理布局：按执行顺序重新排布全部节点（含端点约束、实测宽度）。
         /// **唯一**触发全图自动布局的入口（工具栏按钮 / 右键菜单）。
+        ///
+        /// <para>
+        /// 2026-08-28：RelayoutAll 现在会通知 Window 清空对应行的位置缓存——
+        /// 否则下次 Rebuild 仍会读回用户拖过的旧位置，"整理布局"只生效一次。
+        /// </para>
         /// </summary>
         public void RelayoutAll()
         {
-            ApplyLayout(EntryGraph, isConfirm: false, centerY: ChainAutoLayout.EntryLaneY);
-            ApplyLayout(ConfirmGraph, isConfirm: true, centerY: ChainAutoLayout.ConfirmLaneY);
-            MeasureAndRelayout();
+            // 用实测宽度跑一次 layout（更精确——长命令节点不会挤压邻居）
+            var widths = MeasureAllWidths();
+            ApplyLayout(EntryGraph, isConfirm: false,
+                ChainAutoLayout.EntryLaneY, widths);
+            ApplyLayout(ConfirmGraph, isConfirm: true,
+                ChainAutoLayout.ConfirmLaneY, widths);
+            OnPositionsRelayouted?.Invoke();
         }
 
-        private void ApplyLayout(ChainGraph graph, bool isConfirm, float centerY)
+        /// <summary>布局被强制重排时通知——Window 侧据此清空 GraphPosStore 中该行缓存。</summary>
+        public event Action OnPositionsRelayouted;
+
+        private void ApplyLayout(ChainGraph graph, bool isConfirm, float centerY,
+            IReadOnlyDictionary<string, float> widths = null)
         {
-            var layout = ChainAutoLayout.Layout(graph, centerY);
+            var layout = ChainAutoLayout.Layout(graph, centerY, widths);
             foreach (var pair in layout)
             {
                 var view = GetNodeView(isConfirm, pair.Key);

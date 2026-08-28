@@ -13,7 +13,13 @@ using VNovelizer.Core.Commands.Meta;
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
     /// <summary>
-    /// 行演出编辑器主窗口：三栏布局（命令面板 · 画布 · 属性检查器）。
+    /// 行演出编辑器主窗口：四栏布局（命令面板 · 画布 · 命令链文本 · 节点检查器）。
+    ///
+    /// <para>
+    /// <b>2026-08-28 改造</b>：原三栏改为四栏 —— 命令链文本编辑器从右侧 Inspector 的
+    /// 「文本」页签拆出，独立成第三列，给文本编辑留足视高；并支持与节点图实时
+    /// 双向联动（防抖 200ms，避免每 keystroke 都触发全链路解析）。
+    /// </para>
     ///
     /// <para>
     /// <b>保存链路</b>（任一环失败即阻断，不写坏 CSV）：
@@ -58,6 +64,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         // ---- 组件 ----
         private RowGraphView _graphView;
         private CommandPalette _palette;
+        private TextChainEditor _textChain;
         private InspectorBuilder _inspector;
         private readonly GraphUndoStack _undoStack = new GraphUndoStack();
 
@@ -168,18 +175,28 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _graphView.OnNodeDragGestureStarted += HandleNodeDragGestureStarted;
             _graphView.OnRequestPromotion += HandlePromotionRequest;
             _graphView.OnRequestCreateNodeAt += (cmd, isConfirm, pos) => HandleCreateNode(cmd, isConfirm, pos);
+            _graphView.OnPositionsRelayouted += HandlePositionsRelayouted;
             main.Add(_graphView);
+
+            // 2026-08-28：中间右列 · 命令链文本编辑器（独立成列，不再挤在 Inspector Tab 内）
+            var textChainRoot = new VisualElement();
+            main.Add(textChainRoot);
+            _textChain = new TextChainEditor(textChainRoot);
+            _textChain.OnChainTextChanged += HandleChainTextChanged;
 
             var inspectorRoot = new VisualElement();
             main.Add(inspectorRoot);
             _inspector = new InspectorBuilder(inspectorRoot);
             _inspector.OnValueChanged += HandleGraphChanged;
             _inspector.OnRequestJumpToColumn += HandleJumpToColumn;
-            _inspector.OnChainTextChanged += HandleChainTextChanged;
 
             // 先订阅 _graphView 事件再初始化显示——避免初始化 Show 期间
             // 因事件竞态而错过初次选中通知
-            _graphView.OnNodeSelected += node => _inspector.Show(node);
+            _graphView.OnNodeSelected += node =>
+            {
+                _inspector.Show(node);
+                _textChain.SetSelectedNode(node);
+            };
 
             BuildStatusBar(root);
 
@@ -230,7 +247,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             });
             bar.Add(_lineIdField);
 
-            var next = new Button(() => StepRow(1)) { text = "下一行 >" };
+            var next = new Button(() => StepRow(1)) { text = "▶" };
             next.tooltip = "下一行";
             bar.Add(next);
 
@@ -367,6 +384,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 GraphPosStore.Save(_csvPath, oldRow.Id, _graphView.CollectPositions(), true);
             }
 
+            // 切换 CSV 前取消文本编辑器的 debounce 任务（防抖窗口内未触发 Hook）。
+            _textChain?.CancelPending();
+
             _csvPath = csvPath;
             _scriptName = Path.GetFileNameWithoutExtension(csvPath);
             _rows.Clear();
@@ -490,6 +510,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (_rows.Count == 0) return;
             if (!ConfirmDiscardIfDirty()) return;
 
+            // 切行前先把文本编辑器的未到点防抖提交 —— 避免「输入 → 立刻切走」丢
+            // 200ms 防抖里还没提交的改动。
+            _textChain?.CancelPending();
+
             int target = Mathf.Clamp(_currentRowIndex + delta, 0, _rows.Count - 1);
             if (target != _currentRowIndex) SelectRow(target);
         }
@@ -498,6 +522,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (string.IsNullOrWhiteSpace(lineId) || _rows.Count == 0) return;
             if (!ConfirmDiscardIfDirty()) return;
+
+            _textChain?.CancelPending();
 
             int index = _rows.FindIndex(r => r.Id == lineId.Trim());
             if (index < 0)
@@ -549,6 +575,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             var form = RowPromotion.DetermineForm(row.Command);
 
+            // 2026-08-28：模板按 Char 列实际填写过滤——只生成用户用到的立绘槽位节点，
+            // 避免编辑器视图里堆满 5 个空槽位（用户在 Excel 改了 Char 列后，
+            // 切回该行 / 重新打开编辑器即生效）。
+            var filledSlots = CollectFilledSlots(row);
+
             // 2026-08-27（用户 Q1）：默认演出彻底展开，删除折叠胶囊。
             // Normal 行 → 合成纯系统命令模板图；
             // Enhanced 行 → 合成"系统命令 -> 用户链"完整模板图；
@@ -558,11 +589,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             switch (form)
             {
                 case RowForm.Normal:
-                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(null), isConfirm: false);
+                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(null, filledSlots), isConfirm: false);
                     _syntheticTemplate = true;
                     break;
                 case RowForm.Enhanced:
-                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(entryText), isConfirm: false);
+                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(entryText, filledSlots), isConfirm: false);
                     _syntheticTemplate = true;
                     break;
                 default:
@@ -578,12 +609,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 GraphPosStore.LoadPositions(_csvPath, row.Id),
                 templateCollapsed: false, showTemplate: false, frameAll: true);
 
-            // 同步链文本到 Inspector 文本页签（合成模板时显示完整模板文本）
+            // 同步链文本到中部文本编辑器（合成模板时显示完整模板文本）
             string entryDisplay = _syntheticTemplate
                 ? DefaultPerformanceTemplate.BuildText(
-                    form == RowForm.Enhanced ? entryText : null)
+                    form == RowForm.Enhanced ? entryText : null, filledSlots)
                 : entryText;
-            _inspector?.SetChainTexts(entryDisplay, confirmText);
+            _textChain?.SetTexts(entryDisplay, confirmText);
 
             Validate();
             UpdateHeaderAndStatus();
@@ -595,17 +626,50 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// </summary>
         private static ChainGraph BuildGraph(string chainText, bool isConfirm)
         {
+            if (string.IsNullOrWhiteSpace(chainText))
+                return BuildGraph((ChainNode)null, isConfirm);
+
+            var parsed = ChainParser.Parse(chainText);
+            return BuildGraph(parsed.Root, isConfirm);
+        }
+
+        /// <summary>
+        /// 已知 ChainNode 根 → 图（解析失败时 Root 为 null → 返回只含哨兵节点的图）。
+        /// </summary>
+        private static ChainGraph BuildGraph(ChainNode root, bool isConfirm)
+        {
             var graph = new ChainGraph();
-            if (!string.IsNullOrWhiteSpace(chainText))
-            {
-                var parsed = ChainParser.Parse(chainText);
-                if (parsed.Root != null)
-                    graph = AstToGraph.Convert(parsed.Root);
-            }
+            if (root != null) graph = AstToGraph.Convert(root);
 
             // 解析产物是合法 SP 图：装配哨兵并铺设锚点边（Start→链头、链尾→End）
             ChainGraphDumper.EnsureSentinels(graph, isConfirm, linkAnchors: true);
             return graph;
+        }
+
+        /// <summary>
+        /// 收集该行 Char 列里**实际填了角色**的槽位代码（2026-08-28）。
+        ///
+        /// <para>
+        /// 模板按此集合过滤 <c>showChar</c> 节点——只生成用户真正用到的立绘槽位，
+        /// 避免编辑器视图里堆满 5 个空槽位节点（用户体验噪音）。
+        /// </para>
+        ///
+        /// <para>
+        /// 维护原视觉顺序（L → ML → M → MR → R），与 Excel 槽位列顺序一致——
+        /// 生成出的 <c>showChar</c> 在图编辑器里也是左→右排布。
+        /// </para>
+        /// </summary>
+        private static List<string> CollectFilledSlots(CsvRow row)
+        {
+            if (row == null) return new List<string>();
+
+            var filled = new List<string>(5);
+            if (!string.IsNullOrWhiteSpace(row.CharLeft))     filled.Add("L");
+            if (!string.IsNullOrWhiteSpace(row.CharMidLeft))  filled.Add("ML");
+            if (!string.IsNullOrWhiteSpace(row.CharMid))      filled.Add("M");
+            if (!string.IsNullOrWhiteSpace(row.CharMidRight)) filled.Add("MR");
+            if (!string.IsNullOrWhiteSpace(row.CharRight))    filled.Add("R");
+            return filled;
         }
 
         /// <summary>把 Command 列拆为进入段与出口段（与 ScriptParser 同规则，引号感知）。</summary>
@@ -797,9 +861,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (CurrentRow == null) return;
 
-            // 有拖拽落点用落点，否则在泳道起始位置创建
+            // 有拖拽落点用落点，否则在泳道起始位置创建。
+            // 起始位置 = layer 1 的 X（与 Sugiyama 分层布局对齐）；
+            // 多次连续拖入时 X 随机微偏移，避免完全重叠。
             Vector2 pos = position ?? new Vector2(
-                ChainAutoLayout.StartX + 200f + UnityEngine.Random.Range(0, 3) * 30f,
+                ChainAutoLayout.StartX + ChainAutoLayout.NodeWidth + ChainAutoLayout.HorizontalGap
+                    + UnityEngine.Random.Range(0, 3) * 30f,
                 isConfirm ? ChainAutoLayout.ConfirmLaneY : ChainAutoLayout.EntryLaneY);
 
             var info = CommandMetaReader.Get(commandName);
@@ -836,8 +903,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (CurrentRow == null) return;
 
+            // Fork/Join 落在 layer 1 上（与命令节点初始落点同列）——用户拖动后自由安排。
             Vector2 pos = new Vector2(
-                ChainAutoLayout.StartX + 200f,
+                ChainAutoLayout.StartX + ChainAutoLayout.NodeWidth + ChainAutoLayout.HorizontalGap,
                 isConfirm ? ChainAutoLayout.ConfirmLaneY : ChainAutoLayout.EntryLaneY);
 
             _graphView.CreateForkJoinPair(pos, isConfirm);
@@ -853,14 +921,38 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
-        /// 命令链文本被编辑（Inspector 文本页签）→ 解析 → 重建对应图。
-        /// 文本与图是同一真值的两个视图（2026-08-27 用户需求 5）。
+        /// 命令链文本被编辑（中部 <see cref="TextChainEditor"/> 触发）→ 解析 →
+        /// 重建对应图，并用规范化序列化文本回填编辑器，保证文本/图同一真值。
+        ///
+        /// <para>
+        /// 触发源现在是 TextChainEditor 的 debounced ValueChanged —— 每 200ms
+        /// 打字停顿后批一次；用户输入即时可见反馈（节点图随着文本实时变化）。
+        /// </para>
+        ///
+        /// <para>
+        /// <b>解析失败（用户输入到一半的中间态）不重建图</b>，否则节点会闪一下 →
+        /// 闪回，破坏实时联动体验。文本框保留用户输入（<see cref="TextChainEditor.SetTexts"/>
+        /// 对 null 不动），等用户补全后再重建图。
+        /// </para>
         /// </summary>
         private void HandleChainTextChanged(bool isConfirm, string newText)
         {
             if (_graphView == null) return;
 
-            var newGraph = BuildGraph(newText, isConfirm);
+            // 中间态检测：解析失败 → 不重建图
+            ChainParseResult parsed = null;
+            if (!string.IsNullOrWhiteSpace(newText))
+            {
+                parsed = ChainParser.Parse(newText);
+                if (!parsed.Success)
+                {
+                    // 仅显示文本，不动图。错误信息由校验状态栏展示。
+                    _textChain.SetTexts(null, null);
+                    return;
+                }
+            }
+
+            var newGraph = BuildGraph(parsed?.Root, isConfirm);
             var positions = _graphView.CollectPositions();
 
             var entryGraph = isConfirm ? _graphView.EntryGraph : newGraph;
@@ -875,7 +967,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 用规范化序列化文本回填（文本与图互相校准）。
             // 2026-08-28：序列化失败回填 null（保持用户输入的原文）——
             // 旧实现回填占位文本"(图结构待修正)"，用户失焦提交后解析失败会把整图清空。
-            _inspector.SetChainTexts(
+            _textChain.SetTexts(
                 SerializeForTextTab(entryGraph),
                 SerializeForTextTab(confirmGraph));
 
@@ -883,8 +975,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
-        /// 图 → 文本页签回填文本。不可序列化（非法中间态）时返回 null
-        /// （SetChainTexts 对 null 保持原文不变）。
+        /// 图 → 中部文本编辑器回填文本。不可序列化（非法中间态）时返回 null
+        /// （SetTexts 对 null 保持原文不变）。
         /// </summary>
         private static string SerializeForTextTab(ChainGraph graph)
         {
@@ -903,7 +995,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             if (!RowPromotion.ConfirmPromotion(form)) return;
 
-            row.Command = RowPromotion.BuildPromotedText(row.Command);
+            // 2026-08-28：提升时也按 Char 列填写状态过滤——避免把全 5 槽模板
+            // 写回 Command 列（与"只生成用户用到的槽位"原则一致）。
+            row.Command = RowPromotion.BuildPromotedText(row.Command, CollectFilledSlots(row));
             _isDirty = true;
             RefreshAll();
             PushUndoSnapshot("提升为定制行");
@@ -1191,6 +1285,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var row = CurrentRow;
             if (row == null || string.IsNullOrEmpty(_csvPath)) return;
 
+            // 2026-08-28：保存前先把文本编辑器未到点的防抖同步提交，避免最后一次
+            // keystroke 还在 200ms 防抖窗口里、Serialize 拿到的还是旧图。
+            _textChain?.Flush();
+
             // 1. 校验（致命错误阻断）
             Validate();
             if ((_entryValidation?.HasFatal ?? false) || (_confirmValidation?.HasFatal ?? false))
@@ -1256,6 +1354,22 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void SavePositionsOnly(CsvRow row)
         {
             GraphPosStore.Save(_csvPath, row.Id, _graphView.CollectPositions(), true);
+        }
+
+        /// <summary>
+        /// 用户点击"整理布局"：覆盖 GraphPosStore 中该行的位置缓存——否则下次 Rebuild
+        /// 仍会读回旧位置，"整理布局"只生效一次。直接把新位置落盘。
+        /// </summary>
+        private void HandlePositionsRelayouted()
+        {
+            if (_graphView == null || _csvPath == null) return;
+            var row = CurrentRow;
+            if (row == null) return;
+
+            // templateCollapsed: true 与切行保存一致（折叠状态本就默认 true，不影响现有行为）
+            GraphPosStore.Save(_csvPath, row.Id, _graphView.CollectPositions(), true);
+            // Relayout 改变位置 → 视为"修改过"（与拖动节点一致），但与命令链内容无关，
+            // 因此不触发 dirty（切行/保存时位置总是会落盘，无须额外标记）。
         }
 
         private static bool TrySerialize(ChainGraph graph, out string text, out string error)

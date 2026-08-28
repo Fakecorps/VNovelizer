@@ -109,9 +109,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// 直接调用 <see cref="DefaultPerformanceTemplate.BuildText"/>——
         /// 模板结构只有那一处定义，避免此处再抄一份造成漂移。
         /// </summary>
-        public static string BuildPromotedText(string existingUserChain)
+        /// <param name="slots">2026-08-28：按数据列填写状态过滤的槽位集合；null = 全 5 槽</param>
+        public static string BuildPromotedText(string existingUserChain,
+            System.Collections.Generic.IReadOnlyCollection<string> slots = null)
         {
-            return DefaultPerformanceTemplate.BuildText(existingUserChain);
+            return DefaultPerformanceTemplate.BuildText(existingUserChain, slots);
         }
 
         /// <summary>

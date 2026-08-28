@@ -13,25 +13,16 @@ using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
-    /// <summary>Inspector 页签：节点参数视图 / 命令链文本视图。</summary>
-    public enum InspectorTab
-    {
-        Node,
-        Text,
-    }
-
     /// <summary>
     /// 右侧属性检查器：由 <c>[VNParam]</c> 元数据**驱动生成**表单，而非为每个命令手写面板。
     ///
     /// <para>
-    /// 两个页签（2026-08-27 用户需求 5）：
+    /// <b>2026-08-28 改造</b>：命令链文本编辑拆到独立的 <see cref="TextChainEditor"/>
+    /// 作为中间一整列 —— Inspector 只负责选中节点的参数编辑。
+    /// 文本与图的双向联动由 TextChainEditor 直接驱动。
     /// </para>
-    /// <list type="bullet">
-    /// <item><b>节点</b>：按参数类型生成下拉 / 滑块 / 输入框，含隐式绑定切换</item>
-    /// <item><b>文本</b>：命令链原始文本 ↔ 图双向联动编辑，选中节点的命令片段实时高亮</item>
-    /// </list>
     ///
-    /// <para>三种节点表单形态，由元数据可得性决定：</para>
+    /// <para>两种节点表单形态，由元数据可得性决定：</para>
     /// <list type="bullet">
     /// <item>有元数据 → 结构化表单</item>
     /// <item>无元数据 → 单行原始参数文本框（通用节点态，功能完整）</item>
@@ -46,15 +37,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>请求跳转到数据列（📎 徽章点击）</summary>
         public event Action<string> OnRequestJumpToColumn;
 
-        /// <summary>命令链文本被编辑（isConfirm, 新文本）——外部负责解析重建图</summary>
-        public event Action<bool, string> OnChainTextChanged;
-
         private readonly VisualElement _root;
         private VNNodeViewBase _current;
-
-        private InspectorTab _activeTab = InspectorTab.Node;
-        private string _entryText = "";
-        private string _confirmText = "";
 
         public InspectorBuilder(VisualElement root)
         {
@@ -62,58 +46,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _root.AddToClassList("vn-inspector");
         }
 
-        /// <summary>
-        /// 外部（Window）在图 Rebuild 后同步链文本。
-        /// 2026-08-28：null 表示「该段当前不可序列化」——保持原文不变。
-        /// 以前图处于非法中间态时会回填占位文本"(图结构待修正)"到可编辑 TextField，
-        /// 用户失焦提交后占位文本被解析失败 → 整图清空（数据损坏路径）。
-        /// </summary>
-        public void SetChainTexts(string entry, string confirm)
-        {
-            if (entry != null) _entryText = entry;
-            if (confirm != null) _confirmText = confirm;
-            if (_activeTab == InspectorTab.Text) RebuildForCurrentTab();
-        }
-
         /// <summary>切换到指定节点（null 显示空状态）。</summary>
         public void Show(VNNodeViewBase node)
         {
             _current = node;
-            RebuildForCurrentTab();
+            _root.Clear();
+            BuildNodePane();
         }
 
         /// <summary>刷新当前节点（外部改动后同步显示）。</summary>
-        public void Refresh() => RebuildForCurrentTab();
-
-        // ---------------- 页签骨架 ----------------
-
-        private void RebuildForCurrentTab()
+        public void Refresh()
         {
             _root.Clear();
-            BuildTabBar();
-
-            if (_activeTab == InspectorTab.Node) BuildNodePane();
-            else BuildTextPane();
-        }
-
-        private void BuildTabBar()
-        {
-            var bar = new VisualElement();
-            bar.AddToClassList("vn-insp-tabs");
-
-            var nodeTab = new Button(() => { _activeTab = InspectorTab.Node; RebuildForCurrentTab(); })
-                { text = "节点" };
-            nodeTab.AddToClassList("vn-insp-tab");
-            if (_activeTab == InspectorTab.Node) nodeTab.AddToClassList("vn-insp-tab--active");
-            bar.Add(nodeTab);
-
-            var textTab = new Button(() => { _activeTab = InspectorTab.Text; RebuildForCurrentTab(); })
-                { text = "文本" };
-            textTab.AddToClassList("vn-insp-tab");
-            if (_activeTab == InspectorTab.Text) textTab.AddToClassList("vn-insp-tab--active");
-            bar.Add(textTab);
-
-            _root.Add(bar);
+            BuildNodePane();
         }
 
         private void BuildNodePane()
@@ -131,94 +76,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
 
             BuildStructuralInspector(_current);
-        }
-
-        // ---------------- 文本页签 ----------------
-
-        /// <summary>
-        /// 命令链文本编辑器（双向联动）：
-        /// 上方只读高亮预览（选中节点的命令片段蓝色加粗），
-        /// 下方可编辑多行文本（失焦提交 → OnChainTextChanged → 图重建）。
-        /// </summary>
-        private void BuildTextPane()
-        {
-            BuildChainTextSection("进入段", isConfirm: false, _entryText);
-            BuildChainTextSection("出口段 @Confirm", isConfirm: true, _confirmText);
-
-            var help = new Label(
-                "编辑失焦后自动解析并重建图。文本与节点是同一真值的两个视图。\n" +
-                "语法：cmd(args) 串行 -> ；并行 & ；分组 [] ；出口段用 @Confirm: 分隔。");
-            help.AddToClassList("vn-insp-desc");
-            var section = new VisualElement();
-            section.AddToClassList("vn-insp-section");
-            section.Add(help);
-            _root.Add(section);
-        }
-
-        private void BuildChainTextSection(string title, bool isConfirm, string text)
-        {
-            var section = new VisualElement();
-            section.AddToClassList("vn-insp-section");
-
-            var t = new Label(title);
-            t.AddToClassList("vn-insp-sectitle");
-            section.Add(t);
-
-            // 高亮预览（选中节点的命令片段着色）
-            var preview = new Label(BuildHighlightedText(isConfirm, text));
-            preview.AddToClassList("vn-insp-preview");
-            preview.enableRichText = true;
-            section.Add(preview);
-
-            // 可编辑文本
-            var field = new TextField { value = text, multiline = true };
-            field.AddToClassList("vn-insp-chainfield");
-            field.tooltip = "失焦后提交：解析 → 重建图 → 校验";
-            field.RegisterCallback<FocusOutEvent>(_ =>
-            {
-                string newValue = field.value?.Trim() ?? "";
-                string old = (isConfirm ? _confirmText : _entryText)?.Trim() ?? "";
-                if (newValue == old) return;
-                OnChainTextChanged?.Invoke(isConfirm, newValue);
-            });
-            section.Add(field);
-
-            _root.Add(section);
-        }
-
-        /// <summary>
-        /// 转义为 rich-text 安全文本，并把选中命令节点的命令片段高亮（蓝色加粗）。
-        /// 命令链文本含 &、->、[] 等符号，& 与 &lt; 必须转义。
-        /// </summary>
-        private string BuildHighlightedText(bool isConfirm, string chainText)
-        {
-            if (string.IsNullOrEmpty(chainText)) return "<i>（空）</i>";
-
-            string escaped = EscapeRichText(chainText);
-
-            var cmdView = _current as CommandNodeView;
-            if (cmdView == null || cmdView.IsConfirmChain != isConfirm ||
-                string.IsNullOrEmpty(cmdView.Data?.CommandName))
-                return escaped;
-
-            string signature = EscapeRichText(
-                (cmdView.Data.CommandName ?? "") + "(" + (cmdView.Data.Args ?? "") + ")");
-            string bareName = EscapeRichText(cmdView.Data.CommandName + "(");
-
-            // 尽量匹配完整签名；找不到再退化为命令名前缀
-            if (escaped.Contains(signature))
-                escaped = escaped.Replace(signature,
-                    "<color=#6FB8E8><b>" + signature + "</b></color>");
-            else if (escaped.Contains(bareName))
-                escaped = escaped.Replace(bareName,
-                    "<color=#6FB8E8><b>" + bareName + "</b></color>");
-
-            return escaped;
-        }
-
-        private static string EscapeRichText(string s)
-        {
-            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
         }
 
         // ---------------- 空状态 ----------------

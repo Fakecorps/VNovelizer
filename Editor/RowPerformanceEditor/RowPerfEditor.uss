@@ -898,46 +898,188 @@
     border-color: #4A90D9;
 }
 
-/* ---------------- 右侧 Inspector ---------------- */
+/* ---------------- 中右 · 命令链文本编辑器（独立一列） ---------------- */
 
-/* 页签栏（节点 / 文本） */
-.vn-insp-tabs {
-    flex-direction: row;
-    background-color: #2A2A2A;
-    border-bottom-width: 1px;
-    border-bottom-color: #212121;
+.vn-textchain-panel {
+    width: 360px;
+    flex-shrink: 0;
+    background-color: #333333;
+    border-left-width: 1px;
+    border-left-color: #212121;
+    flex-direction: column;
 }
 
-.vn-insp-tab {
-    flex: 1;
-    height: 28px;
-    font-size: 11px;
+.vn-textchain-title {
+    padding: 8px 12px 8px 12px;
+    font-size: 10px;
     -unity-font-style: bold;
     color: #888888;
+    letter-spacing: 1px;
+    border-bottom-width: 1px;
+    border-bottom-color: #2A2A2A;
+}
+
+.vn-textchain-section {
+    padding: 8px 12px 6px 12px;
+    flex-shrink: 0;
+}
+
+/* 代码块预览容器 —— 模仿代码编辑器的"只读预览区"，
+   紧贴编辑框上方，给用户"输入即时反馈"的视觉锚 */
+.vn-textchain-prevblock {
+    background-color: #262626;
+    border-width: 1px;
+    border-color: #2E2E2E;
+    border-radius: 4px;
+    padding: 6px 8px 6px 8px;
+    margin-bottom: 4px;
+    flex-direction: column;
+}
+
+.vn-textchain-prevrow {
+    flex-direction: row;
+    align-items: center;
+    min-height: 18px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+    padding-left: 0;
+    padding-right: 4px;
+    border-radius: 3px;
+}
+
+.vn-textchain-prevrow--selected {
+    background-color: rgba(74, 144, 217, 0.18);
+    border-left-width: 2px;
+    border-left-color: #4A90D9;
+    padding-left: 4px;
+    margin-left: -4px;
+}
+
+.vn-textchain-prevlead {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #7A7A7A;
+    margin-right: 4px;
+    flex-shrink: 0;
+    min-width: 14px;
+    -unity-text-align: middle-right;
+}
+
+.vn-textchain-prevbody {
+    font-size: 11px;
+    white-space: normal;
+    color: #D8D8D8;
+    flex-shrink: 0;
+}
+
+.vn-textchain-prevempty {
+    font-size: 10px;
+    color: #6E6E6E;
+    -unity-font-style: italic;
+    white-space: normal;
+    padding: 4px 0 4px 0;
+}
+
+/* 多行文本编辑器本身：拉大到整列宽度的可用空间，能输入多行。
+   文本框高度让位于预览块：原 84px 减小到 60px 避免两段都太占视高 */
+.vn-textchain-field {
+    margin-top: 2px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+/* ====== IDE 风格代码编辑器（ChainCodeField） ======
+   左侧行号 gutter + 右侧编辑区（底层透明 TextField / 顶层彩色 Label 叠放） */
+.vn-codefield {
+    flex-direction: row;
+    background-color: #1E1E1E;
+    border-width: 1px;
+    border-color: #3A3A3A;
+    border-radius: 4px;
+    min-height: 96px;
+    overflow: hidden;
+}
+
+/* 焦点边框高亮：USS 不支持 :focus-within 伪类 ——
+   由 ChainCodeField.cs 在 FocusInEvent/FocusOutEvent 里切换本 class */
+.vn-codefield--focused {
+    border-color: #4A90D9;
+}
+
+.vn-codefield-gutter {
+    background-color: #252525;
+    color: #6E6E6E;
+    font-size: 10px;
+    padding: 6px 5px 6px 5px;
+    -unity-text-align: middle-right;
+    border-right-width: 1px;
+    border-right-color: #2A2A2A;
+    flex-shrink: 0;
+    min-width: 26px;
+}
+
+.vn-codefield-edit {
+    flex-grow: 1;
+    position: relative;
+    flex-direction: column;
+}
+
+/* 顶层彩色富文本 Label —— 视觉主体 */
+.vn-codefield-highlight {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    padding: 6px 8px 6px 8px;
+    margin: 0;
+    font-size: 11px;
+    -unity-text-align: upper-left;
+    color: #D8D8D8;
     background-color: transparent;
     border-width: 0;
-    border-bottom-width: 2px;
-    border-bottom-color: transparent;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+/* 底层透明 TextField —— 真正的输入控件，光标、IME、复制粘贴所有事它做 */
+.vn-codefield-input {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
     margin: 0;
+    padding: 0;
+    border-width: 0;
+    background-color: transparent;
 }
 
-.vn-insp-tab:hover { color: #CCCCCC; }
-
-.vn-insp-tab--active {
-    color: #DDDDDD;
-    border-bottom-color: #4A90D9;
-}
-
-/* 命令链多行文本编辑区（文本页签） */
-.vn-insp-chainfield {
-    margin-top: 4px;
-}
-
-.vn-insp-chainfield .unity-text-element__input {
+.vn-codefield-input > .unity-text-field__input {
+    margin: 0;
+    padding: 6px 8px 6px 8px;
+    border-width: 0;
+    background-color: transparent;
+    /* 关键：文字完全透明，让顶层 Label 的彩色字符串透过来。
+       光标颜色跟随 color（Unity USS 无独立 caret-color），接受光标隐形 ——
+       Label 实时刷新承担输入反馈职责。 */
+    color: rgba(0, 0, 0, 0);
+    -unity-font-style: normal;
     font-size: 11px;
-    color: #D8D8D8;
-    white-space: normal;
+    -unity-text-align: upper-left;
 }
+
+.vn-textchain-help {
+    padding: 8px 12px 12px 12px;
+    font-size: 9px;
+    color: #7A7A7A;
+    white-space: normal;
+    border-top-width: 1px;
+    border-top-color: #2A2A2A;
+    margin-top: auto;
+}
+
+/* ---------------- 右侧 Inspector ---------------- */
 
 .vn-inspector {
     width: 284px;
