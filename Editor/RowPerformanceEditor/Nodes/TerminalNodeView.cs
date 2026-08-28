@@ -4,19 +4,19 @@ using VNovelizer.Core.Commands.Chain;
 
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
-    /// <summary>终端胶囊的四种形态（2026-08-27 命名更新：UE 蓝图式"子弹形"）。</summary>
+    /// <summary>终端节点的四种形态（R7 2026-08-27：矩形 + 分类色，Shader Graph 式）。</summary>
     public enum TerminalKind
     {
-        /// <summary>行入口 LineEntry：进入链起点，无入端口（绿色子弹·左直右圆）</summary>
+        /// <summary>行入口 LineEntry：进入链起点，无入端口（绿色矩形）</summary>
         LineStart,
 
-        /// <summary>行出口 LineExit：进入链终点 + 出口链触发点，**双端口**（绿色子弹·左圆右直）</summary>
+        /// <summary>行出口 LineExit：进入链终点 + 出口链触发点，**双端口**（绿色矩形）</summary>
         WaitConfirm,
 
-        /// <summary>确认入口 OnConfirmEntry：出口链起点（橙色子弹·左直右圆）</summary>
+        /// <summary>确认入口 OnConfirmEntry：出口链起点（橙色矩形）</summary>
         ConfirmStart,
 
-        /// <summary>确认出口 OnConfirmExit：出口链终点，无出端口（橙色子弹·左圆右直）</summary>
+        /// <summary>确认出口 OnConfirmExit：出口链终点，无出端口（橙色矩形）</summary>
         ChainEnd,
     }
 

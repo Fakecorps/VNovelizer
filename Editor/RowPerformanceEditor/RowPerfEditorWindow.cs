@@ -40,6 +40,21 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// </summary>
         private bool _syntheticTemplate;
 
+        /// <summary>
+        /// Undo/Redo 重建进行中（防重入）——期间的图变更事件全部忽略，
+        /// 防止用户并发操作（拖动/连线）与 Rebuild 竞态污染撤销结果。
+        /// </summary>
+        private bool _isRestoring;
+
+        /// <summary>
+        /// 拖动手势开始时暂存的「移动前」快照——手势真正产生移动时才压栈
+        /// （纯点击不占撤销位），见 <see cref="HandleNodeDragGestureStarted"/>。
+        /// </summary>
+        private GraphUndoStack.Snapshot _pendingDragSnapshot;
+
+        /// <summary>连续粘贴的落点递进计数（每次粘贴偏移一点，避免叠在同一位置）。</summary>
+        private int _pasteCount;
+
         // ---- 组件 ----
         private RowGraphView _graphView;
         private CommandPalette _palette;
@@ -149,6 +164,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _graphView = new RowGraphView();
             _graphView.style.flexGrow = 1;
             _graphView.OnGraphChanged += HandleGraphChanged;
+            _graphView.OnNodesMoved += HandleNodesMoved;
+            _graphView.OnNodeDragGestureStarted += HandleNodeDragGestureStarted;
             _graphView.OnRequestPromotion += HandlePromotionRequest;
             _graphView.OnRequestCreateNodeAt += (cmd, isConfirm, pos) => HandleCreateNode(cmd, isConfirm, pos);
             main.Add(_graphView);
@@ -341,6 +358,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>载入 CSV。解析复用与运行时相同的列约定，避免两处格式理解不一致。</summary>
         public void LoadCsv(string csvPath)
         {
+            // 2026-08-27 修复：切换 CSV 前保存旧文件当前行位置（必须在 _csvPath 变更前做，
+            // 否则旧行位置会写进新 CSV 的 .graphpos.json）。
+            var oldRow = CurrentRow;
+            if (oldRow != null && _graphView != null && !string.IsNullOrEmpty(_csvPath) &&
+                !string.Equals(_csvPath, csvPath, StringComparison.OrdinalIgnoreCase))
+            {
+                GraphPosStore.Save(_csvPath, oldRow.Id, _graphView.CollectPositions(), true);
+            }
+
             _csvPath = csvPath;
             _scriptName = Path.GetFileNameWithoutExtension(csvPath);
             _rows.Clear();
@@ -486,6 +512,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (index < 0 || index >= _rows.Count) return;
 
+            // 2026-08-27 修复：切行前保存当前行节点位置——否则用户拖好的布局直接丢失
+            //（位置是纯缓存不涉及命令链内容，无需 dirty 判定，总是保存）。
+            var prevRow = CurrentRow;
+            if (prevRow != null && !ReferenceEquals(prevRow, _rows[index]))
+            {
+                GraphPosStore.Save(_csvPath, prevRow.Id, _graphView.CollectPositions(), true);
+            }
+
             _currentRowIndex = index;
             _isDirty = false;
             _undoStack.Clear(); // 撤销不跨行
@@ -524,25 +558,25 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             switch (form)
             {
                 case RowForm.Normal:
-                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(null));
+                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(null), isConfirm: false);
                     _syntheticTemplate = true;
                     break;
                 case RowForm.Enhanced:
-                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(entryText));
+                    entryGraph = BuildGraph(DefaultPerformanceTemplate.BuildText(entryText), isConfirm: false);
                     _syntheticTemplate = true;
                     break;
                 default:
-                    entryGraph = BuildGraph(entryText);
+                    entryGraph = BuildGraph(entryText, isConfirm: false);
                     _syntheticTemplate = false;
                     break;
             }
 
-            var confirmGraph = BuildGraph(confirmText);
+            var confirmGraph = BuildGraph(confirmText, isConfirm: true);
 
             _graphView.LineContext = BuildLineContext(row);
             _graphView.Rebuild(entryGraph, confirmGraph,
                 GraphPosStore.LoadPositions(_csvPath, row.Id),
-                templateCollapsed: false, showTemplate: false);
+                templateCollapsed: false, showTemplate: false, frameAll: true);
 
             // 同步链文本到 Inspector 文本页签（合成模板时显示完整模板文本）
             string entryDisplay = _syntheticTemplate
@@ -555,12 +589,23 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             UpdateHeaderAndStatus();
         }
 
-        private static ChainGraph BuildGraph(string chainText)
+        /// <summary>
+        /// 命令链文本 → 图（含哨兵装配与锚点边铺设）。
+        /// 2026-08-28：终端哨兵常驻图数据——终端视图、锚点边全部由数据驱动渲染。
+        /// </summary>
+        private static ChainGraph BuildGraph(string chainText, bool isConfirm)
         {
-            if (string.IsNullOrWhiteSpace(chainText)) return new ChainGraph();
+            var graph = new ChainGraph();
+            if (!string.IsNullOrWhiteSpace(chainText))
+            {
+                var parsed = ChainParser.Parse(chainText);
+                if (parsed.Root != null)
+                    graph = AstToGraph.Convert(parsed.Root);
+            }
 
-            var parsed = ChainParser.Parse(chainText);
-            return parsed.Root != null ? AstToGraph.Convert(parsed.Root) : new ChainGraph();
+            // 解析产物是合法 SP 图：装配哨兵并铺设锚点边（Start→链头、链尾→End）
+            ChainGraphDumper.EnsureSentinels(graph, isConfirm, linkAnchors: true);
+            return graph;
         }
 
         /// <summary>把 Command 列拆为进入段与出口段（与 ScriptParser 同规则，引号感知）。</summary>
@@ -683,9 +728,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private static string SerializeGraphSafe(ChainGraph graph)
         {
-            if (graph == null || graph.NodeCount == 0) return "";
+            // 2026-08-28：哨兵常驻后 NodeCount 恒 > 0——空链判定改用 HasContent
+            if (graph == null || !ChainGraphDumper.HasContent(graph)) return "";
             var converted = GraphToAst.Convert(graph);
-            return converted.Success && converted.Root != null
+            return converted.Success
                 ? ChainSerializer.Serialize(converted.Root)
                 : "(图结构待修正)";
         }
@@ -799,6 +845,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void HandleGraphChanged()
         {
+            if (_isRestoring) return; // Undo/Redo 重建期间的变更事件全部忽略（防重入）
             _isDirty = true;
             Validate();
             UpdateHeaderAndStatus();
@@ -813,7 +860,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (_graphView == null) return;
 
-            var newGraph = BuildGraph(newText);
+            var newGraph = BuildGraph(newText, isConfirm);
             var positions = _graphView.CollectPositions();
 
             var entryGraph = isConfirm ? _graphView.EntryGraph : newGraph;
@@ -823,14 +870,27 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (!isConfirm) _syntheticTemplate = false;
 
             _graphView.Rebuild(entryGraph, confirmGraph, positions,
-                templateCollapsed: false, showTemplate: false);
+                templateCollapsed: false, showTemplate: false, frameAll: false);
 
-            // 用规范化序列化文本回填（文本与图互相校准）
+            // 用规范化序列化文本回填（文本与图互相校准）。
+            // 2026-08-28：序列化失败回填 null（保持用户输入的原文）——
+            // 旧实现回填占位文本"(图结构待修正)"，用户失焦提交后解析失败会把整图清空。
             _inspector.SetChainTexts(
-                SerializeGraphSafe(entryGraph),
-                SerializeGraphSafe(confirmGraph));
+                SerializeForTextTab(entryGraph),
+                SerializeForTextTab(confirmGraph));
 
             HandleGraphChanged(); // dirty + 校验 + 快照
+        }
+
+        /// <summary>
+        /// 图 → 文本页签回填文本。不可序列化（非法中间态）时返回 null
+        /// （SetChainTexts 对 null 保持原文不变）。
+        /// </summary>
+        private static string SerializeForTextTab(ChainGraph graph)
+        {
+            if (graph == null || !ChainGraphDumper.HasContent(graph)) return "";
+            var converted = GraphToAst.Convert(graph);
+            return converted.Success ? ChainSerializer.Serialize(converted.Root) : null;
         }
 
         private void HandlePromotionRequest()
@@ -877,24 +937,65 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         // ==================== 撤销 / 剪贴板 ====================
 
+        /// <summary>构造当前状态快照（图转储 + 位置）。</summary>
+        private GraphUndoStack.Snapshot BuildSnapshot(string label)
+        {
+            return new GraphUndoStack.Snapshot
+            {
+                EntryGraphDump = ChainGraphDumper.Dump(_graphView.EntryGraph),
+                ConfirmGraphDump = ChainGraphDumper.Dump(_graphView.ConfirmGraph),
+                Positions = _graphView.CollectPositions(),
+                TemplateCollapsed = true,
+                Label = label,
+            };
+        }
+
         private void PushUndoSnapshot(string label)
         {
             if (_graphView == null || CurrentRow == null) return;
 
-            _undoStack.Push(new GraphUndoStack.Snapshot
-            {
-                EntryChainText = SerializeGraphSafe(_graphView.EntryGraph),
-                ConfirmChainText = SerializeGraphSafe(_graphView.ConfirmGraph),
-                Positions = _graphView.CollectPositions(),
-                TemplateCollapsed = true,
-                Label = label,
-            });
+            _undoStack.Push(BuildSnapshot(label));
 
             _statusUndo.text = _undoStack.CanUndo ? $"撤销栈 {_undoStack.Depth - 1}" : "";
         }
 
+        /// <summary>
+        /// 节点拖动手势开始（左键按下）：暂存「移动前」快照。
+        /// 仅当手势真正产生移动（HandleNodesMoved）时才压栈——纯点击不占撤销位。
+        /// </summary>
+        private void HandleNodeDragGestureStarted()
+        {
+            if (_isRestoring || _graphView == null || CurrentRow == null) return;
+            _pendingDragSnapshot = BuildSnapshot("移动节点");
+        }
+
+        /// <summary>
+        /// 节点拖动（仅位置变化，图数据不变）。
+        /// 2026-08-28 重构（替代旧的 TopLabel 粘性合并）：
+        /// 旧逻辑把栈顶为「移动」的所有后续移动合并进同一条记录——用户移动 A
+        /// 再移动 B，按一次 Ctrl+Z 会把两次一起回退，且快照记录的是移动中位置。
+        /// 新方案：每个拖动手势压入一条独立的「移动前」快照（PushForce 绕过
+        /// 与栈顶的去重——否则手势开始时内容与栈顶相同会被跳过，首次移动无法撤销）。
+        /// </summary>
+        private void HandleNodesMoved()
+        {
+            if (_isRestoring) return; // Undo/Redo 重建期间忽略（防重入）
+
+            if (_pendingDragSnapshot != null)
+            {
+                _undoStack.PushForce(_pendingDragSnapshot);
+                _pendingDragSnapshot = null;
+                _statusUndo.text = _undoStack.CanUndo ? $"撤销栈 {_undoStack.Depth - 1}" : "";
+            }
+
+            UpdateHeaderAndStatus();
+        }
+
         private void PerformUndo()
         {
+            // 纯点击产生的陈旧暂存快照随任何 Undo 操作作废
+            _pendingDragSnapshot = null;
+
             var snapshot = _undoStack.Undo();
             if (snapshot == null) return;
             RestoreSnapshot(snapshot);
@@ -902,6 +1003,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void PerformRedo()
         {
+            _pendingDragSnapshot = null;
+
             var snapshot = _undoStack.Redo();
             if (snapshot == null) return;
             RestoreSnapshot(snapshot);
@@ -909,19 +1012,31 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void RestoreSnapshot(GraphUndoStack.Snapshot snapshot)
         {
-            var entryGraph = BuildGraph(snapshot.EntryChainText);
-            var confirmGraph = BuildGraph(snapshot.ConfirmChainText);
+            // R7 吸收（行为树编辑器成熟做法）：Undo/Redo 重建期间禁止并发编辑——
+            // 若用户恰在拖动节点/连线下按 Ctrl+Z，graphViewChanged 会与 Rebuild 竞态，
+            // 产生"撤销后视图又被旧操作污染"的错乱。
+            _isRestoring = true;
+            try
+            {
+                // 2026-08-28：快照载体改为图转储（ChainGraphDumper）——
+                // 旧方案存序列化文本，图处于非法中间态（孤立节点等编辑过渡态）
+                // 时只能存占位文本"(图结构待修正)"，恢复时解析失败 → 空图，
+                // 一次 Ctrl+Z 就把用户辛苦画的图"删光"。转储可无损往返任何拓扑。
+                var entryGraph = ChainGraphDumper.Restore(snapshot.EntryGraphDump);
+                var confirmGraph = ChainGraphDumper.Restore(snapshot.ConfirmGraphDump);
 
-            var row = CurrentRow;
-            bool showTemplate = row == null ||
-                                RowPromotion.DetermineForm(row.Command) != RowForm.Custom;
+                // frameAll: false——撤销不应把视野跳到全图（业界惯例：Undo 保持视口）
+                _graphView.Rebuild(entryGraph, confirmGraph, snapshot.Positions,
+                    templateCollapsed: false, showTemplate: false, frameAll: false);
 
-            _graphView.Rebuild(entryGraph, confirmGraph, snapshot.Positions,
-                snapshot.TemplateCollapsed, showTemplate);
-
-            _isDirty = true;
-            Validate();
-            UpdateHeaderAndStatus();
+                _isDirty = true;
+                Validate();
+                UpdateHeaderAndStatus();
+            }
+            finally
+            {
+                _isRestoring = false;
+            }
         }
 
         private void CopyChain()
@@ -947,8 +1062,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             ChainClipboard.TryPaste(out string entry, out string confirm);
 
-            _graphView.Rebuild(BuildGraph(entry), BuildGraph(confirm), null, true,
-                RowPromotion.DetermineForm(CurrentRow.Command) != RowForm.Custom);
+            _graphView.Rebuild(BuildGraph(entry, isConfirm: false),
+                BuildGraph(confirm, isConfirm: true), null, true,
+                RowPromotion.DetermineForm(CurrentRow.Command) != RowForm.Custom,
+                frameAll: false);
 
             _isDirty = true;
             Validate();
@@ -960,13 +1077,110 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (!evt.ctrlKey && !evt.commandKey) return;
 
+            // 2026-08-28：焦点在文本框时把快捷键留给文本编辑
+            // （Ctrl+Z 撤销文本、Ctrl+C 复制选区）——否则在 Inspector 参数框里
+            // 打字途中按 Ctrl+Z 会把整张图回退，输入内容反而没撤销，非常惊悚。
+            if (rootVisualElement?.focusController?.focusedElement is TextField) return;
+
             switch (evt.keyCode)
             {
                 case KeyCode.Z: PerformUndo(); evt.StopPropagation(); break;
                 case KeyCode.Y: PerformRedo(); evt.StopPropagation(); break;
-                case KeyCode.C: CopyChain(); evt.StopPropagation(); break;
-                case KeyCode.V: PasteChain(); evt.StopPropagation(); break;
+                case KeyCode.C: HandleCopyShortcut(); evt.StopPropagation(); break;
+                case KeyCode.V: HandlePasteShortcut(); evt.StopPropagation(); break;
                 case KeyCode.S: SaveCurrentRow(); evt.StopPropagation(); break;
+            }
+        }
+
+        /// <summary>
+        /// Ctrl+C 智能分发（2026-08-27 问题 2）：选中了命令节点 → 复制节点（含相对位置）；
+        /// 无选中 → 复制整链（原行为）。
+        /// </summary>
+        private void HandleCopyShortcut()
+        {
+            if (_graphView == null) return;
+
+            var payloads = _graphView.CopySelectedNodes();
+            if (payloads.Count > 0)
+            {
+                ChainClipboard.CopyNodes(payloads);
+                ShowNotification(new GUIContent($"已复制 {payloads.Count} 个节点"));
+            }
+            else
+            {
+                CopyChain();
+            }
+        }
+
+        /// <summary>
+        /// Ctrl+V 智能分发：剪贴板是节点级 → 粘贴节点（画布中心，按复制的相对布局还原）；
+        /// 链级 → 粘贴整链（原行为）。
+        /// </summary>
+        private void HandlePasteShortcut()
+        {
+            if (_graphView == null) return;
+
+            if (ChainClipboard.HasNodeContent() &&
+                ChainClipboard.TryPasteNodes(out var payloads))
+            {
+                PasteNodes(payloads);
+            }
+            else
+            {
+                PasteChain();
+            }
+        }
+
+        /// <summary>
+        /// 粘贴节点：落到画布中心（连续粘贴逐次偏移，避免叠在同一位置），
+        /// 按复制时记录的相对位置还原布局。泳道取当前选中节点所在泳道（无选中进进入段）。
+        ///
+        /// <para>
+        /// 2026-08-28 修复（粘贴事务化）：旧实现里 PasteNodesAt 的
+        /// _suppressChangeEvents 挡不住 CreateCommandNode 直接触发的
+        /// OnGraphChanged——粘贴 N 个节点产生 N+1 条 Undo 快照（InsertAfter
+        /// 再加一条），按一次 Ctrl+Z 只消掉一个节点，用户感觉"撤销失灵"。
+        /// 现在批量操作全部静默（notifyChange: false），统一收尾一次
+        /// HandleGraphChanged = 一条快照，一次 Ctrl+Z 完整回退整个粘贴。
+        /// </para>
+        ///
+        /// <para>
+        /// 粘贴单节点且复制源仍选中时自动接入链中（InsertAfter 串接），
+        /// 避免粘贴出的孤立节点因"未连接"无法保存。
+        /// </para>
+        /// </summary>
+        private void PasteNodes(List<RowGraphView.NodePastePayload> payloads)
+        {
+            if (CurrentRow == null || payloads == null || payloads.Count == 0) return;
+
+            bool isConfirm = false;
+            CommandNodeView sourceNode = null;
+            foreach (var selectable in _graphView.selection)
+            {
+                if (selectable is CommandNodeView cv)
+                {
+                    isConfirm = cv.IsConfirmChain;
+                    if (sourceNode == null) sourceNode = cv;
+                }
+            }
+
+            // 连续粘贴逐次偏移落点（循环上限，避免偏出视野）
+            Vector2 center = _graphView.GetViewCenterCanvas() +
+                             new Vector2(_pasteCount * 24f, _pasteCount * 24f);
+            _pasteCount = (_pasteCount + 1) % 8;
+
+            // 静默粘贴 + 静默串接，最后统一触发一次变更
+            var created = _graphView.PasteNodesAt(payloads, center, isConfirm, notifyChange: false);
+
+            if (created.Count == 1 && sourceNode != null)
+            {
+                _graphView.InsertAfter(sourceNode, created[0], notifyChange: false);
+            }
+
+            if (created.Count > 0)
+            {
+                HandleGraphChanged();
+                ShowNotification(new GUIContent($"已粘贴 {created.Count} 个节点"));
             }
         }
 
@@ -990,6 +1204,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 2. 图 → AST → 文本（含幂等自校验）
             // 2026-08-27：合成模板图未被用户编辑时，保持原 Command 列文本不写回
             // （Normal/Enhanced 行展开的模板节点是视图合成物，不主动"提升"）。
+            // _syntheticTemplate 与 _isDirty 双信号共同保证"用户真没编辑"才早退——
+            // 单信号被漏触发时双信号互为冗余（_isDirty 漏触发但 _syntheticTemplate
+            // 仍为 true → 仍走早退 → 改动丢失：这是已知风险，接受；用户手动点保存
+            // 通常意味着至少动过图，应能反映到 _isDirty）。
             if (_syntheticTemplate && !_isDirty)
             {
                 SavePositionsOnly(row);
@@ -1074,8 +1292,26 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 if (result == null) continue;
                 foreach (var issue in result.Issues)
-                    if (issue.Level == ChainGraphIssueLevel.Fatal)
-                        lines.Add("· " + issue.Message);
+                {
+                    if (issue.Level != ChainGraphIssueLevel.Fatal) continue;
+                    lines.Add("· " + issue.Message);
+
+                    // 2026-08-27：明确列出问题节点的命令名（让用户能定位），
+                    // 而不是只给 ID。issue.NodeIds 是 ChainGraphNode 的 id 数组。
+                    if (issue.NodeIds != null && issue.NodeIds.Count > 0)
+                    {
+                        var names = new List<string>();
+                        foreach (var nid in issue.NodeIds)
+                        {
+                            var nv = _graphView != null
+                                ? _graphView.GetNodeViewForValidation(nid)
+                                : null;
+                            string label = nv?.Data?.CommandName ?? nid;
+                            names.Add(label);
+                        }
+                        lines.Add("    ↳ " + string.Join("、", names));
+                    }
+                }
             }
             return string.Join("\n", lines);
         }

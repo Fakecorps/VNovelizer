@@ -56,26 +56,78 @@ namespace VNovelizer.Core.Commands.Chain
                 return result;
             }
 
-            var sources = graph.FindSources();
-            if (sources.Count != 1)
+            // 2026-08-28：哨兵感知——编辑器中的图恒含 Start/End 哨兵。
+            // 仅剩哨兵（哨兵间无连接）= 空链，同样合法，先于起终点判定短路。
+            if (!ChainGraphDumper.HasContent(graph))
             {
-                result.Errors.Add(sources.Count == 0
-                    ? "图中不存在起点（可能存在环）"
-                    : $"图中存在 {sources.Count} 个起点，命令链必须有唯一起点");
+                result.Root = null;
                 return result;
             }
 
-            var sinks = graph.FindSinks();
-            if (sinks.Count != 1)
+            var startSentinel = ChainGraphDumper.FindStartSentinel(graph);
+            string startId;
+            if (startSentinel != null)
             {
-                result.Errors.Add(sinks.Count == 0
-                    ? "图中不存在终点（可能存在环）"
-                    : $"图中存在 {sinks.Count} 个终点，命令链必须有唯一终点");
-                return result;
+                startId = startSentinel.Id;
+            }
+            else
+            {
+                var sources = graph.FindSources();
+                if (sources.Count != 1)
+                {
+                    result.Errors.Add(sources.Count == 0
+                        ? "图中不存在起点（可能存在环）"
+                        : $"图中存在 {sources.Count} 个起点，命令链必须有唯一起点");
+                    return result;
+                }
+                startId = sources[0].Id;
+            }
+
+            // 终点检查（哨兵感知）：有 End 哨兵时非哨兵 sink 数必须为 0；
+            // 无哨兵时（Runtime 兼容路径）维持唯一 sink 判定。
+            var straySinks = new List<string>();
+            bool hasEndSentinel = false;
+            foreach (var s in graph.FindSinks())
+            {
+                if (s.Kind == ChainGraphNodeKind.End) { hasEndSentinel = true; continue; }
+                if (s.Kind == ChainGraphNodeKind.Start) continue; // 空链时 Start 也是 sink
+                straySinks.Add(s.Id);
+            }
+
+            if (hasEndSentinel)
+            {
+                if (straySinks.Count > 0)
+                {
+                    result.Errors.Add(
+                        $"图中存在 {straySinks.Count} 个终点，命令链必须有唯一终点（请用 JOIN 汇合）");
+                    return result;
+                }
+            }
+            else
+            {
+                var sinks = graph.FindSinks();
+                if (sinks.Count != 1)
+                {
+                    result.Errors.Add(sinks.Count == 0
+                        ? "图中不存在终点（可能存在环）"
+                        : $"图中存在 {sinks.Count} 个终点，命令链必须有唯一终点");
+                    return result;
+                }
             }
 
             var ctx = new Context(graph, result);
-            var seq = ParseSequence(ctx, sources[0].Id, null, 0);
+            var seq = ParseSequence(ctx, startId, null, 0);
+
+            if (!result.Success) return result;
+
+            // 2026-08-28：完整性检查——孤立/悬空节点不在主链上，若静默跳过
+            // 会造成"保存的命令链悄悄丢命令"，必须显式报错。
+            foreach (var n in graph.Nodes)
+            {
+                if (n.Kind == ChainGraphNodeKind.Start || n.Kind == ChainGraphNodeKind.End) continue;
+                if (!ctx.Visited.Contains(n.Id))
+                    result.Errors.Add($"节点 {n} 未连入主链（悬空或未连接），无法分解");
+            }
 
             if (!result.Success) return result;
 

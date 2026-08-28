@@ -311,9 +311,8 @@
        参数显示 name: value 两列（用户需求 6）需要更多横向空间 */
     min-width: 210px;
     max-width: 290px;
-    /* 2026-08-27：必须 visible——否则端口溢出到节点外侧时被 GraphView 内置 overflow:hidden 裁剪，
-       这是之前端口不可见的根因。Node 自身与 #node-border 都要设。 */
-    overflow: visible;
+    /* R7（Shader Graph 式）：端口在节点内部标题行两端，不溢出边框——
+       不再需要 overflow hack（之前贴外方案的历史遗留，已删）。 */
 }
 
 .vn-node > #node-border {
@@ -323,13 +322,16 @@
     background-color: #3A3A3A;
     padding-top: 0;
     padding-bottom: 0;
-    overflow: visible;
+    /* 2026-08-27（用户反馈端口被切）：min-height 60 = 标题 28 + 内容区 32。
+       端口 absolute top:50% 相对 #top，#top 高度 0（无参数时）会让 inputContainer
+       被推到 -7px 被标题边框覆盖——min-height 保证 #top 至少 32px。 */
+    min-height: 60px;
 }
 
-/* 标题栏：UE 蓝图式整条分类着色（默认灰）+ 底部白色细线 */
+/* 标题栏：分类着色（默认灰）+ 底部白色细线 */
 .vn-node > #title {
-    height: 26px;
-    min-height: 26px;
+    height: 28px;
+    min-height: 28px;
     padding: 3px 10px 3px 10px;
     background-color: #4A4A4A;
     border-bottom-width: 1px;
@@ -510,9 +512,9 @@
     border-color: #6A7A96;
 }
 
-/* ---------------- 终端节点（UE 蓝图式子弹形设计稿） ---------------- */
+/* ---------------- 终端节点（弹头形状，UE 蓝图式） ---------------- */
 
-/* 终端节点公共：子弹形 + 白字 */
+/* 终端节点公共：弹头 + 白字 */
 .vn-terminal {
     min-width: 150px;
     max-width: 200px;
@@ -525,6 +527,8 @@
     background-color: #4A4A4A;
     padding-top: 0;
     padding-bottom: 0;
+    /* 弹头终端 min-height 80 = 标题 50 + 内容 30——端口在弹头下方 #top 中点完整可见 */
+    min-height: 80px;
 }
 
 .vn-terminal #title {
@@ -534,6 +538,7 @@
     min-height: 50px;
     background-color: transparent;
     border-radius: 0;
+    padding: 3px 10px 3px 10px;
 }
 
 .vn-terminal .vn-node-title {
@@ -723,12 +728,12 @@
 }
 
 /* =====================================================================
-   端口（V3 重构 2026-08-27）
-   原则：端口是节点外部附件，圆心精确贴节点边，垂直居中，
-         connector/cap 绝对定位 + border-radius:50% 强制正圆。
+   端口（R7 撤回 → R6 形态 2026-08-27）
+   原则：端口在节点内部独立带（左入右出），绝对定位节点内 8px、垂直居中；
+         视觉正圆 + 容器 14x14 = connector 同尺寸（消除"方块包裹感"）。
    ===================================================================== */
 
-/* ---- 端口容器：与 connector 同尺寸 14x14（避免圆外露 1px 容器边框呈"方块包裹"），背景透明 ---- */
+/* ---- 端口容器：节点内距左/右 8px、垂直居中（百分比 50%） ---- */
 .vn-node > #inputContainer,
 .vn-node > #outputContainer {
     position: absolute;
@@ -744,7 +749,6 @@
     justify-content: flex-start;
 }
 
-/* 单端口命令节点 / 终端节点 / 模板胶囊：端口完全在节点内（距边缘 8px），垂直居中 */
 .vn-node > #inputContainer {
     left: 8px;
     top: 50%;
@@ -756,29 +760,26 @@
     margin-top: -8px;
 }
 
-/* ---- Port 元素本身：清零所有继承 ---- */
+/* ---- Port 元素：流内，清零继承 ---- */
 .vn-node Port {
     margin: 0;
     padding: 0;
     border-width: 0;
     background-color: transparent;
-    width: 14px;
-    height: 14px;
-    min-width: 14px;
-    min-height: 14px;
-    max-width: 14px;
-    max-height: 14px;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    max-width: 16px;
+    max-height: 16px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
 }
 
-/* #type 永远 display none，且不占布局空间 */
+/* #type 不占布局空间 */
 .vn-node Port > #type {
     display: none;
-    position: absolute;
-    left: 0;
-    top: 0;
     width: 0;
     height: 0;
     margin: 0;
@@ -794,13 +795,10 @@
     padding: 0;
 }
 
-/* ---- #connector：绝对定位，正圆 ---- */
+/* ---- #connector：流内正圆（12px 圆 + 2px 边框） ---- */
 .vn-node Port > #connector {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     border-width: 2px;
     border-color: #1A1A1A;
@@ -809,9 +807,8 @@
     padding: 0;
 }
 
-/* ---- #cap：内圈圆点，绝对定位，正圆 ---- */
+/* ---- #cap：内圈圆点（流内居中，GraphView 默认 absolute 定位在 connector 内） ---- */
 .vn-node Port > #connector > #cap {
-    position: absolute;
     left: 3px;
     top: 3px;
     width: 4px;
@@ -863,9 +860,6 @@
 .vn-port-confirm:hover > #connector > #cap {
     background-color: #A0CC80;
 }
-
-/* ---- 节点类型覆写（保留端口位置语义） ---- */
-/* 终端节点：圆心贴边（与默认一致，无需覆写） */
 
 /* ---- Fork/Join 多端口垂直分布 ---- */
 /* 当前实现：Fork/Join 用 Port.Capacity.Multi 单端口承载多边，所有节点仍为单端口。

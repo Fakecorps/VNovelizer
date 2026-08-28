@@ -122,6 +122,25 @@ namespace VNovelizer.Core.Commands.Chain
             _incoming[toId].Add(fromId);
         }
 
+        /// <summary>移除边（2026-08-27：支持链中插入操作）。不存在则忽略。</summary>
+        public void RemoveEdge(string fromId, string toId)
+        {
+            if (string.IsNullOrEmpty(fromId) || string.IsNullOrEmpty(toId)) return;
+            if (!_outgoing.TryGetValue(fromId, out var outs)) return;
+
+            // 找到并移除 _edges 中对应记录
+            for (int i = _edges.Count - 1; i >= 0; i--)
+            {
+                if (_edges[i].FromId == fromId && _edges[i].ToId == toId)
+                {
+                    _edges.RemoveAt(i);
+                    break;
+                }
+            }
+            outs.Remove(toId);
+            if (_incoming.TryGetValue(toId, out var ins)) ins.Remove(fromId);
+        }
+
         public ChainGraphNode GetNode(string id)
         {
             if (string.IsNullOrEmpty(id)) return null;

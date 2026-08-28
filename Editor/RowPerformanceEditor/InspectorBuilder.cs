@@ -62,11 +62,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _root.AddToClassList("vn-inspector");
         }
 
-        /// <summary>外部（Window）在图 Rebuild 后同步链文本。</summary>
+        /// <summary>
+        /// 外部（Window）在图 Rebuild 后同步链文本。
+        /// 2026-08-28：null 表示「该段当前不可序列化」——保持原文不变。
+        /// 以前图处于非法中间态时会回填占位文本"(图结构待修正)"到可编辑 TextField，
+        /// 用户失焦提交后占位文本被解析失败 → 整图清空（数据损坏路径）。
+        /// </summary>
         public void SetChainTexts(string entry, string confirm)
         {
-            _entryText = entry ?? "";
-            _confirmText = confirm ?? "";
+            if (entry != null) _entryText = entry;
+            if (confirm != null) _confirmText = confirm;
             if (_activeTab == InspectorTab.Text) RebuildForCurrentTab();
         }
 

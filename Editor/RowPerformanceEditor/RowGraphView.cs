@@ -17,11 +17,34 @@ namespace VNovelizer.Editor.RowPerformanceEditor
     /// <b>双泳道</b>：进入段在上半区（<see cref="ChainAutoLayout.EntryLaneY"/>），
     /// 出口段在下半区（<see cref="ChainAutoLayout.ConfirmLaneY"/>），两条链各自从左到右流动。
     /// </para>
+    ///
+    /// <para>
+    /// <b>2026-08-28：终端哨兵数据驱动</b>。Start/End 哨兵节点常驻图数据
+    /// （<see cref="ChainGraphDumper.EnsureSentinels"/>），终端视图与锚点边全部由
+    /// graph.Nodes / graph.Edges 渲染——用户连「终端 → 节点」的边是真实图数据：
+    /// 单命令链不再被误判孤立、空泳道也有终端可连、断开锚点边即断开链头/链尾。
+    /// </para>
+    ///
+    /// <para>
+    /// <b>2026-08-28：删除时序修复</b>。Unity GraphView 的删除是「先回调后应用」——
+    /// 回调时被删元素仍在 view 中。同步必须显式排除 change.elementsToRemove，
+    /// 否则删除在数据层不生效（删了节点还报它的错、保存后命令复活）。
+    /// </para>
     /// </summary>
     public class RowGraphView : GraphView
     {
         public event Action<VNNodeViewBase> OnNodeSelected;
         public event Action OnGraphChanged;
+        /// <summary>仅节点被拖动（图数据未变）。Window 侧用于位置快照，避免 Undo 栈被拖动灌满。</summary>
+        public event Action OnNodesMoved;
+
+        /// <summary>
+        /// 节点拖动手势开始（左键在节点上按下）。Window 侧据此压入「移动前」快照——
+        /// 每个拖动手势 = 一条独立 Undo 记录（业界标准），替代旧的 TopLabel 粘性合并
+        /// （两次独立拖动被合并成一条、且快照记录的是移动中位置，均不符合直觉）。
+        /// </summary>
+        public event Action OnNodeDragGestureStarted;
+
         public event Action OnRequestPromotion;
 
         /// <summary>请求在画布指定位置创建命令节点（命令名, 是否出口段, 画布坐标）</summary>
@@ -45,21 +68,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             AddToClassList("vn-graph");
 
-            // 2026-08-27：端口完全外置（left/right:-14）——确保画布任何上层都不裁剪节点溢出区域
-            // 2026-08-27（用户需求 1 修复）：移除画布 overflow:visible——
-            // 否则节点会渲染到上层兄弟元素（如左侧命令面板）上方造成视觉重叠。
-            // 端口不可见的根因是 #node-border 的 overflow:hidden，已在 VNNodeViewBase 修；
-            // 端口只需溢出 #node-border（节点自身 overflow:visible），无需溢出整个画布。
-
             SetupZoom(0.35f, 2.0f);
             this.AddManipulator(new ContentDragger());
             this.AddManipulator(new SelectionDragger());
             this.AddManipulator(new ClickSelector());
+            // 用户偏好：保留自实现 DragBoxSelector（坐标系稳定）
             this.AddManipulator(new DragBoxSelector());
 
             Insert(0, new GridBackground());
 
             graphViewChanged = OnGraphViewChanged;
+
+            // 节点拖动手势检测（Capture 阶段——赶在 SelectionDragger 之前记录）
+            RegisterCallback<PointerDownEvent>(OnPointerDownCapture, TrickleDown.TrickleDown);
 
             RegisterCallback<DragUpdatedEvent>(OnDragUpdated);
             RegisterCallback<DragPerformEvent>(OnDragPerform);
@@ -108,15 +129,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         // ---------------- 图重建 ----------------
 
         /// <summary>
-        /// 重建画布。
-        /// 2026-08-27 决策（用户 Q1）：彻底删除折叠胶囊——默认演出直接展开为
-        /// 独立节点（由 RowPerfEditorWindow 合成完整模板图后传入）。
+        /// 重建画布。终端哨兵常驻图数据（由本方法兜底装配），终端视图与锚点边
+        /// 全部由 graph 渲染——不再有视图层自建的"幽灵终端"。
         /// savedPositions 有值时恢复保存位置；无值时做一次基础布局，
-        /// 之后完全由用户拖拽掌控（不再有任何自动重排）。
+        /// 之后完全由用户拖拽掌控。
         /// </summary>
+        /// <param name="frameAll">重建后是否自动 FrameAll（切行时 true；Undo/文本编辑传 false 保持视野）</param>
         public void Rebuild(ChainGraph entryGraph, ChainGraph confirmGraph,
             Dictionary<string, Vector2> savedPositions = null,
-            bool templateCollapsed = true, bool showTemplate = false)
+            bool templateCollapsed = true, bool showTemplate = false,
+            bool frameAll = true)
         {
             _suppressChangeEvents = true;
 
@@ -125,21 +147,21 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             EntryGraph = entryGraph ?? new ChainGraph();
             ConfirmGraph = confirmGraph ?? new ChainGraph();
 
-            float entryStartX = ChainAutoLayout.StartX;
+            // 哨兵兜底：调用方（文本解析 / 快照恢复 / 粘贴）应已装配锚点边，
+            // 这里只保证节点存在，不重复连边。
+            ChainGraphDumper.EnsureSentinels(EntryGraph, isConfirm: false, linkAnchors: false);
+            ChainGraphDumper.EnsureSentinels(ConfirmGraph, isConfirm: true, linkAnchors: false);
 
             BuildLane(EntryGraph, isConfirm: false, centerY: ChainAutoLayout.EntryLaneY,
-                savedPositions: savedPositions, startX: entryStartX);
+                savedPositions: savedPositions, startX: ChainAutoLayout.StartX);
 
             BuildLane(ConfirmGraph, isConfirm: true, centerY: ChainAutoLayout.ConfirmLaneY,
                 savedPositions: savedPositions, startX: ChainAutoLayout.StartX);
 
             _suppressChangeEvents = false;
 
-            schedule.Execute(FrameAllIfNeeded).ExecuteLater(50);
-            // 2026-08-27 决策（用户 Q2）：不再自动 MeasureAndRelayout。
-            // 自动重排是"拖一下节点全图乱跑"的元凶之一；
-            // 现在：无保存位置时 BuildLane 内做一次基础布局，之后完全由用户掌控，
-            // "整理布局"工具栏按钮才触发完整重排（RelayoutAll → MeasureAndRelayout）。
+            if (frameAll)
+                schedule.Execute(FrameAllIfNeeded).ExecuteLater(50);
         }
 
         private void ClearCanvas()
@@ -154,21 +176,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void BuildLane(ChainGraph graph, bool isConfirm, float centerY,
             Dictionary<string, Vector2> savedPositions, float startX)
         {
-            if (graph.NodeCount == 0)
-            {
-                if (isConfirm)
-                {
-                    // 2026-08-27（用户需求 4）：出口段为空时也显示默认结构——
-                    // OnConfirmEntry → [NextLine 引擎隐式影子] → OnConfirmExit。
-                    // 影子节点与连线纯视图层（不写入 ChainGraph），序列化天然不含。
-                    BuildEmptyConfirmLane(centerY, startX);
-                    return;
-                }
-                BuildTerminalsOnly(graph, isConfirm, centerY, startX);
-                return;
-            }
+            bool hasContent = ChainGraphDumper.HasContent(graph);
 
-            var layout = ChainAutoLayout.Layout(graph, centerY);
+            // 空链（仅哨兵、无连接）时 Layout 无从展开——哨兵用固定站位
+            var layout = hasContent ? ChainAutoLayout.Layout(graph, centerY) : null;
+
+            // 位置双重缺失（快照/保存位置都没有 + 自动布局也没覆盖到——如断链孤儿节点）时，
+            // 按索引错开散布，至少可读可拖。
+            int unplacedIndex = 0;
 
             foreach (var node in graph.Nodes)
             {
@@ -180,8 +195,28 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                                 savedPositions.TryGetValue(PositionKey(isConfirm, node.Id), out pos);
                 if (!restored)
                 {
-                    if (layout.TryGetValue(node.Id, out var layoutPos)) pos = layoutPos;
-                    pos.x += (startX - ChainAutoLayout.StartX);
+                    if (layout != null && layout.TryGetValue(node.Id, out var layoutPos))
+                    {
+                        pos = layoutPos;
+                        pos.x += (startX - ChainAutoLayout.StartX);
+                    }
+                    else if (!hasContent)
+                    {
+                        // 空链：两个终端左右排开，中间留给 NextLine 影子
+                        pos = node.Kind == ChainGraphNodeKind.Start
+                            ? new Vector2(startX, centerY - 15f)
+                            : new Vector2(startX + 460f, centerY - 15f);
+                    }
+                    else
+                    {
+                        // 双重缺失：错开散布防重叠（2 列瀑布）
+                        int row = unplacedIndex / 2;
+                        int col = unplacedIndex % 2;
+                        pos = new Vector2(
+                            startX + col * 240f,
+                            centerY + 180f + row * 90f);
+                        unplacedIndex++;
+                    }
                 }
 
                 view.SetPosition(new Rect(pos, new Vector2(0f, 0f)));
@@ -189,6 +224,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 _nodeViews[NodeViewKey(isConfirm, node.Id)] = view;
             }
 
+            // 全部连线由图数据渲染——含哨兵锚点边（Start→链头、链尾→End）。
+            // 锚点边是真实图数据：断开即断链，校验会提示。
             foreach (var edge in graph.Edges)
             {
                 var from = GetNodeView(isConfirm, edge.FromId);
@@ -199,8 +236,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 AddElement(e);
             }
 
-            // 传 layout 给终端定位（同步可得；view.GetPosition().xMax 不可靠——SetPosition 时 size=(0,0)）
-            BuildTerminalsOnly(graph, isConfirm, centerY, startX, layout);
+            // 出口段空链：插入 NextLine 影子（纯视图，提示引擎默认行为）
+            if (!hasContent && isConfirm)
+                BuildEmptyConfirmShadow(isConfirm, startX, centerY);
         }
 
         /// <summary>
@@ -243,104 +281,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     pair.Value.x + (startX - ChainAutoLayout.StartX),
                     pair.Value.y, rect.width, rect.height));
             }
-        }
-
-        private void BuildTerminalsOnly(ChainGraph graph, bool isConfirm, float centerY,
-            float startX, Dictionary<string, Vector2> layout = null)
-        {
-            var sources = graph.FindSources();
-            var sinks = graph.FindSinks();
-
-            if (sources.Count == 1)
-            {
-                var kind = isConfirm ? TerminalKind.ConfirmStart : TerminalKind.LineStart;
-                // 起始终端在第一个命令节点左侧——用 layout 字典算位置（同步可知）
-                float firstX = layout != null && layout.TryGetValue(sources[0].Id, out var sp)
-                    ? sp.x : startX;
-                var startView = AddTerminalView(kind, isConfirm,
-                    firstX - TerminalReserved, centerY);
-
-                var first = GetNodeView(isConfirm, sources[0].Id);
-                if (startView?.OutputPort != null && first?.InputPort != null)
-                {
-                    var anchor = startView.OutputPort.ConnectTo(first.InputPort);
-                    anchor.capabilities &= ~Capabilities.Deletable;
-                    AddElement(anchor);
-                }
-            }
-
-            if (sinks.Count == 1)
-            {
-                // 结束终端在链最右端——用 layout 字典的 sink 节点位置 + 估算宽度。
-                // view.GetPosition().xMax 不可靠（SetPosition 时 size=(0,0)，GraphView 异步测量还没跑）。
-                float sinkX = layout != null && layout.TryGetValue(sinks[0].Id, out var lp)
-                    ? lp.x
-                    : ComputeMaxRight(graph, startX);
-                float sinkWidth = EstimateNodeWidth(sinks[0]);
-                float maxRight = sinkX + sinkWidth;
-
-                var kind = isConfirm ? TerminalKind.ChainEnd : TerminalKind.WaitConfirm;
-                var endView = AddTerminalView(kind, isConfirm,
-                    maxRight + ChainAutoLayout.HorizontalGap, centerY);
-
-                var last = GetNodeView(isConfirm, sinks[0].Id);
-                if (endView?.InputPort != null && last?.OutputPort != null)
-                {
-                    var anchor = last.OutputPort.ConnectTo(endView.InputPort);
-                    anchor.capabilities &= ~Capabilities.Deletable;
-                    AddElement(anchor);
-                }
-            }
-        }
-
-        private float ComputeMaxRight(ChainGraph graph, float startX)
-        {
-            float maxRight = startX;
-            foreach (var pair in _nodeViews)
-            {
-                if (pair.Value == null || pair.Value.Data == null) continue;
-                var view = pair.Value;
-                if (graph.Nodes.Any(n => n.Id == view.Data.Id))
-                {
-                    // 用 pos.x + 估算宽度——view.GetPosition().xMax 此时 size=(0,0) 不可靠
-                    float right = view.GetPosition().x + EstimateNodeWidth(view.Data);
-                    if (right > maxRight) maxRight = right;
-                }
-            }
-            return maxRight;
-        }
-
-        /// <summary>同步估算节点宽度（不依赖 GraphView 异步测量）。</summary>
-        private static float EstimateNodeWidth(ChainGraphNode node)
-        {
-            if (node == null) return 200f;
-            switch (node.Kind)
-            {
-                case ChainGraphNodeKind.Fork:
-                case ChainGraphNodeKind.Join:
-                    return 120f;
-                case ChainGraphNodeKind.Start:
-                case ChainGraphNodeKind.End:
-                    return 150f;
-                default:
-                    return string.IsNullOrWhiteSpace(node.Args) ? 160f : 200f;
-            }
-        }
-
-        private const float TerminalReserved = 140f;
-
-        private TerminalNodeView AddTerminalView(TerminalKind kind, bool isConfirm,
-            float x, float centerY)
-        {
-            bool isStart = kind == TerminalKind.LineStart || kind == TerminalKind.ConfirmStart;
-            string id = "__terminal_" + kind + "__";
-
-            var data = new ChainGraphNode(id, isStart ? ChainGraphNodeKind.Start : ChainGraphNodeKind.End);
-            var view = new TerminalNodeView(data, kind, isConfirm);
-            view.SetPosition(new Rect(x, centerY - 15f, 130f, 30f));
-            AddElement(view);
-            _nodeViews[NodeViewKey(isConfirm, id)] = view;
-            return view;
         }
 
         private VNNodeViewBase CreateNodeView(ChainGraphNode node, bool isConfirm)
@@ -389,6 +329,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 if (portView == null) return;
                 if (portView.IsConfirmChain != startView.IsConfirmChain) return;
 
+                // 影子节点（如空出口段的 NextLine 提示）是纯视图装饰——
+                // 连到它身上的边永远进不了图数据，干脆禁止连线避免误导。
+                if (portView.ClassListContains("vn-node--template")) return;
+
                 compatible.Add(port);
             });
 
@@ -418,74 +362,268 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 }
             }
 
+            // 插入式连线：必须在 Unity 应用 edgesToCreate 之前处理（此时旧边仍在 view 中）。
+            // 返回 false 的连线从 edgesToCreate 移除——拒绝应用（Single 容量端口被占用等）。
+            if (change.edgesToCreate != null && change.edgesToCreate.Count > 0)
+            {
+                for (int i = change.edgesToCreate.Count - 1; i >= 0; i--)
+                {
+                    if (!RewriteAsInsertion(change.edgesToCreate[i]))
+                        change.edgesToCreate.RemoveAt(i);
+                }
+            }
+
             if (structural)
             {
+                // 删除节点自动桥接：pred → succ（在同步前做——graph 中前驱后继仍可查）。
+                // 没有桥接时删链中节点会留下断链，立报"2 起点 2 终点"的错误。
+                BridgeRemovedNodes(change);
+
                 SyncGraphDataFromView(change);
                 OnGraphChanged?.Invoke();
-                // 2026-08-27：删除连线/删节点后的自动重排——任何结构变化都不许移动用户摆好的节点。
-                // 需要重排时点工具栏「整理布局」。
             }
             else if (moved)
             {
-                OnGraphChanged?.Invoke();
+                // 拖动只影响位置不影响图数据——走独立事件，Window 侧做手势级快照。
+                OnNodesMoved?.Invoke();
             }
 
             return change;
         }
 
-        private void SyncGraphDataFromView(GraphViewChange change)
+        /// <summary>
+        /// 插入式连线与容量拦截。
+        ///
+        /// <para>
+        /// <b>插入语义</b>：新边 A→B 且 B（命令节点）的 Input 已被 C→B 占用时，
+        /// 自动改写为 C→A→B（断 C→B，桥接 C→A，Unity 随后应用 A→B）。
+        /// </para>
+        ///
+        /// <para>
+        /// <b>容量拦截</b>（2026-08-28）：GraphView 对 Single 容量端口**不做强制**——
+        /// 命令节点的第二条入边、终端锚点的第二条连线都会被静默接受，随后校验报
+        /// "多路汇合/多起点"但用户不明所以。现在在源头拒绝：返回 false 的边不应用。
+        /// </para>
+        ///
+        /// <para>
+        /// <b>顺序纪律</b>：一切可行性检查必须先于任何断边操作——旧实现把
+        /// 「A 入边已占用」检查放在断开 C→B 之后，中途放弃会留下旧边已断、
+        /// 桥没搭上的断链（用户随手一连图就坏）。
+        /// </para>
+        /// </summary>
+        /// <returns>false = 拒绝该连线（从 edgesToCreate 移除，不应用）</returns>
+        private bool RewriteAsInsertion(Edge newEdge)
         {
-            RebuildEdgesFromView(EntryGraph, isConfirm: false);
-            RebuildEdgesFromView(ConfirmGraph, isConfirm: true);
+            var a = newEdge.output?.node as VNNodeViewBase;  // 新边起点（通常是新拖入节点）
+            var b = newEdge.input?.node as VNNodeViewBase;   // 新边终点
+            if (a == null || b == null) return false;
+            if (ReferenceEquals(a, b)) return false;
+            if (a.IsConfirmChain != b.IsConfirmChain) return false;
+
+            // 终端锚点 Single 容量：锚点边（Start→链头 / 链尾→End）只能有一条，
+            // 已占用时拒绝新连线（用户应先断开旧的）。
+            if (a is TerminalNodeView && a.OutputPort != null && a.OutputPort.connected) return false;
+            if (b is TerminalNodeView && b.InputPort != null && b.InputPort.connected) return false;
+
+            // Fork 的 Multi 出口 / Join 的 Multi 入口：多连线合法，直连放行。
+            bool aOutMulti = a is ForkJoinNodeView forkA && forkA.IsFork;
+            bool bInMulti = b is ForkJoinNodeView joinB && !joinB.IsFork;
+            if (bInMulti) return true;
+
+            // A 输出侧容量：非 Fork 的输出端口已被占用 → 新边会让 A 出度变 2，拒绝。
+            if (!aOutMulti && a.OutputPort != null && a.OutputPort.connected) return false;
+
+            // B 输入侧：入边空闲 → 直连放行。
+            if (!(b is CommandNodeView)) return b.InputPort == null || !b.InputPort.connected;
+            if (b.InputPort == null || !b.InputPort.connected) return true;
+
+            // ---- B（命令节点）入边被占 → 尝试插入改写 C→A→B ----
+
+            // 可行性全部先于断边（顺序纪律）：
+            // A 必须能承接 C 的输出（有入端口且空闲）——终端无入端口、链上节点入边已占，
+            // 均无法承接，直接拒绝（旧边 C→B 保持原状）。
+            if (a is TerminalNodeView) return false;
+            if (a.InputPort == null || a.InputPort.connected) return false;
+
+            Edge existing = FindExistingInputEdge(newEdge);
+            if (existing == null) return false; // connected 与可见边不一致（防御）
+
+            var c = existing.output?.node as VNNodeViewBase;
+            if (c == null || ReferenceEquals(c, a)) return false;
+            if (c.OutputPort == null) return false;
+
+            // ---- 检查全部通过，执行改写 ----
+            // 断旧边 C→B
+            existing.output?.Disconnect(existing);
+            existing.input?.Disconnect(existing);
+            RemoveElement(existing);
+
+            // 桥 C→A（立即加入 view，与新边 A→B 一起构成插入）
+            var bridge = c.OutputPort.ConnectTo(a.InputPort);
+            AddElement(bridge);
+            return true;
         }
 
-        private void RebuildEdgesFromView(ChainGraph graph, bool isConfirm)
+        private Edge FindExistingInputEdge(Edge newEdge)
+        {
+            foreach (var e in edges)
+            {
+                if (e.input == newEdge.input && e != newEdge)
+                    return e;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 删除节点自动桥接：被删节点若"单入单出"，把前驱直连后继。
+        /// 删除链头/链尾时前驱/后继是哨兵终端，同样成立（自动接回终端）。
+        /// 邻居也在本批删除中则不桥接（整段删除无意义）。
+        /// </summary>
+        private void BridgeRemovedNodes(GraphViewChange change)
+        {
+            if (change.elementsToRemove == null) return;
+
+            var removed = change.elementsToRemove.OfType<VNNodeViewBase>().ToList();
+            if (removed.Count == 0) return;
+
+            foreach (var node in removed)
+            {
+                if (node.Data == null) continue;
+                if (node is TerminalNodeView) continue; // 哨兵不可删（防御）
+
+                var graph = node.IsConfirmChain ? ConfirmGraph : EntryGraph;
+                var preds = graph.GetPredecessors(node.Data.Id);
+                var succs = graph.GetSuccessors(node.Data.Id);
+                if (preds.Count != 1 || succs.Count != 1) continue;
+
+                var predView = GetNodeView(node.IsConfirmChain, preds[0]);
+                var succView = GetNodeView(node.IsConfirmChain, succs[0]);
+                if (predView == null || succView == null) continue;
+                if (removed.Contains(predView) || removed.Contains(succView)) continue;
+                if (predView.OutputPort == null || succView.InputPort == null) continue;
+
+                // pred 的现有出边必须指向本批删除的节点（否则出度另有归属，不能占用）
+                Edge predOut = null;
+                foreach (var e in edges)
+                    if (e.output == predView.OutputPort) { predOut = e; break; }
+                if (predOut != null)
+                {
+                    var target = predOut.input?.node as VNNodeViewBase;
+                    if (target == null || !removed.Contains(target)) continue;
+                }
+
+                // succ 的现有入边必须来自本批删除的节点
+                Edge succIn = null;
+                foreach (var e in edges)
+                    if (e.input == succView.InputPort) { succIn = e; break; }
+                if (succIn != null)
+                {
+                    var source = succIn.output?.node as VNNodeViewBase;
+                    if (source == null || !removed.Contains(source)) continue;
+                }
+
+                var bridge = predView.OutputPort.ConnectTo(succView.InputPort);
+                AddElement(bridge);
+            }
+        }
+
+        private void SyncGraphDataFromView(GraphViewChange change)
+        {
+            // 2026-08-28 修复（删除时序）：Unity GraphView 的删除是「先回调后应用」——
+            // 回调时被删元素仍在 view 中。旧实现把"即将被删除的边/节点"重新同步回
+            // graph，导致删除在数据层不生效：删了节点校验还报它的错、保存后命令复活。
+            // 现在显式排除 elementsToRemove，并在 _nodeViews 中清理被删条目。
+            var pendingNew = change.edgesToCreate;
+            var removedEdges = change.elementsToRemove?.OfType<Edge>().ToList();
+            var removedNodes = change.elementsToRemove?.OfType<VNNodeViewBase>()
+                .Where(v => v.Data != null).ToList();
+
+            if (removedNodes != null && removedNodes.Count > 0)
+            {
+                foreach (var v in removedNodes)
+                    _nodeViews.Remove(NodeViewKey(v.IsConfirmChain, v.Data.Id));
+            }
+
+            RebuildEdgesFromView(EntryGraph, isConfirm: false, pendingNew, removedEdges, removedNodes);
+            RebuildEdgesFromView(ConfirmGraph, isConfirm: true, pendingNew, removedEdges, removedNodes);
+        }
+
+        private void RebuildEdgesFromView(ChainGraph graph, bool isConfirm,
+            List<Edge> pendingNewEdges, List<Edge> removedEdges,
+            List<VNNodeViewBase> removedNodes)
         {
             var rebuilt = new ChainGraph();
             var validIds = new HashSet<string>();
+
+            var removedIds = new HashSet<string>();
+            if (removedNodes != null)
+            {
+                foreach (var v in removedNodes)
+                    if (v.IsConfirmChain == isConfirm && v.Data != null)
+                        removedIds.Add(v.Data.Id);
+            }
+
             foreach (var node in graph.Nodes)
             {
-                if (GetNodeView(isConfirm, node.Id) == null) continue;
+                if (removedIds.Contains(node.Id)) continue;      // 即将被删除
+                if (GetNodeView(isConfirm, node.Id) == null) continue; // 视图已不存在
                 rebuilt.AddNode(node);
                 validIds.Add(node.Id);
             }
 
+            // 先从 view edges 重建（排除即将被删除的边）
             edges.ForEach(edge =>
             {
-                var from = edge.output?.node as VNNodeViewBase;
-                var to = edge.input?.node as VNNodeViewBase;
-                if (from == null || to == null) return;
-                if (from.IsConfirmChain != isConfirm || to.IsConfirmChain != isConfirm) return;
-                if (from.Data == null || to.Data == null) return;
-
-                // 引擎隐式影子（NextLine 等）与终端锚点不进图数据
-                if (!validIds.Contains(from.Data.Id) || !validIds.Contains(to.Data.Id)) return;
-
-                rebuilt.AddEdge(from.Data.Id, to.Data.Id);
+                if (removedEdges != null && removedEdges.Contains(edge)) return;
+                TryAddEdge(rebuilt, edge, isConfirm, validIds);
             });
+
+            // 再合并尚未被 Unity 加入 view 的待处理新边（创建方向时序：先回调后应用）
+            if (pendingNewEdges != null)
+            {
+                foreach (var edge in pendingNewEdges)
+                {
+                    if (removedEdges != null && removedEdges.Contains(edge)) continue;
+                    TryAddEdge(rebuilt, edge, isConfirm, validIds);
+                }
+            }
 
             if (isConfirm) ConfirmGraph = rebuilt;
             else EntryGraph = rebuilt;
         }
 
+        private void TryAddEdge(ChainGraph rebuilt, Edge edge, bool isConfirm, HashSet<string> validIds)
+        {
+            var from = edge.output?.node as VNNodeViewBase;
+            var to = edge.input?.node as VNNodeViewBase;
+            if (from == null || to == null) return;
+            if (from.IsConfirmChain != isConfirm || to.IsConfirmChain != isConfirm) return;
+            if (from.Data == null || to.Data == null) return;
+
+            // 引擎隐式影子（NextLine 等）不进图数据；终端哨兵已在 validIds 中——
+            // 用户连「终端 → 节点」的锚点边是真实图数据。
+            if (!validIds.Contains(from.Data.Id) || !validIds.Contains(to.Data.Id)) return;
+
+            rebuilt.AddEdge(from.Data.Id, to.Data.Id);
+        }
+
         /// <summary>
-        /// 出口段为空时的默认结构（2026-08-27 用户需求 4）：
+        /// 出口段空链时的 NextLine 影子（2026-08-27 用户需求 4）：
         /// OnConfirmEntry → [NextLine 影子] → OnConfirmExit。
         ///
         /// <para>
         /// NextLine 是引擎隐式行为（出口段执行完自动推进下一行），此处显式画出
         /// 仅为可读性——影子节点与全部连线均为<b>纯视图层</b>（不进 ChainGraph，
         /// 序列化天然不含；<see cref="RebuildEdgesFromView"/> 亦会过滤）。
-        /// 用户一旦往出口段拖入真实命令，Rebuild 后走正常链渲染路径。
+        /// 终端视图来自图数据的哨兵节点（BuildLane 已创建），这里只插入影子。
         /// </para>
         /// </summary>
-        private void BuildEmptyConfirmLane(float centerY, float startX)
+        private void BuildEmptyConfirmShadow(bool isConfirm, float startX, float centerY)
         {
-            // OnConfirmEntry：橙色弹头（左直右圆，输出端口）
-            var entryView = AddTerminalView(TerminalKind.ConfirmStart, isConfirm: true,
-                x: startX, centerY: centerY);
+            var startView = GetNodeView(isConfirm, ChainGraphDumper.SentinelId(isConfirm, true));
+            var endView = GetNodeView(isConfirm, ChainGraphDumper.SentinelId(isConfirm, false));
+            if (startView?.OutputPort == null || endView?.InputPort == null) return;
 
-            // NextLine 影子命令节点
             const string shadowId = "__implicit_nextline__";
             var shadowData = new ChainGraphNode(shadowId, ChainGraphNodeKind.Command,
                 "nextline", "");
@@ -500,30 +638,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 只读影子：禁止删除/复制（删除会误触提升流程；它是引擎行为不可移除）
             shadowView.capabilities &= ~Capabilities.Deletable;
             shadowView.capabilities &= ~Capabilities.Copiable;
-            float entryWidth = 150f;
             shadowView.SetPosition(new Rect(
-                startX + entryWidth + ChainAutoLayout.HorizontalGap, centerY - 30f, 0f, 0f));
+                startX + 170f, centerY - 30f, 0f, 0f));
             AddElement(shadowView);
-            _nodeViews[NodeViewKey(true, shadowId)] = shadowView;
+            _nodeViews[NodeViewKey(isConfirm, shadowId)] = shadowView;
 
-            // OnConfirmExit：橙色弹头（左圆右直，输入端口）
-            float shadowRight = startX + entryWidth + ChainAutoLayout.HorizontalGap + 190f;
-            var exitView = AddTerminalView(TerminalKind.ChainEnd, isConfirm: true,
-                x: shadowRight + ChainAutoLayout.HorizontalGap, centerY: centerY);
+            // 视图连线：entry → nextline → exit（影子边不可删）
+            var e1 = startView.OutputPort.ConnectTo(shadowView.InputPort);
+            e1.capabilities &= ~Capabilities.Deletable;
+            AddElement(e1);
 
-            // 视图连线：entry → nextline → exit（锚点边不可删）
-            if (entryView?.OutputPort != null && shadowView.InputPort != null)
-            {
-                var e1 = entryView.OutputPort.ConnectTo(shadowView.InputPort);
-                e1.capabilities &= ~Capabilities.Deletable;
-                AddElement(e1);
-            }
-            if (shadowView.OutputPort != null && exitView?.InputPort != null)
-            {
-                var e2 = shadowView.OutputPort.ConnectTo(exitView.InputPort);
-                e2.capabilities &= ~Capabilities.Deletable;
-                AddElement(e2);
-            }
+            var e2 = shadowView.OutputPort.ConnectTo(endView.InputPort);
+            e2.capabilities &= ~Capabilities.Deletable;
+            AddElement(e2);
         }
 
         // ---------------- 校验状态可视化 ----------------
@@ -566,8 +693,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>在指定画布坐标处创建一个命令节点。</summary>
+        /// <param name="notifyChange">是否触发 OnGraphChanged（批量操作如粘贴传 false，由调用方统一收尾）</param>
         public CommandNodeView CreateCommandNode(string commandName, string args,
-            Vector2 canvasPosition, bool isConfirm)
+            Vector2 canvasPosition, bool isConfirm, bool notifyChange = true)
         {
             var graph = isConfirm ? ConfirmGraph : EntryGraph;
             string id = GenerateNodeId(graph, commandName);
@@ -579,9 +707,153 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             AddElement(view);
             _nodeViews[NodeViewKey(isConfirm, id)] = view;
 
-            OnGraphChanged?.Invoke();
-            // 2026-08-27：新建节点不再触发全图重排（节点已在用户指定位置）
+            if (notifyChange) OnGraphChanged?.Invoke();
             return view;
+        }
+
+        // ---------------- 节点级复制 / 粘贴 ----------------
+
+        /// <summary>
+        /// 收集选中命令节点的复制载荷：命令文本 + 相对第一个节点的位置偏移。
+        /// 粘贴时按偏移还原布局（吸收 GraphView 内置 serializeGraphElements 的核心体验）。
+        /// Fork/Join/终端不参与节点级复制（复制粘贴链可覆盖该场景）。
+        /// </summary>
+        public List<NodePastePayload> CopySelectedNodes()
+        {
+            var payloads = new List<NodePastePayload>();
+            Vector2 anchor = Vector2.zero;
+            bool first = true;
+
+            foreach (var selectable in selection)
+            {
+                if (!(selectable is CommandNodeView view)) continue;
+                if (view.Data == null || string.IsNullOrEmpty(view.Data.CommandName)) continue;
+
+                var pos = view.GetPosition().position;
+                if (first) { anchor = pos; first = false; }
+                payloads.Add(new NodePastePayload
+                {
+                    Command = view.Data.CommandName + "(" + (view.Data.Args ?? "") + ")",
+                    Offset = pos - anchor,
+                });
+            }
+            return payloads;
+        }
+
+        /// <summary>
+        /// 在画布指定位置粘贴节点载荷——按复制的相对位置还原布局。
+        /// 粘贴的节点孤立——由用户连线（或用插入式连线接到链上）。
+        /// </summary>
+        /// <param name="notifyChange">false 时不触发 OnGraphChanged（批量操作统一收尾）</param>
+        public List<CommandNodeView> PasteNodesAt(List<NodePastePayload> payloads,
+            Vector2 canvasPosition, bool isConfirm, bool notifyChange = true)
+        {
+            var created = new List<CommandNodeView>();
+            if (payloads == null) return created;
+
+            foreach (var payload in payloads)
+            {
+                // 解析 cmd(args)
+                string cmd = (payload.Command ?? "").Trim();
+                if (string.IsNullOrEmpty(cmd)) continue;
+                string name = cmd;
+                string args = "";
+                int paren = cmd.IndexOf('(');
+                if (paren > 0 && cmd.EndsWith(")"))
+                {
+                    name = cmd.Substring(0, paren);
+                    args = cmd.Substring(paren + 1, cmd.Length - paren - 2);
+                }
+                if (string.IsNullOrEmpty(name)) continue;
+
+                var view = CreateCommandNode(name, args,
+                    canvasPosition + payload.Offset, isConfirm, notifyChange: false);
+                created.Add(view);
+            }
+
+            if (created.Count > 0)
+            {
+                ClearSelection();
+                foreach (var v in created) AddToSelection(v);
+                if (notifyChange) OnGraphChanged?.Invoke();
+            }
+            return created;
+        }
+
+        /// <summary>
+        /// 把 <paramref name="newNode"/> 插入到 <paramref name="source"/> 链中后续位置：
+        /// 断开 source → down，改建 source → newNode + newNode → down。
+        /// 同一泳道、同为命令节点，且 source 有下游时才执行。
+        /// 粘贴单节点时若复制源仍选中，调用此方法避免节点变成孤立（无法保存）。
+        /// </summary>
+        /// <param name="notifyChange">false 时不触发 OnGraphChanged（批量操作统一收尾）</param>
+        public bool InsertAfter(CommandNodeView source, CommandNodeView newNode, bool notifyChange = true)
+        {
+            if (source == null || newNode == null) return false;
+            if (source.IsConfirmChain != newNode.IsConfirmChain) return false;
+            if (source == newNode) return false;
+            if (source.Data == null || newNode.Data == null) return false;
+            if (source.OutputPort == null || newNode.InputPort == null || newNode.OutputPort == null) return false;
+
+            var graph = source.IsConfirmChain ? ConfirmGraph : EntryGraph;
+
+            // 找 source 当前下游边（Single 容量，最多 1 条）
+            VNNodeViewBase downView = null;
+            Edge oldEdge = null;
+            foreach (var e in edges)
+            {
+                if (e.output == source.OutputPort)
+                {
+                    oldEdge = e;
+                    downView = e.input?.node as VNNodeViewBase;
+                    break;
+                }
+            }
+
+            _suppressChangeEvents = true;
+            try
+            {
+                // 断旧边 source → down
+                if (oldEdge != null && downView != null && downView.Data != null)
+                {
+                    source.OutputPort.Disconnect(oldEdge);
+                    RemoveElement(oldEdge);
+                    graph.RemoveEdge(source.Data.Id, downView.Data.Id);
+                }
+
+                // 新边 source → newNode
+                var e1 = source.OutputPort.ConnectTo(newNode.InputPort);
+                AddElement(e1);
+                graph.AddEdge(source.Data.Id, newNode.Data.Id);
+
+                // 新边 newNode → down（如果有原下游）
+                if (downView != null && downView.Data != null && downView.InputPort != null)
+                {
+                    var e2 = newNode.OutputPort.ConnectTo(downView.InputPort);
+                    AddElement(e2);
+                    graph.AddEdge(newNode.Data.Id, downView.Data.Id);
+                }
+            }
+            finally
+            {
+                _suppressChangeEvents = false;
+            }
+
+            if (notifyChange) OnGraphChanged?.Invoke();
+            return true;
+        }
+
+        /// <summary>画布可视区域中心的画布坐标（粘贴落点）。</summary>
+        public Vector2 GetViewCenterCanvas()
+        {
+            return contentViewContainer.WorldToLocal(worldBound.center);
+        }
+
+        /// <summary>节点级复制的载荷：命令文本 + 相对锚点的位置偏移。</summary>
+        public class NodePastePayload
+        {
+            public string Command;
+            public Vector2 Offset;
         }
 
         public void CreateForkJoinPair(Vector2 canvasPosition, bool isConfirm)
@@ -608,7 +880,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _nodeViews[NodeViewKey(isConfirm, joinId)] = joinView;
 
             OnGraphChanged?.Invoke();
-            // 2026-08-27：新建 Fork/Join 不再触发全图重排（固定 300px 水平间隔已足够）
         }
 
         /// <summary>
@@ -641,10 +912,31 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 var view = pair.Value;
                 if (view.Data == null) continue;
-                result[PositionKey(view.IsConfirmChain, view.Data.Id)] =
-                    view.GetPosition().position;
+
+                var pos = view.GetPosition().position;
+                // 防御：跳过零位——未完成布局的节点记录 (0,0) 会污染快照，
+                // Undo 恢复时全部节点叠在原点。
+                if (pos.x == 0f && pos.y == 0f) continue;
+
+                result[PositionKey(view.IsConfirmChain, view.Data.Id)] = pos;
             }
             return result;
+        }
+
+        // ---------------- 手势检测 ----------------
+
+        /// <summary>
+        /// Capture 阶段捕获节点上的左键按下——拖动手势开始信号。
+        /// 无论最终是否发生移动（点击不算），Window 侧的暂存快照都会被覆盖或丢弃。
+        /// </summary>
+        private void OnPointerDownCapture(PointerDownEvent evt)
+        {
+            if (evt.button != 0) return;
+
+            var ve = evt.target as VisualElement;
+            if (ve?.GetFirstAncestorOfType<Node>() == null) return;
+
+            OnNodeDragGestureStarted?.Invoke();
         }
 
         // ---------------- 工具 ----------------
@@ -660,6 +952,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (nodeId == null) return null;
             _nodeViews.TryGetValue(NodeViewKey(isConfirm, nodeId), out var view);
             return view;
+        }
+
+        /// <summary>
+        /// 仅按 id 查找节点 view（不区分泳道）——用于错误对话框等仅知 id 的场景。
+        /// 找不到返回 null（节点可能已被删除或尚未创建）。
+        /// </summary>
+        public VNNodeViewBase GetNodeViewForValidation(string nodeId)
+        {
+            if (nodeId == null) return null;
+            foreach (var v in _nodeViews.Values)
+                if (v != null && v.Data != null && v.Data.Id == nodeId)
+                    return v;
+            return null;
         }
 
         private static string GenerateNodeId(ChainGraph graph, string prefix)

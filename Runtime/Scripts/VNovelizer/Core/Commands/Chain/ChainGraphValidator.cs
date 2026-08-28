@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands.Chain
@@ -122,9 +123,6 @@ namespace VNovelizer.Core.Commands.Chain
 
         private static void ValidateTopology(ChainGraph graph, ChainGraphValidationResult result)
         {
-            var sources = graph.FindSources();
-            var sinks = graph.FindSinks();
-
             // 规则 5：无环（先查环——有环会导致起终点为 0，报错信息更准确）
             var cycleNodes = FindCycle(graph);
             if (cycleNodes != null)
@@ -135,10 +133,61 @@ namespace VNovelizer.Core.Commands.Chain
                 return; // 有环时其余拓扑判定无意义
             }
 
+            // 2026-08-28：哨兵感知。编辑器中的图恒含 Start/End 哨兵（ChainGraphDumper.EnsureSentinels），
+            // 起终点角色由哨兵端口规则（ValidatePorts）表达；本方法的 sources/sinks 判定只对
+            // 非哨兵节点生效——否则"单命令链"（Start→A→End，A 恰是数据层唯一无入边节点）
+            // 会被误判为多起点，空链（哨兵间无连接）会被误判为 2 起点 2 终点。
+            var startSentinel = ChainGraphDumper.FindStartSentinel(graph);
+            var sources = NonSentinelSources(graph);
+            var sinks = NonSentinelSinks(graph);
+
+            // 孤立节点（既无入边也无出边，如刚从面板拖入尚未连线的新节点）
+            // 单独归类报错，不计入起点/终点——否则"刚拖入新节点"被误导性报
+            // "存在 2 个起点（请用 FORK 表达并行）"，用户会以为需要加 FORK。
+            var isolated = new List<string>();
+            foreach (var n in sources)
+                if (graph.OutDegree(n.Id) == 0) isolated.Add(n.Id);
+            if (isolated.Count > 0)
+            {
+                sources = sources.Where(s => !isolated.Contains(s.Id)).ToList();
+                sinks = sinks.Where(s => !isolated.Contains(s.Id)).ToList();
+                result.Add(ChainGraphIssueLevel.Fatal, 1,
+                    $"存在 {isolated.Count} 个未连接节点（请连线到链上或删除）",
+                    isolated.ToArray());
+            }
+
+            if (startSentinel != null)
+            {
+                // 哨兵在图：悬空节点检测以 Start 哨兵为可达性根。
+                var reachable = CollectReachable(graph, startSentinel.Id);
+                var reachableOnly = new List<string>();
+                foreach (var node in graph.Nodes)
+                {
+                    if (node.Kind == ChainGraphNodeKind.Start ||
+                        node.Kind == ChainGraphNodeKind.End) continue;
+                    if (reachable.Contains(node.Id)) continue;
+                    // 入==0 出==0 的孤立节点已被上面的"未连接节点"诊断捕获，不重复报
+                    if (graph.InDegree(node.Id) == 0 && graph.OutDegree(node.Id) == 0) continue;
+                    reachableOnly.Add(node.Id);
+                }
+
+                if (reachableOnly.Count > 0)
+                {
+                    result.Add(ChainGraphIssueLevel.Fatal, 1,
+                        $"存在 {reachableOnly.Count} 个未连接到主链的悬空节点（不会被执行）",
+                        reachableOnly.ToArray());
+                }
+                return;
+            }
+
+            // ---- 无哨兵（防御路径；编辑器正常流程不经过）----
             // 规则 1：唯一起点
             if (sources.Count == 0)
             {
-                result.Add(ChainGraphIssueLevel.Fatal, 1, "图中不存在起点（所有节点都有入边）");
+                // 全部节点都孤立时也归入"未连接"，不重复报"无起点"；
+                // 仅在存在已连接节点却无起点时报此错
+                if (isolated.Count == 0)
+                    result.Add(ChainGraphIssueLevel.Fatal, 1, "图中不存在起点（所有节点都有入边）");
             }
             else if (sources.Count > 1)
             {
@@ -152,7 +201,8 @@ namespace VNovelizer.Core.Commands.Chain
             // 规则 1：唯一终点
             if (sinks.Count == 0)
             {
-                result.Add(ChainGraphIssueLevel.Fatal, 1, "图中不存在终点（所有节点都有出边）");
+                if (isolated.Count == 0)
+                    result.Add(ChainGraphIssueLevel.Fatal, 1, "图中不存在终点（所有节点都有出边）");
             }
             else if (sinks.Count > 1)
             {
@@ -167,17 +217,40 @@ namespace VNovelizer.Core.Commands.Chain
             if (sources.Count == 1)
             {
                 var reachable = CollectReachable(graph, sources[0].Id);
-                var orphans = new List<string>();
+                var reachableOnly = new List<string>();
                 foreach (var node in graph.Nodes)
-                    if (!reachable.Contains(node.Id)) orphans.Add(node.Id);
+                {
+                    if (reachable.Contains(node.Id)) continue;
+                    // 排除 in==0 out==0 的孤立节点（已被诊断过）
+                    if (graph.InDegree(node.Id) == 0 && graph.OutDegree(node.Id) == 0) continue;
+                    reachableOnly.Add(node.Id);
+                }
 
-                if (orphans.Count > 0)
+                if (reachableOnly.Count > 0)
                 {
                     result.Add(ChainGraphIssueLevel.Fatal, 1,
-                        $"存在 {orphans.Count} 个未连接到主链的悬空节点（不会被执行）",
-                        orphans.ToArray());
+                        $"存在 {reachableOnly.Count} 个未连接到主链的悬空节点（不会被执行）",
+                        reachableOnly.ToArray());
                 }
             }
+        }
+
+        private static List<ChainGraphNode> NonSentinelSources(ChainGraph graph)
+        {
+            var result = new List<ChainGraphNode>();
+            foreach (var n in graph.FindSources())
+                if (n.Kind != ChainGraphNodeKind.Start && n.Kind != ChainGraphNodeKind.End)
+                    result.Add(n);
+            return result;
+        }
+
+        private static List<ChainGraphNode> NonSentinelSinks(ChainGraph graph)
+        {
+            var result = new List<ChainGraphNode>();
+            foreach (var n in graph.FindSinks())
+                if (n.Kind != ChainGraphNodeKind.Start && n.Kind != ChainGraphNodeKind.End)
+                    result.Add(n);
+            return result;
         }
 
         // ---------- 规则 2 / 3：端口连线数量 ----------
@@ -222,6 +295,22 @@ namespace VNovelizer.Core.Commands.Chain
                             result.Add(ChainGraphIssueLevel.Fatal, 3,
                                 $"JOIN 只有 {inDeg} 条入边（至少需要 2 条，否则无并行可汇合）", node.Id);
                         break;
+
+                    // 2026-08-28：哨兵端口规则——哨兵常驻后"多起点/多终点"改由哨兵出/入度表达
+                    //（FindSources 统计被哨兵吸收，旧的多起点判定不再触发）。
+                    case ChainGraphNodeKind.Start:
+                        if (outDeg > 1)
+                            result.Add(ChainGraphIssueLevel.Fatal, 2,
+                                $"起点终端连出了 {outDeg} 条线（命令链只能有一个起点，并行请用 FORK）",
+                                node.Id);
+                        break;
+
+                    case ChainGraphNodeKind.End:
+                        if (inDeg > 1)
+                            result.Add(ChainGraphIssueLevel.Fatal, 2,
+                                $"终点终端接收了 {inDeg} 条线（命令链只能有一个终点，多路汇合请用 JOIN）",
+                                node.Id);
+                        break;
                 }
             }
         }
@@ -262,9 +351,6 @@ namespace VNovelizer.Core.Commands.Chain
         private static void ValidateCommands(ChainGraph graph, ChainGraphValidationResult result,
             bool isConfirmSection)
         {
-            var sinks = graph.FindSinks();
-            string sinkId = sinks.Count == 1 ? sinks[0].Id : null;
-
             foreach (var node in graph.Nodes)
             {
                 if (node.Kind != ChainGraphNodeKind.Command) continue;
@@ -288,7 +374,9 @@ namespace VNovelizer.Core.Commands.Chain
                 }
 
                 // 规则 7：流程命令必须位于链尾（与运行时一致：警告级，不阻断）
-                if (ChainParser.IsFlowCommand(name) && node.Id != sinkId)
+                // 2026-08-28：哨兵常驻后 sink 恒为 End 哨兵——"链尾"改按
+                // 「出边全部指向哨兵（或无出边）」判定，与视觉直觉一致。
+                if (ChainParser.IsFlowCommand(name) && !IsChainEnd(graph, node.Id))
                 {
                     result.Add(ChainGraphIssueLevel.Warning, 7,
                         $"流程命令 {name} 不在链尾，其后的命令会在「行已切换」的上下文中执行", node.Id);
@@ -314,6 +402,24 @@ namespace VNovelizer.Core.Commands.Chain
             }
         }
 
+        /// <summary>
+        /// 节点是否处于链尾：出边为空，或全部指向哨兵（链尾命令的出边连向 End 终端）。
+        /// </summary>
+        private static bool IsChainEnd(ChainGraph graph, string nodeId)
+        {
+            var successors = graph.GetSuccessors(nodeId);
+            if (successors.Count == 0) return true;
+
+            foreach (string succId in successors)
+            {
+                var succ = graph.GetNode(succId);
+                if (succ == null) return false;
+                if (succ.Kind != ChainGraphNodeKind.Start && succ.Kind != ChainGraphNodeKind.End)
+                    return false;
+            }
+            return true;
+        }
+
         // ---------- 规则 9：嵌套深度 ----------
 
         private static void ValidateNestingDepth(ChainGraph graph, ChainGraphValidationResult result)
@@ -331,13 +437,20 @@ namespace VNovelizer.Core.Commands.Chain
 
         private static int ComputeMaxForkNesting(ChainGraph graph)
         {
-            var sources = graph.FindSources();
-            if (sources.Count != 1) return 0;
+            // 2026-08-28：起点感知哨兵——哨兵常驻后 FindSources 返回的"起点"是 Start 哨兵
+            //（命令节点都有入边），旧逻辑 sources.Count != 1 会直接漏检嵌套深度。
+            string startId = ChainGraphDumper.FindStartSentinel(graph)?.Id;
+            if (startId == null)
+            {
+                var sources = graph.FindSources();
+                if (sources.Count != 1) return 0;
+                startId = sources[0].Id;
+            }
 
             int max = 0;
             var stack = new Stack<(string id, int depth)>();
             var seen = new HashSet<string>();
-            stack.Push((sources[0].Id, 0));
+            stack.Push((startId, 0));
 
             while (stack.Count > 0)
             {
