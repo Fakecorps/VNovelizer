@@ -259,9 +259,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 AddElement(e);
             }
 
-            // 出口段空链：插入 NextLine 影子（纯视图，提示引擎默认行为）
-            if (!hasContent && isConfirm)
-                BuildEmptyConfirmShadow(isConfirm, startX, centerY);
+            // [NextLine 显式化 2026-08-31] 出口段默认插入 nextline 模板节点。
+            // 与系统命令族规则一致：nextline 作为流程命令默认出现在链尾（OnConfirm Entry
+            // 与 OnConfirm Exit 之间），标记为 vn-node--template（半透明、不可连线）。
+            // 用户删除它 → 触发 OnRequestPromotion → 提升为定制行（写入 Command 列）。
+            if (isConfirm) EnsureTemplateNextLine(graph, isConfirm, startX, centerY);
         }
 
         /// <summary>
@@ -606,47 +608,74 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
-        /// 出口段空链时的 NextLine 影子（2026-08-27 用户需求 4）：
-        /// OnConfirmEntry → [NextLine 影子] → OnConfirmExit。
+        /// [NextLine 显式化 2026-08-31] 出口段默认插入 nextline 模板节点。
         ///
         /// <para>
-        /// NextLine 是引擎隐式行为（出口段执行完自动推进下一行），此处显式画出
-        /// 仅为可读性——影子节点与全部连线均为<b>纯视图层</b>（不进 ChainGraph，
-        /// 序列化天然不含；<see cref="RebuildEdgesFromView"/> 亦会过滤）。
-        /// 终端视图来自图数据的哨兵节点（BuildLane 已创建），这里只插入影子。
+        /// 与系统命令族规则一致：nextline 作为流程命令默认出现在链尾
+        /// （OnConfirm Entry → [nextline] → OnConfirm Exit），标记为
+        /// <c>vn-node--template</c>（半透明、不可连线到它身上、删除时触发提升）。
         /// </para>
+        ///
+        /// <para>
+        /// 插入条件：
+        /// </para>
+        /// <list type="bullet">
+        /// <item>出口段（<c>isConfirm == true</c>）；</item>
+        /// <item>链尾没有已有的 nextline 节点（避免重复插入）；</item>
+        /// </list>
+        ///
+        /// <para>
+        /// 模板节点与真实节点的区别（通过 USS class 区分）：
+        /// </para>
+        /// <list type="bullet">
+        /// <item><c>.vn-node--template</c>：半透明 + 灰色边框；</item>
+        /// <item>禁止被连线（<see cref="GetCompatiblePorts"/> 拦截）；</item>
+        /// <item>删除时触发 <see cref="OnRequestPromotion"/>（<see cref="OnGraphViewChanged"/> 拦截）；</item>
+        /// <item>不持久化到 Command 列 —— 它是视图合成的，用户提升后才写入。</item>
+        /// </list>
         /// </summary>
-        private void BuildEmptyConfirmShadow(bool isConfirm, float startX, float centerY)
+        private void EnsureTemplateNextLine(ChainGraph graph, bool isConfirm, float startX, float centerY)
         {
-            var startView = GetNodeView(isConfirm, ChainGraphDumper.SentinelId(isConfirm, true));
-            var endView = GetNodeView(isConfirm, ChainGraphDumper.SentinelId(isConfirm, false));
+            if (graph == null || !isConfirm) return;
+
+            // 检查图数据中是否已有 nextline（用户已显式写或已提升）
+            foreach (var node in graph.Nodes)
+                if (node.Kind == ChainGraphNodeKind.Command &&
+                    string.Equals((node.CommandName ?? "").Trim(), "nextline",
+                        StringComparison.OrdinalIgnoreCase))
+                    return;
+
+            string startId = ChainGraphDumper.SentinelId(isConfirm, true);
+            string endId = ChainGraphDumper.SentinelId(isConfirm, false);
+            var startView = GetNodeView(isConfirm, startId);
+            var endView = GetNodeView(isConfirm, endId);
+
             if (startView?.OutputPort == null || endView?.InputPort == null) return;
 
-            const string shadowId = "__implicit_nextline__";
-            var shadowData = new ChainGraphNode(shadowId, ChainGraphNodeKind.Command,
-                "nextline", "");
-            var shadowView = new CommandNodeView(shadowData, isConfirmChain: true)
+            const string templateId = "__template_nextline__";
+            var templateData = new ChainGraphNode(templateId,
+                ChainGraphNodeKind.Command, "nextline", "");
+            var templateView = new CommandNodeView(templateData, isConfirmChain: true)
             {
-                tooltip = "引擎隐式行为：出口段执行完毕后自动推进到下一行。\n" +
-                          "此节点为只读影子——不会写入 Command 列。\n" +
-                          "往出口段拖入命令后，它会替换为你的真实编排。"
+                tooltip = "默认流程命令：本行演出完毕后推进到下一行。\n" +
+                          "这是模板节点——不会写入 Command 列。\n" +
+                          "删除此节点可将其提升为定制行（写入 Command 列）。"
             };
-            shadowView.MarkAsTemplateGhost();
-            shadowView.SetTitle("NextLine（引擎默认）");
-            // 只读影子：禁止删除/复制（删除会误触提升流程；它是引擎行为不可移除）
-            shadowView.capabilities &= ~Capabilities.Deletable;
-            shadowView.capabilities &= ~Capabilities.Copiable;
-            shadowView.SetPosition(new Rect(
+            templateView.MarkAsTemplateGhost();
+            templateView.SetTitle("nextline");
+            templateView.capabilities &= ~Capabilities.Deletable;  // 删除走提升路径
+            templateView.capabilities &= ~Capabilities.Copiable;
+            templateView.SetPosition(new Rect(
                 startX + 170f, centerY - 30f, 0f, 0f));
-            AddElement(shadowView);
-            _nodeViews[NodeViewKey(isConfirm, shadowId)] = shadowView;
+            AddElement(templateView);
+            _nodeViews[NodeViewKey(isConfirm, templateId)] = templateView;
 
-            // 视图连线：entry → nextline → exit（影子边不可删）
-            var e1 = startView.OutputPort.ConnectTo(shadowView.InputPort);
+            // 视图连线：entry → nextline → exit（模板边不可删）
+            var e1 = startView.OutputPort.ConnectTo(templateView.InputPort);
             e1.capabilities &= ~Capabilities.Deletable;
             AddElement(e1);
 
-            var e2 = shadowView.OutputPort.ConnectTo(endView.InputPort);
+            var e2 = templateView.OutputPort.ConnectTo(endView.InputPort);
             e2.capabilities &= ~Capabilities.Deletable;
             AddElement(e2);
         }

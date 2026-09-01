@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using VNovelizer.Core.Commands.Meta;
@@ -114,6 +115,7 @@ namespace VNovelizer.Core.Commands.Chain
             ValidateForkJoinPairing(graph, result);
             ValidateCommands(graph, result, isConfirmSection);
             ValidateNestingDepth(graph, result);
+            ValidateNextLineDeclared(graph, result, isConfirmSection);
             ValidateConfirmSectionReachability(graph, result, isConfirmSection, entrySectionHasChoice);
 
             return result;
@@ -418,6 +420,51 @@ namespace VNovelizer.Core.Commands.Chain
                     return false;
             }
             return true;
+        }
+
+        // ---------- 规则 12：出口段缺 nextline（NextLine 显式化 2026-08-31） ----------
+
+        /// <summary>
+        /// 规则 12：出口段非空但链尾没有 nextline()。
+        ///
+        /// <para>
+        /// nextline 显式化后，出口段执行完毕<b>不会</b>自动推进下一行 —— 必须由
+        /// 链尾的 nextline() 显式声明。漏写会让流程停在出口段末尾。
+        /// </para>
+        ///
+        /// <para>
+        /// 只针对出口段：<b>进入段不写 nextline 是完全正常的</b>——「演出完毕等玩家
+        /// 点击」正是视觉小说的标准交互，绝大多数行都该如此，若对进入段报警告会让
+        /// 存量剧本瞬间被警告淹没。出口段则不同：它已经是「玩家点击之后」的阶段，
+        /// 执行完停住没有后续推进入口，属于真正的编排缺陷。
+        /// </para>
+        /// </summary>
+        private static void ValidateNextLineDeclared(ChainGraph graph,
+            ChainGraphValidationResult result, bool isConfirmSection)
+        {
+            if (graph == null || !isConfirmSection) return;
+            if (!ChainGraphDumper.HasContent(graph)) return; // 空出口段合法（该行无 @Confirm）
+
+            foreach (var node in graph.Nodes)
+            {
+                if (node.Kind != ChainGraphNodeKind.Command) continue;
+                if (string.Equals((node.CommandName ?? "").Trim(), "nextline",
+                    StringComparison.OrdinalIgnoreCase))
+                    return; // 已声明，通过
+            }
+
+            // 定位链尾命令节点用于高亮（无命令节点时退化为全图问题）
+            var tailIds = new List<string>();
+            foreach (var node in graph.Nodes)
+            {
+                if (node.Kind != ChainGraphNodeKind.Command) continue;
+                if (IsChainEnd(graph, node.Id)) tailIds.Add(node.Id);
+            }
+
+            result.Add(ChainGraphIssueLevel.Warning, 12,
+                "出口段链尾没有 nextline()，执行完毕后不会自动推进下一行。" +
+                "请从左侧命令面板拖入「nextline」节点接到链尾。",
+                tailIds.ToArray());
         }
 
         // ---------- 规则 9：嵌套深度 ----------

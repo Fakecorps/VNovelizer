@@ -898,6 +898,31 @@
     border-color: #4A90D9;
 }
 
+/* ---------------- 可拖拽列分隔条（2026-08-31） ----------------
+   2px 可见细线 + 左右各 2.5px 热区 = 7px 命中宽度。
+   1px 的边框线太细抓不住，纯 CSS 无法扩大命中区，故单独做一个元素。 */
+
+.vn-col-resizer {
+    width: 7px;
+    flex-shrink: 0;
+    flex-grow: 0;
+    background-color: transparent;
+    flex-direction: row;
+    justify-content: center;
+    cursor: resize-horizontal;
+}
+
+.vn-col-resizer-line {
+    width: 2px;
+    height: 100%;
+    background-color: #212121;
+}
+
+.vn-col-resizer:hover .vn-col-resizer-line,
+.vn-col-resizer--active .vn-col-resizer-line {
+    background-color: #4A90D9;
+}
+
 /* ---------------- 中右 · 命令链文本编辑器（独立一列） ---------------- */
 
 .vn-textchain-panel {
@@ -921,152 +946,25 @@
 
 .vn-textchain-section {
     padding: 8px 12px 6px 12px;
-    flex-shrink: 0;
+    flex-grow: 1;      /* 两段的编辑器平分剩余高度 */
+    flex-shrink: 1;
+    min-height: 0;     /* 允许被压缩到 min-height 以下，避免溢出时撑破面板 */
 }
 
-/* 代码块预览容器 —— 模仿代码编辑器的"只读预览区"，
-   紧贴编辑框上方，给用户"输入即时反馈"的视觉锚 */
-.vn-textchain-prevblock {
-    background-color: #262626;
-    border-width: 1px;
-    border-color: #2E2E2E;
-    border-radius: 4px;
-    padding: 6px 8px 6px 8px;
-    margin-bottom: 4px;
-    flex-direction: column;
-}
+/* ====== 2026-08-31 重写：IMGUI 自绘代码编辑器 ======
+   旧的 UIToolkit 叠层方案（.vn-codefield-*，透明 TextField + 覆盖 Label）
+   已整体废弃：TextField 是黑盒，不暴露光标/选区/行布局，必然导致
+   光标不可见、选区不可见、长行错位、滚动不同步。
+   现在由 VnCodeEditorIMGUI 在 IMGUIContainer 内全自绘，
+   所有视觉（背景/行号/着色/选区/光标）都在 C# 里用 EditorGUI.DrawRect + GUI.Label 完成。
+   USS 这里只需给容器本身定外框与边距。 */
 
-.vn-textchain-prevrow {
-    flex-direction: row;
-    align-items: center;
-    min-height: 18px;
-    padding-top: 1px;
-    padding-bottom: 1px;
-    padding-left: 0;
-    padding-right: 4px;
-    border-radius: 3px;
-}
-
-.vn-textchain-prevrow--selected {
-    background-color: rgba(74, 144, 217, 0.18);
-    border-left-width: 2px;
-    border-left-color: #4A90D9;
-    padding-left: 4px;
-    margin-left: -4px;
-}
-
-.vn-textchain-prevlead {
-    font-size: 11px;
-    -unity-font-style: bold;
-    color: #7A7A7A;
-    margin-right: 4px;
-    flex-shrink: 0;
-    min-width: 14px;
-    -unity-text-align: middle-right;
-}
-
-.vn-textchain-prevbody {
-    font-size: 11px;
-    white-space: normal;
-    color: #D8D8D8;
-    flex-shrink: 0;
-}
-
-.vn-textchain-prevempty {
-    font-size: 10px;
-    color: #6E6E6E;
-    -unity-font-style: italic;
-    white-space: normal;
-    padding: 4px 0 4px 0;
-}
-
-/* 多行文本编辑器本身：拉大到整列宽度的可用空间，能输入多行。
-   文本框高度让位于预览块：原 84px 减小到 60px 避免两段都太占视高 */
-.vn-textchain-field {
+.vn-codefield-imgui {
     margin-top: 2px;
     margin-bottom: 8px;
-    flex-shrink: 0;
-}
-
-/* ====== IDE 风格代码编辑器（ChainCodeField） ======
-   左侧行号 gutter + 右侧编辑区（底层透明 TextField / 顶层彩色 Label 叠放） */
-.vn-codefield {
-    flex-direction: row;
-    background-color: #1E1E1E;
-    border-width: 1px;
-    border-color: #3A3A3A;
     border-radius: 4px;
-    min-height: 96px;
     overflow: hidden;
-}
-
-/* 焦点边框高亮：USS 不支持 :focus-within 伪类 ——
-   由 ChainCodeField.cs 在 FocusInEvent/FocusOutEvent 里切换本 class */
-.vn-codefield--focused {
-    border-color: #4A90D9;
-}
-
-.vn-codefield-gutter {
-    background-color: #252525;
-    color: #6E6E6E;
-    font-size: 10px;
-    padding: 6px 5px 6px 5px;
-    -unity-text-align: middle-right;
-    border-right-width: 1px;
-    border-right-color: #2A2A2A;
     flex-shrink: 0;
-    min-width: 26px;
-}
-
-.vn-codefield-edit {
-    flex-grow: 1;
-    position: relative;
-    flex-direction: column;
-}
-
-/* 顶层彩色富文本 Label —— 视觉主体 */
-.vn-codefield-highlight {
-    position: absolute;
-    left: 0;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    padding: 6px 8px 6px 8px;
-    margin: 0;
-    font-size: 11px;
-    -unity-text-align: upper-left;
-    color: #D8D8D8;
-    background-color: transparent;
-    border-width: 0;
-    flex-grow: 0;
-    flex-shrink: 0;
-}
-
-/* 底层透明 TextField —— 真正的输入控件，光标、IME、复制粘贴所有事它做 */
-.vn-codefield-input {
-    position: absolute;
-    left: 0;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    margin: 0;
-    padding: 0;
-    border-width: 0;
-    background-color: transparent;
-}
-
-.vn-codefield-input > .unity-text-field__input {
-    margin: 0;
-    padding: 6px 8px 6px 8px;
-    border-width: 0;
-    background-color: transparent;
-    /* 关键：文字完全透明，让顶层 Label 的彩色字符串透过来。
-       光标颜色跟随 color（Unity USS 无独立 caret-color），接受光标隐形 ——
-       Label 实时刷新承担输入反馈职责。 */
-    color: rgba(0, 0, 0, 0);
-    -unity-font-style: normal;
-    font-size: 11px;
-    -unity-text-align: upper-left;
 }
 
 .vn-textchain-help {

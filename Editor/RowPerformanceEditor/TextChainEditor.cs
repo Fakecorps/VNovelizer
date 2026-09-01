@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using UnityEngine;
 using UnityEngine.UIElements;
 using VNovelizer.Core.Commands;
 using VNovelizer.Core.Commands.Chain;
@@ -45,8 +46,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private IVisualElementScheduledItem _entryDebounce;
         private IVisualElementScheduledItem _confirmDebounce;
 
+        /// <summary>单个代码编辑器的最小高度（进入段 / 出口段各一个）。</summary>
+        private const float EditorMinHeight = 120f;
+
         /// <summary>当前防抖是否已挂起（用于抑制重建后的 SetText 再次触发 change）。</summary>
         private bool _suppressEcho;
+
+        /// <summary>编辑器持有焦点期间暂存的规范化文本（失焦后落回）。</summary>
+        private string _pendingEntryText;
+        private string _pendingConfirmText;
 
         public TextChainEditor(VisualElement root)
         {
@@ -57,51 +65,102 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             Rebuild();
         }
 
+        /// <summary>
+        /// 由外部（节点图变化 / 切行 / 解析回填）写入规范化文本。
+        ///
+        /// <para>
+        /// <b>关键约束（2026-08-31）</b>：目标编辑器<b>正持有焦点</b>时绝不直接覆写。
+        /// 防抖重建图后序列化出的规范化文本与用户刚敲进去的原始输入几乎必然不同
+        /// （空格、换行位置被规范化），直接回填会把用户正在输入的字符顶掉、
+        /// 光标跳到别处 —— 即"打字打着就闪退"的现象。
+        /// 因此：打字期间把规范化文本暂存，等失焦（<see cref="VnCodeEditorIMGUI.OnFocusLost"/>）再落回。
+        /// </para>
+        /// </summary>
         public void SetTexts(string entry, string confirm)
         {
-            bool changed = false;
-
-            if (entry != null && entry != _entryText)
+            if (entry != null)
             {
                 _entryText = entry;
-                if (_entryField != null)
+                if (_entryEditor != null)
                 {
-                    _suppressEcho = true;
-                    _entryField.SetValueWithoutNotify(entry);
-                    _suppressEcho = false;
+                    if (_entryEditor.HasFocus) _pendingEntryText = entry;
+                    else WriteTo(_entryEditor, entry);
                 }
-                changed = true;
             }
 
-            if (confirm != null && confirm != _confirmText)
+            if (confirm != null)
             {
                 _confirmText = confirm;
-                if (_confirmField != null)
+                if (_confirmEditor != null)
                 {
-                    _suppressEcho = true;
-                    _confirmField.SetValueWithoutNotify(confirm);
-                    _suppressEcho = false;
+                    if (_confirmEditor.HasFocus) _pendingConfirmText = confirm;
+                    else WriteTo(_confirmEditor, confirm);
                 }
-                changed = true;
             }
-
-            if (changed) RefreshAll();
         }
 
+        private void WriteTo(VnCodeEditorIMGUI editor, string value)
+        {
+            if (editor == null) return;
+            if (editor.Text == value) return;
+
+            _suppressEcho = true;
+            editor.SetTextWithoutNotify(value);
+            _suppressEcho = false;
+        }
+
+        /// <summary>失去焦点时才把暂存着的规范化文本写回编辑器。</summary>
+        private void OnEditorFocusLost(bool isConfirm)
+        {
+            string pending = isConfirm ? _pendingConfirmText : _pendingEntryText;
+            if (pending == null) return;
+
+            if (isConfirm) _pendingConfirmText = null;
+            else _pendingEntryText = null;
+
+            var editor = isConfirm ? _confirmEditor : _entryEditor;
+            WriteTo(editor, pending);
+
+            if (isConfirm) _confirmText = pending;
+            else _entryText = pending;
+        }
+
+        /// <summary>
+        /// 在图中选中某节点后调用 —— 把该节点的命令签名下发给对应的
+        /// <see cref="VnCodeEditorIMGUI"/>，让其内部匹配的那一行整行高亮（橙色）。
+        ///
+        /// <para>
+        /// 只高亮选中节点所在泳道（进入段 / 出口段）的编辑器，另一段清空。
+        /// </para>
+        /// </summary>
         public void SetSelectedNode(VNNodeViewBase node)
         {
             _current = node;
-            ApplySelectionHighlight();
+
+            var cmdView = node as CommandNodeView;
+            string entrySig = null, confirmSig = null;
+            if (cmdView?.Data != null && !string.IsNullOrEmpty(cmdView.Data.CommandName))
+            {
+                string sig = (cmdView.Data.CommandName ?? "") + "(" +
+                             (cmdView.Data.Args ?? "") + ")";
+                if (cmdView.IsConfirmChain) confirmSig = sig;
+                else entrySig = sig;
+            }
+
+            _entryEditor.SelectedSignature = entrySig;
+            _confirmEditor.SelectedSignature = confirmSig;
         }
 
         public void Refresh() => Rebuild();
 
+        /// <summary>外部读取当前文本（用于回填前比较，避免无意义覆盖）。</summary>
+        public string GetEntryText() => _entryEditor?.Text ?? _entryText;
+        public string GetConfirmText() => _confirmEditor?.Text ?? _confirmText;
+
         // ---------------- UI 构建 ----------------
 
-        private ChainCodeField _entryField;
-        private ChainCodeField _confirmField;
-        private VisualElement _entryPreviewBlock;
-        private VisualElement _confirmPreviewBlock;
+        private VnCodeEditorIMGUI _entryEditor;
+        private VnCodeEditorIMGUI _confirmEditor;
 
         private void Rebuild()
         {
@@ -116,10 +175,57 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             var help = new Label(
                 "语法：cmd(args) · 串行分隔 -> ，并行分隔 & ，分组用 [] 嵌套，并用 @Confirm: 切到出口段。\n" +
-                "文本与节点图双向实时联动 —— 编辑即重建节点图，输入半成品（解析失败的中间态）会被忽略。\n" +
-                "提示：选中画布上的节点可在预览栏里看到它对应的那一行（蓝底高亮）。");
+                "文本与节点图双向实时联动 —— 编辑即重建节点图（200ms 防抖），解析失败的中间态不会破坏图。\n" +
+                "选中画布节点时，编辑器里对应行会整行高亮（橙色）。");
             help.AddToClassList("vn-textchain-help");
             _root.Add(help);
+        }
+
+        /// <summary>
+        /// 用 IMGUIContainer 把 IMGUI 代码编辑器嵌进 UIToolkit 面板。
+        ///
+        /// <para>
+        /// 这是「同一窗口内节点图与文本编辑互通」的关键桥接：
+        /// 节点图仍是 UIToolkit GraphView，文本编辑器是 IMGUI 自绘，
+        /// 两者共处一个 EditorWindow，通过事件回调双向联动。
+        /// </para>
+        /// </summary>
+        private IMGUIContainer BuildCodeEditor(bool isConfirm, float height)
+        {
+            var editor = new VnCodeEditorIMGUI();
+            if (isConfirm) _confirmEditor = editor; else _entryEditor = editor;
+
+            editor.OnTextChanged += newText =>
+            {
+                if (_suppressEcho) return;
+                OnTextChanged(isConfirm, newText);
+            };
+
+            // 失焦 = 用户这一轮输入结束 → 此刻才把规范化文本落回编辑器
+            editor.OnFocusLost += () => OnEditorFocusLost(isConfirm);
+
+            editor.SetTextWithoutNotify(isConfirm ? _confirmText : _entryText);
+
+            var container = new IMGUIContainer(() =>
+            {
+                // IMGUIContainer 内部走 GUILayout 布局。
+                // 用 GetRect 声明一个撑满容器的矩形区域供编辑器绘制。
+                Rect rect = GUILayoutUtility.GetRect(
+                    GUIContent.none, GUIStyle.none,
+                    GUILayout.ExpandWidth(true),
+                    GUILayout.ExpandHeight(true));
+                editor.OnGUI(rect);
+            });
+
+            // 自适应高度：最小 height，剩余空间由 flexGrow 分配。
+            // 2026-08-31：不再写死固定高度 —— 面板被拉高时编辑器跟着变高，
+            // 长命令链能看到更多行，不用在小窗口里挤着看。
+            container.style.minHeight = height;
+            container.style.flexGrow = 1;
+            container.style.flexShrink = 1;
+            container.AddToClassList("vn-codefield-imgui");
+
+            return container;
         }
 
         private void BuildSection(string title, bool isConfirm)
@@ -131,32 +237,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             t.AddToClassList("vn-insp-sectitle");
             section.Add(t);
 
-            // 上方：AST 结构化预览块（多行，每行一条命令 + 缩进 + 段落着色）
-            var prev = new VisualElement();
-            prev.AddToClassList("vn-textchain-prevblock");
-            if (isConfirm) _confirmPreviewBlock = prev; else _entryPreviewBlock = prev;
-            section.Add(prev);
-
-            // 下方：IDE 风格多行代码编辑器（行号 + 着色 + 当前行高亮）
-            var field = new ChainCodeField();
-            field.AddToClassList("vn-textchain-field");
-            field.tooltip = "IDE 风格命令链编辑器：行号、关键字着色、Tab/Enter 智能缩进。Ctrl+Z / Ctrl+Y 撤销重做。";
-
-            field.OnValueChanged += newText =>
-            {
-                if (_suppressEcho) return;
-                OnTextChanged(isConfirm, newText);
-            };
-
-            // 初次填充（不会触发 OnValueChanged —— OnValueChanged 只在 Set 后才挂）
-            field.SetValueWithoutNotify(isConfirm ? _confirmText : _entryText);
-
-            if (isConfirm) _confirmField = field; else _entryField = field;
-            section.Add(field);
+            // IMGUI 自绘代码编辑器（通过 IMGUIContainer 嵌入）——
+            // 2026-08-31 重写：彻底放弃 UIToolkit TextField + 覆盖 Label 的叠层方案。
+            // 该方案因 TextField 是黑盒（不暴露光标/选区/行布局）而必然产生
+            // 「光标不可见、选区不可见、长行错位、滚动不同步」等致命 BUG。
+            // IMGUI 自绘后：光标、选区、着色、行号全部精确，且仍在同一窗口内。
+            var editorContainer = BuildCodeEditor(isConfirm, EditorMinHeight);
+            section.Add(editorContainer);
 
             _root.Add(section);
-
-            RenderPreviewBlock(prev, isConfirm ? _confirmText : _entryText, isConfirm);
         }
 
         // ---------------- 文本变更 / 防抖 ----------------
@@ -166,10 +255,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (isConfirm) _confirmText = newText ?? "";
             else _entryText = newText ?? "";
 
-            RenderPreviewBlock(
-                isConfirm ? _confirmPreviewBlock : _entryPreviewBlock,
-                isConfirm ? _confirmText : _entryText,
-                isConfirm);
+            // IMGUI 编辑器已在 OnTextChanged 中自动重绘着色，无需额外刷新。
 
             var pending = isConfirm ? _confirmDebounce : _entryDebounce;
             if (pending != null) pending.Pause();
@@ -177,8 +263,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var scheduled = _root.schedule.Execute(() =>
             {
                 string current = isConfirm
-                    ? (_confirmField?.Value ?? "")
-                    : (_entryField?.Value ?? "");
+                    ? (_confirmEditor?.Text ?? "")
+                    : (_entryEditor?.Text ?? "");
                 current = current?.Trim() ?? "";
 
                 if (isConfirm) _confirmDebounce = null;
@@ -207,7 +293,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (isConfirm) _confirmDebounce = null;
             else _entryDebounce = null;
 
-            string current = (isConfirm ? _confirmField?.Value : _entryField?.Value) ?? "";
+            string current = (isConfirm ? _confirmEditor?.Text : _entryEditor?.Text) ?? "";
             current = current.Trim();
             string stored = (isConfirm ? _confirmText : _entryText)?.Trim() ?? "";
             if (current == stored) return;
@@ -229,7 +315,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 _entryDebounce.Pause();
                 _entryDebounce = null;
-                string current = _entryField?.Value ?? "";
+                string current = _entryEditor?.Text ?? "";
                 current = current.Trim();
                 string stored = _entryText?.Trim() ?? "";
                 if (current != stored)
@@ -239,7 +325,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 _confirmDebounce.Pause();
                 _confirmDebounce = null;
-                string current = _confirmField?.Value ?? "";
+                string current = _confirmEditor?.Text ?? "";
                 current = current.Trim();
                 string stored = _confirmText?.Trim() ?? "";
                 if (current != stored)
@@ -247,300 +333,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
         }
 
-        // ---------------- 预览渲染（AST → 富文本块） ----------------
-
-        private void RenderPreviewBlock(VisualElement block, string chainText, bool isConfirm)
-        {
-            if (block == null) return;
-            block.Clear();
-
-            if (string.IsNullOrWhiteSpace(chainText))
-            {
-                var empty = new Label("（空 · 待补全）");
-                empty.AddToClassList("vn-textchain-prevempty");
-                block.Add(empty);
-                return;
-            }
-
-            var lines = ChainTextPrettifier.Build(chainText);
-
-            string selectedSig = GetSelectedSignature(isConfirm);
-
-            if (lines.Count == 0)
-            {
-                var errRow = new VisualElement();
-                errRow.AddToClassList("vn-textchain-prevrow");
-                var err = new Label(EscapeRichText(chainText));
-                err.AddToClassList("vn-textchain-prevbody");
-                errRow.Add(err);
-                block.Add(errRow);
-                return;
-            }
-
-            foreach (var line in lines)
-            {
-                var row = new VisualElement();
-                row.AddToClassList("vn-textchain-prevrow");
-                row.style.paddingLeft = line.Depth * 14;
-
-                if (!string.IsNullOrEmpty(line.LeadPrefix))
-                {
-                    var lead = new Label(line.LeadPrefix);
-                    lead.AddToClassList("vn-textchain-prevlead");
-                    row.Add(lead);
-                }
-
-                var sb = new StringBuilder();
-                foreach (var seg in line.Segments)
-                    sb.Append(SegmentToRich(seg));
-
-                var main = new Label(sb.ToString());
-                main.enableRichText = true;
-                main.AddToClassList("vn-textchain-prevbody");
-                row.Add(main);
-
-                // 行级高亮：纯文本签名包含选中命令的全签名 → 加底色
-                if (selectedSig != null)
-                {
-                    var plainSb = new StringBuilder();
-                    plainSb.Append(line.LeadPrefix ?? "");
-                    foreach (var seg in line.Segments) plainSb.Append(seg.Text);
-                    string plain = plainSb.ToString();
-                    if (plain.Contains(selectedSig, StringComparison.Ordinal))
-                        row.AddToClassList("vn-textchain-prevrow--selected");
-                }
-
-                block.Add(row);
-            }
-        }
-
-        private string GetSelectedSignature(bool isConfirm)
-        {
-            var cmdView = _current as CommandNodeView;
-            if (cmdView == null || cmdView.IsConfirmChain != isConfirm ||
-                cmdView.Data == null || string.IsNullOrEmpty(cmdView.Data.CommandName))
-                return null;
-            return (cmdView.Data.CommandName ?? "") + "(" + (cmdView.Data.Args ?? "") + ")";
-        }
-
-        private void ApplySelectionHighlight()
-        {
-            ApplySelectionHighlightOn(_entryPreviewBlock, isConfirm: false);
-            ApplySelectionHighlightOn(_confirmPreviewBlock, isConfirm: true);
-        }
-
-        private void ApplySelectionHighlightOn(VisualElement block, bool isConfirm)
-        {
-            if (block == null) return;
-            string selectedSig = GetSelectedSignature(isConfirm);
-
-            foreach (var child in block.Children())
-            {
-                if (!(child is VisualElement v)) continue;
-                v.RemoveFromClassList("vn-textchain-prevrow--selected");
-
-                if (selectedSig == null) continue;
-
-                var sb = new StringBuilder();
-                foreach (var inner in v.Children())
-                    if (inner is Label l) sb.Append(l.text);
-                if (sb.ToString().Contains(selectedSig, StringComparison.Ordinal))
-                    v.AddToClassList("vn-textchain-prevrow--selected");
-            }
-        }
-
-        private void RefreshAll()
-        {
-            RenderPreviewBlock(_entryPreviewBlock, _entryText, false);
-            RenderPreviewBlock(_confirmPreviewBlock, _confirmText, true);
-            ApplySelectionHighlight();
-        }
-
-        private static string SegmentToRich(PreviewSegment seg)
-        {
-            string esc = EscapeRichText(seg.Text);
-            switch (seg.Kind)
-            {
-                case PreviewSegmentKind.CommandName:
-                    return "<color=#6FB8E8><b>" + esc + "</b></color>";
-                case PreviewSegmentKind.Bracket:
-                    return "<color=#6E6E6E>" + esc + "</color>";
-                case PreviewSegmentKind.Separator:
-                    return "<color=#7A7A7A>" + esc + "</color>";
-                case PreviewSegmentKind.StringArg:
-                    return "<color=#A8C887>" + esc + "</color>";
-                case PreviewSegmentKind.NumberArg:
-                    return "<color=#E8C87F>" + esc + "</color>";
-                case PreviewSegmentKind.Error:
-                    return "<color=#C85A50><i>" + esc + "</i></color>";
-                default:
-                    return "<color=#D8D8D8>" + esc + "</color>";
-            }
-        }
-
-        private static string EscapeRichText(string s)
-        {
-            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
-        }
-    }
-
-    /// <summary>单条预览行：深度（缩进级数）+ 前导符号 + 主体片段序列。</summary>
-    internal class PreviewLine
-    {
-        public int Depth = 0;
-        public string LeadPrefix = "";
-        public List<PreviewSegment> Segments = new List<PreviewSegment>();
-    }
-
-    internal class PreviewSegment
-    {
-        public PreviewSegmentKind Kind;
-        public string Text;
-    }
-
-    internal enum PreviewSegmentKind
-    {
-        CommandName, // 命令名 · 蓝色加粗
-        Arg,         // 普通参数 · 浅色
-        StringArg,   // 引号字符串 · 绿
-        NumberArg,   // 数字 · 暖色
-        Separator,   // 逗号 / 分号 · 灰
-        Bracket,     // 括号 / 方括号 · 暗灰
-        Error,       // 解析错误 · 红
-    }
-
-    /// <summary>
-    /// 命令链文本 → 预览行序列的转换器（AST 驱动 + 字符串渲染 fallback）。
-    /// 把 <c>SeqNode / ParNode / CommandNode</c> 树展开为 "一行一条命令" 的扁平列表。
-    /// </summary>
-    internal static class ChainTextPrettifier
-    {
-        public static List<PreviewLine> Build(string chainText)
-        {
-            var lines = new List<PreviewLine>();
-            if (string.IsNullOrWhiteSpace(chainText))
-                return lines;
-
-            var parsed = ChainParser.Parse(chainText);
-            if (parsed.Root != null)
-            {
-                Render(parsed.Root, lines, depth: 0, lead: LeadKind.None);
-                return lines;
-            }
-
-            // 解析失败 fallback：单行原样 + 错误信息
-            var fallback = new PreviewLine { Depth = 0, LeadPrefix = "" };
-            foreach (var err in parsed.Errors)
-            {
-                fallback.Segments.Add(new PreviewSegment
-                {
-                    Kind = PreviewSegmentKind.Error,
-                    Text = "⚠ [位置 " + err.Position + "] " + err.Message + "  ",
-                });
-            }
-            fallback.Segments.Add(new PreviewSegment
-            {
-                Kind = PreviewSegmentKind.Arg,
-                Text = chainText.Trim(),
-            });
-            lines.Add(fallback);
-            return lines;
-        }
-
-        private enum LeadKind { None, Arrow, Amp }
-
-        private static void Render(ChainNode node, List<PreviewLine> lines, int depth, LeadKind lead)
-        {
-            if (node is SeqNode seq)
-            {
-                for (int i = 0; i < seq.Children.Count; i++)
-                {
-                    var childLead = i == 0 ? lead : LeadKind.Arrow;
-                    Render(seq.Children[i], lines, depth, childLead);
-                }
-            }
-            else if (node is ParNode par)
-            {
-                for (int i = 0; i < par.Children.Count; i++)
-                {
-                    var childLead = i == 0 ? lead : LeadKind.Amp;
-                    Render(par.Children[i], lines, depth, childLead);
-                }
-            }
-            else if (node is CommandNode cmd)
-            {
-                lines.Add(BuildCommandLine(cmd, depth, lead));
-            }
-        }
-
-        private static PreviewLine BuildCommandLine(CommandNode cmd, int depth, LeadKind lead)
-        {
-            var line = new PreviewLine
-            {
-                Depth = depth,
-                LeadPrefix = lead switch
-                {
-                    LeadKind.Arrow => "→ ",
-                    LeadKind.Amp   => "& ",
-                    _               => "",
-                },
-            };
-            line.Segments.Add(new PreviewSegment
-            {
-                Kind = PreviewSegmentKind.CommandName,
-                Text = string.IsNullOrEmpty(cmd.Name) ? "?" : cmd.Name,
-            });
-            line.Segments.Add(new PreviewSegment
-            {
-                Kind = PreviewSegmentKind.Bracket,
-                Text = "(",
-            });
-
-            // 按顶部逗号切（引号内不切）
-            var args = ConditionParser.SplitTopLevel(cmd.Args ?? "", ',');
-            for (int i = 0; i < args.Count; i++)
-            {
-                if (i > 0)
-                    line.Segments.Add(new PreviewSegment
-                    {
-                        Kind = PreviewSegmentKind.Separator,
-                        Text = ", ",
-                    });
-
-                string a = args[i]?.Trim() ?? "";
-                line.Segments.Add(new PreviewSegment
-                {
-                    Kind = ClassifyArg(a),
-                    Text = a,
-                });
-            }
-
-            line.Segments.Add(new PreviewSegment
-            {
-                Kind = PreviewSegmentKind.Bracket,
-                Text = ")",
-            });
-            return line;
-        }
-
-        private static PreviewSegmentKind ClassifyArg(string a)
-        {
-            if (string.IsNullOrEmpty(a))
-                return PreviewSegmentKind.Arg;
-
-            // 引号字符串（首末有 "）
-            if (a.Length >= 2 && a.StartsWith("\"", StringComparison.Ordinal) &&
-                a.EndsWith("\"", StringComparison.Ordinal))
-                return PreviewSegmentKind.StringArg;
-
-            // 数字（含小数 / 负号）
-            int first = (a.Length > 0 && a[0] == '-') ? 1 : 0;
-            bool isNumeric = first < a.Length;
-            for (int i = first; i < a.Length && isNumeric; i++)
-                if (!char.IsDigit(a[i]) && a[i] != '.') { isNumeric = false; break; }
-            if (isNumeric) return PreviewSegmentKind.NumberArg;
-
-            return PreviewSegmentKind.Arg;
-        }
+        // ---------------- 渲染已全部下放到 VnCodeEditorIMGUI ----------------
+        // 2026-08-31 重写：编辑器改为 IMGUI 全自绘（见 VnCodeEditorIMGUI），
+        // 本类只负责：文本状态缓存、防抖、与图的联动。
+        // 旧的 AST 结构化预览块、ChainTextPrettifier、ChainCodeField 均已删除。
     }
 }

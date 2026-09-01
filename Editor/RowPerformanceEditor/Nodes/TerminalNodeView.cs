@@ -121,8 +121,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             switch (Kind)
             {
-                case TerminalKind.WaitConfirm:  return "演出结束";
-                case TerminalKind.ConfirmStart: return "点击后";
                 default:                       return null;
             }
         }

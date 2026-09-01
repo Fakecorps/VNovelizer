@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -27,6 +28,23 @@ public class VNManager : BaseManager<VNManager>
     public int? PendingJumpIndex { get; set; }
     // 由 loadscript/loadscriptif/loadscriptifnot 的 Simulate 写入 (剧本名, 起始行ID)，快进循环据此切换数据源
     public (string scriptName, string startID)? PendingScriptSwitch { get; set; }
+
+    // === [Flag 扩展] 显式推进请求（2026-08-31）===
+    // 由 nextline 命令的 Execute/Simulate 写入。命令链执行完毕后由 VNManager 消费：
+    // 为真 → 推进下一行；为假 → 停在链尾（等玩家点击 / 等其它推进入口）。
+    // 与 PendingJumpIndex 同构：命令只置标志，绝不在命令执行过程中直接改 CurrentLineIndex
+    // （那会与 CommandManager 的运行时状态冲突，甚至打断自身所在的命令链）。
+    public bool PendingNextLine { get; set; }
+
+    /// <summary>
+    /// nextline 命令的推进入口。只置标志 —— 真正的推进发生在命令链执行完毕后的
+    /// <see cref="ExecuteActionsAndContinue"/> / <see cref="ExecuteConfirmExit"/> /
+    /// <see cref="AdvanceToNextLine"/> 三处消费点。
+    /// </summary>
+    public void RequestNextLine()
+    {
+        PendingNextLine = true;
+    }
 
     // 当前行索引
     public int CurrentLineIndex { get; set; } = -1;
@@ -426,6 +444,7 @@ public class VNManager : BaseManager<VNManager>
                 // [Flag 扩展] 模拟前复位跳转请求，模拟后按需消费
                 PendingJumpIndex = null;
                 PendingScriptSwitch = null;
+                PendingNextLine = false;   // [NextLine 显式化] 快进逐行推进，本标志不参与指针控制
                 string otherCommands = ExtractNonChoiceCommands(line.Command);
                 if (!string.IsNullOrEmpty(otherCommands))
                 {
@@ -474,6 +493,9 @@ public class VNManager : BaseManager<VNManager>
             // [Flag 扩展] 模拟前复位跳转请求；模拟后消费 jump/jumpif/loadscriptif 产生的快进跳转
             PendingJumpIndex = null;
             PendingScriptSwitch = null;
+            // [NextLine 显式化] nextline 的 Simulate 会置本标志，但快进是按索引逐行
+            // 推进的，nextline 不参与指针控制 —— 每行模拟前复位，避免残留到下一行。
+            PendingNextLine = false;
             if (!string.IsNullOrEmpty(line.Command))
             {
                 CommandManager.GetInstance().SimulateCommands(line.Command);
@@ -900,6 +922,9 @@ public class VNManager : BaseManager<VNManager>
         // [Confirm 出口] 进入新行：出口段重新可用
         _confirmExitConsumed = false;
 
+        // [NextLine 显式化] 进入新行：上一行残留的推进请求作废（防跨行污染）
+        PendingNextLine = false;
+
         var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
         SetLineContextForPlay(currentLine, resolved);
@@ -1069,9 +1094,27 @@ public class VNManager : BaseManager<VNManager>
                 PlayCurrentLineImmediately();
                 return;
             }
-            CurrentLineIndex++;
-            PlayCurrentLineImmediately();
+            // [NextLine 显式化] 出口段链尾 nextline() 的 Simulate 已置 PendingNextLine
+            if (PendingNextLine)
+            {
+                PendingNextLine = false;
+                CurrentLineIndex++;
+                PlayCurrentLineImmediately();
+                return;
+            }
+            WarnMissingNextLine(lastLine, isConfirmSection: true);
             return;
+        }
+
+        // [NextLine 显式化] 玩家点击推进 —— 保留为逃生阀。
+        // 进入段链尾写了 nextline() 的行，在链路执行完毕时就已经自动推进了（见
+        // ExecuteActionsAndContinue），根本走不到这里；能走到这里说明该行没有写
+        // nextline，此时仍允许玩家点击推进（否则漏写 = 游戏彻底卡死且无恢复手段），
+        // 但输出警告提示作者去补 nextline()。
+        if (lastLine != null && !string.IsNullOrEmpty(lastLine.Command) &&
+            !CommandDeclaresNextLine(lastLine.Command))
+        {
+            WarnMissingNextLine(lastLine, isConfirmSection: false);
         }
 
         CurrentLineIndex++;
@@ -1084,6 +1127,21 @@ public class VNManager : BaseManager<VNManager>
         {
             PlayCurrentLine();
         }
+    }
+
+    /// <summary>
+    /// 命令串的进入段是否声明了 nextline()（用于点击推进入口的漏写提示）。
+    /// 只做轻量文本判定 —— 误报最多多打一条警告，不会改变推进行为。
+    /// </summary>
+    private static bool CommandDeclaresNextLine(string command)
+    {
+        if (string.IsNullOrEmpty(command)) return false;
+
+        // @Confirm: 之前的部分才是进入段
+        int idx = command.IndexOf("@confirm:", StringComparison.OrdinalIgnoreCase);
+        string entry = idx >= 0 ? command.Substring(0, idx) : command;
+
+        return entry.IndexOf("nextline", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private void PlayCurrentLineImmediately()
@@ -1113,6 +1171,9 @@ public class VNManager : BaseManager<VNManager>
 
         // [Confirm 出口] 进入新行：出口段重新可用
         _confirmExitConsumed = false;
+
+        // [NextLine 显式化] 进入新行：上一行残留的推进请求作废（防跨行污染）
+        PendingNextLine = false;
 
         var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
@@ -2390,6 +2451,24 @@ public class VNManager : BaseManager<VNManager>
             yield break;
         }
 
+        // [NextLine 显式化 2026-08-31] 进入段链尾声明了 nextline()：
+        // 本行演出完毕即推进下一行，不再等待玩家点击（语义 = 「自动过行」）。
+        // 消费标志后置回 false，保证一次 nextline 只推进一行（防双重推进）。
+        if (PendingNextLine)
+        {
+            PendingNextLine = false;
+            // 若本行还声明了 @Confirm 出口段，nextline 先经由出口段执行，与点击行为统一
+            if (HasPendingConfirmExit)
+            {
+                _flowCoroutine = null; // 当前协程即将结束，让出句柄给出口协程
+                LaunchConfirmExit();
+                yield break;
+            }
+            CurrentLineIndex++;
+            PlayCurrentLine();
+            yield break;
+        }
+
         // 如果某个命令登记了“命令全部执行完后自动前进”
         if (shouldAdvanceAfterCommands)
         {
@@ -2453,9 +2532,34 @@ public class VNManager : BaseManager<VNManager>
             yield break;
         }
 
-        // 默认行为：推进到下一行
-        CurrentLineIndex++;
-        PlayCurrentLine();
+        // [NextLine 显式化 2026-08-31] 出口段不再「执行完无条件推进」——
+        // 只有链尾显式声明了 nextline() 才推进下一行。
+        // 未声明时停在出口段末尾（该行演出已呈现完毕，等待其它推进入口），
+        // 并输出可定位的警告，提示作者在出口段链尾补 nextline()。
+        if (PendingNextLine)
+        {
+            PendingNextLine = false;
+            CurrentLineIndex++;
+            PlayCurrentLine();
+            yield break;
+        }
+
+        WarnMissingNextLine(lastLine, isConfirmSection: true);
+    }
+
+    /// <summary>
+    /// [NextLine 显式化] 链尾缺少 nextline() 的可定位警告。
+    /// 严格模式下推进必须由 nextline 显式声明，漏写时给出行号与补法，
+    /// 避免作者面对「卡住不动」却无从下手。
+    /// </summary>
+    private void WarnMissingNextLine(StoryLine line, bool isConfirmSection)
+    {
+        string lineId = line != null ? line.ID : "(未知行)";
+        string section = isConfirmSection ? "出口段 @Confirm" : "进入段";
+        Debug.LogWarning(
+            $"[VNManager] 行 {lineId} 的{section}链尾没有 nextline()，引擎已停止自动推进。\n" +
+            $"请在该行{section}命令链末尾补上 nextline()（可直接编辑，或用行演出编辑器的" +
+            $"「下一行」命令节点拖到链尾）。");
     }
 
     private IEnumerator AutoPlayCountdown(float delay)

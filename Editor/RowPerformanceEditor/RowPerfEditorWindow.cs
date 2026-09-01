@@ -33,6 +33,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
     /// </summary>
     public class RowPerfEditorWindow : EditorWindow
     {
+        /// <summary>EditorPrefs 键前缀（栏宽持久化）。</summary>
+        private const string PrefsKey = "VNovelizer.RowPerfEditor.Layout";
+
         // ---- 数据 ----
         private string _csvPath;
         private string _scriptName;
@@ -168,6 +171,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _palette.OnRequestCreateNode += HandleCreateNode;
             _palette.OnRequestCreateForkJoin += HandleCreateForkJoin;
 
+            // 2026-08-31：命令面板 / 画布之间的可拖拽分隔条
+            main.Add(new VnColumnResizer(paletteRoot, 160f, 520f,
+                invert: false, prefsKey: PrefsKey + ".PaletteW", defaultWidth: 230f));
+
             _graphView = new RowGraphView();
             _graphView.style.flexGrow = 1;
             _graphView.OnGraphChanged += HandleGraphChanged;
@@ -180,12 +187,22 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             // 2026-08-28：中间右列 · 命令链文本编辑器（独立成列，不再挤在 Inspector Tab 内）
             var textChainRoot = new VisualElement();
+
+            // 分隔条在 textChain 左侧 → invert（往右拖 = 画布变宽、文本列变窄）
+            main.Add(new VnColumnResizer(textChainRoot, 240f, 760f,
+                invert: true, prefsKey: PrefsKey + ".TextW", defaultWidth: 360f));
             main.Add(textChainRoot);
+
             _textChain = new TextChainEditor(textChainRoot);
             _textChain.OnChainTextChanged += HandleChainTextChanged;
 
             var inspectorRoot = new VisualElement();
+
+            // 分隔条在 inspector 左侧 → invert
+            main.Add(new VnColumnResizer(inspectorRoot, 200f, 620f,
+                invert: true, prefsKey: PrefsKey + ".InspectorW", defaultWidth: 284f));
             main.Add(inspectorRoot);
+
             _inspector = new InspectorBuilder(inspectorRoot);
             _inspector.OnValueChanged += HandleGraphChanged;
             _inspector.OnRequestJumpToColumn += HandleJumpToColumn;
@@ -965,11 +982,20 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 templateCollapsed: false, showTemplate: false, frameAll: false);
 
             // 用规范化序列化文本回填（文本与图互相校准）。
-            // 2026-08-28：序列化失败回填 null（保持用户输入的原文）——
-            // 旧实现回填占位文本"(图结构待修正)"，用户失焦提交后解析失败会把整图清空。
+            // 2026-08-31：加"回填前文本未变则跳过"保护 ——
+            // 防抖期间用户可能继续输入，如果序列化结果与当前编辑器内容一致，
+            // 回填就是无意义的覆盖（尤其 IMGUI 编辑器会丢失光标位置/选区状态）。
+            string newEntry = SerializeForTextTab(entryGraph);
+            string newConfirm = SerializeForTextTab(confirmGraph);
+            string curEntry = _textChain.GetEntryText();
+            string curConfirm = _textChain.GetConfirmText();
+
+            bool entryChanged = (newEntry != null && newEntry != curEntry);
+            bool confirmChanged = (newConfirm != null && newConfirm != curConfirm);
+
             _textChain.SetTexts(
-                SerializeForTextTab(entryGraph),
-                SerializeForTextTab(confirmGraph));
+                entryChanged ? newEntry : null,
+                confirmChanged ? newConfirm : null);
 
             HandleGraphChanged(); // dirty + 校验 + 快照
         }
