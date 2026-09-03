@@ -58,6 +58,100 @@ namespace VNovelizer.Core.Commands.Chain
         }
 
         /// <summary>
+        /// 2026-09-01：序列化 AST 为<b>格式化文本</b>（含换行 + 4 空格缩进）。
+        ///
+        /// <para>
+        /// 用于编辑器内显示（用户编辑友好），与 <see cref="Serialize"/> 的紧凑形式互补：
+        /// - 顶层命令独占一行，行尾跟 <c>&amp;</c> 或 <c>-&gt;</c>（非末位）
+        /// - <c>[</c> 触发换行，单独占一行，下一行起子项缩进 +4
+        /// - <c>]</c> 单独占一行，与对应 <c>[</c> 同级缩进；非末位时 <c>] &amp; ...</c> 同行
+        /// - 嵌套每层 +4 空格
+        /// </para>
+        ///
+        /// <para>
+        /// <b>CSV 写回仍用 <see cref="Serialize"/></b>（紧凑形式，不带换行/缩进）——
+        /// 编辑器内 <c>_text</c> 与 CSV 是两种表示。
+        /// </para>
+        /// <para>
+        /// <b>幂等性</b>：<see cref="ChainLexer"/> 已跳过所有空白（含换行），
+        /// 含格式化文本的 <c>_text</c> 可被 <see cref="ChainParser"/> 正确解析，
+        /// 结构等价紧凑形式。
+        /// </para>
+        /// <para>
+        /// <b>实现</b>：先用 <see cref="Serialize"/> 得到紧凑形式，再用
+        /// <see cref="ChainLexer"/> 切 token 流，按 token 顺序输出（不依赖 AST 结构，
+        /// 因为 <see cref="ChainParser"/> 不保留 <c>[]</c> 分组信息，按 AST 输出会
+        /// 丢失语义必需的 brackets）。每个 Command token 独占一行，行尾根据下一个
+        /// token 是 <c>&amp;</c> / <c>-&gt;</c> 附加操作符；<c>[</c> / <c>]</c>
+        /// 单独占一行，进入 <c>[</c> depth+1，离开 <c>]</c> depth-1。
+        /// </para>
+        /// </summary>
+        public static string SerializeFormatted(ChainNode root)
+        {
+            if (root == null) return "";
+
+            // 先用紧凑序列化得到 token 流（含语义必需的 brackets）
+            string compact = Serialize(root);
+            if (string.IsNullOrEmpty(compact)) return "";
+
+            var tokens = ChainLexer.Tokenize(compact);
+            if (tokens.Count == 0) return "";
+
+            var sb = new StringBuilder();
+            int depth = 0;
+
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                var tok = tokens[i];
+                string indent = new string(' ', depth * 4);
+
+                switch (tok.Type)
+                {
+                    case ChainTokenType.Command:
+                        sb.Append(indent).Append(tok.Text.Trim());
+                        // 看下一个 token：& / -> 附加到行尾；] / 结尾 不附加
+                        if (i + 1 < tokens.Count)
+                        {
+                            var next = tokens[i + 1];
+                            if (next.Type == ChainTokenType.Amp) sb.Append(" &");
+                            else if (next.Type == ChainTokenType.Arrow) sb.Append(" ->");
+                        }
+                        sb.Append('\n');
+                        break;
+
+                    case ChainTokenType.LBracket:
+                        sb.Append(indent).Append('[').Append('\n');
+                        depth++;
+                        break;
+
+                    case ChainTokenType.RBracket:
+                        depth = System.Math.Max(0, depth - 1);
+                        indent = new string(' ', depth * 4);
+                        sb.Append(indent).Append(']');
+                        // 看下一个 token：& / -> 附加到行尾；否则不附加
+                        if (i + 1 < tokens.Count)
+                        {
+                            var next = tokens[i + 1];
+                            if (next.Type == ChainTokenType.Amp) sb.Append(" &");
+                            else if (next.Type == ChainTokenType.Arrow) sb.Append(" ->");
+                        }
+                        sb.Append('\n');
+                        break;
+
+                    // Amp / Arrow 已在前一 Command / ] 行尾附加，跳过
+                    case ChainTokenType.Amp:
+                    case ChainTokenType.Arrow:
+                        break;
+                }
+            }
+
+            // 去掉末尾换行
+            while (sb.Length > 0 && sb[sb.Length - 1] == '\n')
+                sb.Length--;
+            return sb.ToString();
+        }
+
+        /// <summary>
         /// 序列化 + 幂等自校验（保存前应走本入口）。
         /// </summary>
         public static Result SerializeAndVerify(ChainNode root)

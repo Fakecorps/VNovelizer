@@ -219,6 +219,25 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             root.RegisterCallback<KeyDownEvent>(HandleShortcuts);
 
+            // 2026-09-03：Tab 焦点恢复改由 VnCodeEditorIMGUI.OnFocusRestoreRequested
+            // 事件驱动（见 TextChainEditor.BuildCodeEditor），不再在 root 级别
+            // PreventDefault Tab —— 该方案对 Tab 焦点切换无效（焦点切换不是
+            // KeyDownEvent 的"默认行为"，PreventDefault 管不到；且 BubbleUp 回调
+            // 不会回到原 container，参见 VnCodeEditorIMGUI.OnFocusRestoreRequested
+            // 的事件文档对三套失效方案的详细分析）。
+            //
+            // 保留 Ctrl+Space 的 TrickleDown PreventDefault：Ctrl+Space 是 Windows
+            // 输入法切换快捷键，PreventDefault 阻止 UIToolkit 把它当默认字符处理
+            // （避免被当成空格插入到文本）。VnCodeEditorIMGUI 已检测 !e.control 不
+            // 把 Ctrl+Space 当可打印字符处理，但 root 级别兜底确保万无一失。
+            // 同时 VnCodeEditorIMGUI 启用 IME（Input.imeCompositionMode = On）后，
+            // IMM/TSF 层会正确处理 Ctrl+Space 触发输入法切换。
+            root.RegisterCallback<KeyDownEvent>(e =>
+            {
+                if (e.keyCode == KeyCode.Space && (e.ctrlKey || e.commandKey))
+                    e.PreventDefault();
+            }, TrickleDown.TrickleDown);
+
             if (string.IsNullOrEmpty(_csvPath)) TryAutoSelectScript();
             else RefreshAll();
         }
@@ -627,11 +646,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 templateCollapsed: false, showTemplate: false, frameAll: true);
 
             // 同步链文本到中部文本编辑器（合成模板时显示完整模板文本）
+            // 2026-09-01 v3：CSV 紧凑形式 → 格式化形式（含换行 + 4 空格缩进）显示
             string entryDisplay = _syntheticTemplate
                 ? DefaultPerformanceTemplate.BuildText(
                     form == RowForm.Enhanced ? entryText : null, filledSlots)
-                : entryText;
-            _textChain?.SetTexts(entryDisplay, confirmText);
+                : FormatTextForEditor(entryText);
+            _textChain?.SetTexts(entryDisplay, FormatTextForEditor(confirmText));
 
             Validate();
             UpdateHeaderAndStatus();
@@ -935,6 +955,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             Validate();
             UpdateHeaderAndStatus();
             PushUndoSnapshot("编辑");
+
+            // 2026-09-02：图变更 → 回填到文本编辑器（双向联动）。
+            // 根因：原 HandleGraphChanged 只做 dirty + 校验 + 快照，不回填文本 →
+            // 用户修改节点图后文本编辑器不更新，违反"两边互通"需求。
+            // 用 EchoTexts（不清撤销栈）；HandleChainTextChanged 触发的图变更也会走到
+            // 这里，但 WriteTo 内部幂等（editor.Text == value 时直接 return），不循环。
+            if (_graphView != null && _textChain != null)
+            {
+                string newEntry = SerializeForTextTab(_graphView.EntryGraph);
+                string newConfirm = SerializeForTextTab(_graphView.ConfirmGraph);
+                _textChain.EchoTexts(newEntry, newConfirm);
+            }
         }
 
         /// <summary>
@@ -985,6 +1017,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 2026-08-31：加"回填前文本未变则跳过"保护 ——
             // 防抖期间用户可能继续输入，如果序列化结果与当前编辑器内容一致，
             // 回填就是无意义的覆盖（尤其 IMGUI 编辑器会丢失光标位置/选区状态）。
+            // 2026-09-01：回填走 EchoTexts（不清撤销栈）—— 否则用户撤销立即被回填中和。
             string newEntry = SerializeForTextTab(entryGraph);
             string newConfirm = SerializeForTextTab(confirmGraph);
             string curEntry = _textChain.GetEntryText();
@@ -993,7 +1026,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             bool entryChanged = (newEntry != null && newEntry != curEntry);
             bool confirmChanged = (newConfirm != null && newConfirm != curConfirm);
 
-            _textChain.SetTexts(
+            _textChain.EchoTexts(
                 entryChanged ? newEntry : null,
                 confirmChanged ? newConfirm : null);
 
@@ -1003,12 +1036,28 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>
         /// 图 → 中部文本编辑器回填文本。不可序列化（非法中间态）时返回 null
         /// （SetTexts 对 null 保持原文不变）。
+        /// 2026-09-01 v3：用 <see cref="ChainSerializer.SerializeFormatted"/> 输出含换行
+        /// + 4 空格缩进的格式化文本（编辑器内用户编辑友好）；CSV 写回仍用 Serialize
+        /// 紧凑形式（见 <see cref="HandleSaveRow"/> 等保存路径）。
         /// </summary>
         private static string SerializeForTextTab(ChainGraph graph)
         {
             if (graph == null || !ChainGraphDumper.HasContent(graph)) return "";
             var converted = GraphToAst.Convert(graph);
-            return converted.Success ? ChainSerializer.Serialize(converted.Root) : null;
+            return converted.Success ? ChainSerializer.SerializeFormatted(converted.Root) : null;
+        }
+
+        /// <summary>
+        /// 2026-09-01 v3：CSV 紧凑文本 → 编辑器格式化文本。
+        /// 用于切行加载时把 CSV 原文（紧凑）转为格式化形式（含换行 + 4 空格缩进）。
+        /// 解析失败（半成品/手写非链式语法）时保留原样，不强行格式化。
+        /// </summary>
+        private static string FormatTextForEditor(string csvText)
+        {
+            if (string.IsNullOrWhiteSpace(csvText)) return csvText ?? "";
+            var parsed = ChainParser.Parse(csvText);
+            if (!parsed.Success || parsed.Root == null) return csvText;
+            return ChainSerializer.SerializeFormatted(parsed.Root);
         }
 
         private void HandlePromotionRequest()
