@@ -42,6 +42,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>文本被编辑（isConfirm, 新文本）——外部负责解析重建图。</summary>
         public event Action<bool, string> OnChainTextChanged;
 
+        /// <summary>
+        /// 用户在文本中单击了某条命令（2026-09-03 新增）：(是否出口段, 命令名, 参数原文)。
+        /// 外部（Window）据此在图中定位对应命令节点并展示到细节栏；找不到时静默忽略。
+        /// </summary>
+        public event Action<bool, string, string> OnCommandClicked;
+
         private readonly VisualElement _root;
 
         private string _entryText = "";
@@ -243,6 +249,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 if (_suppressEcho) return;
                 OnTextChanged(newText);
             };
+
+            // 文本中单击命令 → 转发给外部（细节栏展示该命令信息）
+            _editor.OnCommandClicked += (isConfirm, commandName, args) =>
+                OnCommandClicked?.Invoke(isConfirm, commandName, args);
 
             // 失焦 = 用户这一轮输入结束 → 此刻才把规范化文本落回编辑器
             _editor.OnFocusLost += OnEditorFocusLost;

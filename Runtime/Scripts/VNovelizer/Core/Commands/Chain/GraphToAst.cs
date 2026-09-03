@@ -135,6 +135,77 @@ namespace VNovelizer.Core.Commands.Chain
             return result;
         }
 
+        /// <summary>
+        /// 解析 Fork/Join 配对与影响范围（行演出编辑器选中高亮用，2026-09-03 新增）。
+        ///
+        /// <para>
+        /// 传入 Fork：<paramref name="forkId"/> = 该节点，<paramref name="joinId"/> = 各分支
+        /// 共同汇聚的配对 Join。传入 Join：反向遍历全部 Fork 找出配对的 Fork。
+        /// <paramref name="rangeNodeIds"/> 返回闭包内全部节点 ID（含 Fork/Join 两端与
+        /// 嵌套 Fork/Join 内部的节点），UI 层用其给中间节点与配对端点加「范围高亮」，
+        /// 被选中的触发者自身保持选中样式。
+        /// </para>
+        /// </summary>
+        /// <returns>是否成功配对（Fork/Join 未配对或畸形图返回 false）</returns>
+        public static bool TryResolveForkJoinRange(ChainGraph graph, string nodeId,
+            out string forkId, out string joinId, out HashSet<string> rangeNodeIds)
+        {
+            forkId = null;
+            joinId = null;
+            rangeNodeIds = null;
+
+            if (graph == null || string.IsNullOrEmpty(nodeId)) return false;
+            var node = graph.GetNode(nodeId);
+            if (node == null) return false;
+
+            if (node.Kind == ChainGraphNodeKind.Fork)
+            {
+                forkId = nodeId;
+                joinId = FindMatchingJoin(graph, nodeId);
+            }
+            else if (node.Kind == ChainGraphNodeKind.Join)
+            {
+                joinId = nodeId;
+                foreach (var n in graph.Nodes)
+                {
+                    if (n.Kind != ChainGraphNodeKind.Fork) continue;
+                    if (FindMatchingJoin(graph, n.Id) == nodeId)
+                    {
+                        forkId = n.Id;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                return false; // 非 Fork/Join 不构成范围
+            }
+
+            if (string.IsNullOrEmpty(forkId) || string.IsNullOrEmpty(joinId)) return false;
+
+            // 闭包收集：从 Fork 各分支起点 DFS 直到配对 Join（含），嵌套内部节点全部入集。
+            // visited 防畸形图（环）死循环——校验器已保证合法图，此处仅防御。
+            rangeNodeIds = new HashSet<string> { forkId, joinId };
+            var stack = new Stack<string>();
+            var seen = new HashSet<string>();
+
+            foreach (string branchStart in graph.GetSuccessors(forkId))
+                stack.Push(branchStart);
+
+            while (stack.Count > 0)
+            {
+                string current = stack.Pop();
+                if (current == null || !seen.Add(current)) continue;
+                if (current == joinId) continue; // 已入集，不越过配对 Join
+
+                rangeNodeIds.Add(current);
+                foreach (string next in graph.GetSuccessors(current))
+                    stack.Push(next);
+            }
+
+            return true;
+        }
+
         private class Context
         {
             public readonly ChainGraph Graph;
@@ -183,7 +254,7 @@ namespace VNovelizer.Core.Commands.Chain
 
                 if (node.Kind == ChainGraphNodeKind.Fork)
                 {
-                    string joinId = FindMatchingJoin(ctx, node.Id);
+                    string joinId = FindMatchingJoin(ctx.Graph, node.Id);
                     if (joinId == null)
                     {
                         ctx.Result.Errors.Add($"FORK 节点 {node.Id} 找不到配对的 JOIN");
@@ -255,13 +326,13 @@ namespace VNovelizer.Core.Commands.Chain
         /// 嵌套 Fork 的内层 Join 会先出现在路径上，但内层 Join 只属内层分支，
         /// 无法被本 Fork 的其余分支到达，因此自然被排除。
         /// </summary>
-        private static string FindMatchingJoin(Context ctx, string forkId)
+        private static string FindMatchingJoin(ChainGraph graph, string forkId)
         {
-            var branches = ctx.Graph.GetSuccessors(forkId);
+            var branches = graph.GetSuccessors(forkId);
             if (branches.Count == 0) return null;
 
             // 候选：第一条分支路径上的所有 Join（按遇到顺序）
-            var candidates = CollectJoinsAlongPath(ctx, branches[0]);
+            var candidates = CollectJoinsAlongPath(graph, branches[0]);
             if (candidates.Count == 0) return null;
 
             foreach (string candidate in candidates)
@@ -269,7 +340,7 @@ namespace VNovelizer.Core.Commands.Chain
                 bool reachableFromAll = true;
                 for (int i = 1; i < branches.Count; i++)
                 {
-                    if (!CanReach(ctx, branches[i], candidate))
+                    if (!CanReach(graph, branches[i], candidate))
                     {
                         reachableFromAll = false;
                         break;
@@ -282,7 +353,7 @@ namespace VNovelizer.Core.Commands.Chain
         }
 
         /// <summary>沿单一路径前进，收集遇到的 Join 节点（遇分支时取第一条继续）。</summary>
-        private static List<string> CollectJoinsAlongPath(Context ctx, string startId)
+        private static List<string> CollectJoinsAlongPath(ChainGraph graph, string startId)
         {
             var joins = new List<string>();
             var seen = new HashSet<string>();
@@ -291,12 +362,12 @@ namespace VNovelizer.Core.Commands.Chain
 
             while (!string.IsNullOrEmpty(current) && seen.Add(current) && guard++ < 1024)
             {
-                var node = ctx.Graph.GetNode(current);
+                var node = graph.GetNode(current);
                 if (node == null) break;
 
                 if (node.Kind == ChainGraphNodeKind.Join) joins.Add(current);
 
-                var succ = ctx.Graph.GetSuccessors(current);
+                var succ = graph.GetSuccessors(current);
                 if (succ.Count == 0) break;
                 current = succ[0];
             }
@@ -305,7 +376,7 @@ namespace VNovelizer.Core.Commands.Chain
         }
 
         /// <summary>从 <paramref name="fromId"/> 是否可达 <paramref name="targetId"/>（BFS）。</summary>
-        private static bool CanReach(Context ctx, string fromId, string targetId)
+        private static bool CanReach(ChainGraph graph, string fromId, string targetId)
         {
             var queue = new Queue<string>();
             var seen = new HashSet<string>();
@@ -317,7 +388,7 @@ namespace VNovelizer.Core.Commands.Chain
                 string id = queue.Dequeue();
                 if (id == targetId) return true;
 
-                foreach (string next in ctx.Graph.GetSuccessors(id))
+                foreach (string next in graph.GetSuccessors(id))
                     if (seen.Add(next)) queue.Enqueue(next);
             }
 

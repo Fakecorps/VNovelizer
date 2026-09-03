@@ -327,6 +327,128 @@ public class ExcelToCsvConverter : EditorWindow
         }
     }
 
+    /// <summary>
+    /// 行命令编辑器保存后调用：把该行 Command 终值即时镜像写回对应 xlsx（ClosedXML 原地编辑），
+    /// 并同步更新三方合并基准（.csv.cmdmap.json），使下次转换零扰动。
+    /// 找不到 xlsx / .xls 旧格式 / 文件被 Excel 占用时仅告警，CSV 侧不受影响（下次转换时自动补写）。
+    /// </summary>
+    /// <param name="csvPath">已保存的 CSV 路径（用于反推同名 xlsx 与 sidecar 路径）</param>
+    /// <param name="rowId">行 ID（CSV 第一列值）</param>
+    /// <param name="command">该行 Command 列终值</param>
+    public static void MirrorRowCommandBackToExcel(string csvPath, string rowId, string command)
+    {
+        if (string.IsNullOrEmpty(csvPath)) return;
+        rowId = rowId?.Trim() ?? "";
+        if (rowId.Length == 0) return;
+
+        string xlsxPath = LocateExcelFile(csvPath);
+        if (xlsxPath == null)
+        {
+            Debug.LogWarning($"[CmdSync] 未找到 {Path.GetFileNameWithoutExtension(csvPath)} 对应的 Excel 文件，" +
+                             "Command 已保存到 CSV（Excel 侧将在下次转换时同步）。");
+            return;
+        }
+
+        if (Path.GetExtension(xlsxPath).ToLower() == ".xls")
+        {
+            Debug.LogWarning($"[CmdSync] {Path.GetFileName(xlsxPath)} 为 .xls 旧格式，不支持镜像写回（请另存为 .xlsx）；CSV 侧不受影响。");
+            return;
+        }
+
+        // ---- 1. 读 xlsx：定位 rowId 的行号 + 按布局确定 Command 列（与 ConvertFile 同一规则） ----
+        int excelRow = -1;
+        int commandColIndex = -1;
+        try
+        {
+            using (var stream = File.Open(xlsxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = ExcelReaderFactory.CreateReader(stream))
+            {
+                int r = 0;
+                while (reader.Read())
+                {
+                    r++;
+                    if (r == 1)
+                        commandColIndex = GetCommandColumnIndex(reader.FieldCount);
+
+                    object idVal = reader.GetValue(0);
+                    if (idVal != null && idVal.ToString().Trim() == rowId)
+                    {
+                        excelRow = r;
+                        break;
+                    }
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[CmdSync] 读取 {Path.GetFileName(xlsxPath)} 定位行失败：{e.Message}。CSV 侧不受影响。");
+            return;
+        }
+
+        if (excelRow < 0)
+        {
+            Debug.LogWarning($"[CmdSync] 在 {Path.GetFileName(xlsxPath)} 中未找到行 {rowId}，跳过镜像写回。CSV 侧不受影响。");
+            return;
+        }
+        if (commandColIndex < 0) return; // 列布局不满足（无 Command 列），静默跳过
+
+        // ---- 2. ClosedXML 原地写回该单元格 ----
+        try
+        {
+            using (var workbook = new XLWorkbook(xlsxPath))
+            {
+                var ws = workbook.Worksheet(1);
+                ws.Cell(excelRow, commandColIndex + 1).Value = command;
+                workbook.Save();
+            }
+            Debug.Log($"[CmdSync] 已镜像写回行 {rowId} 的 Command 到 {Path.GetFileName(xlsxPath)}（Excel 侧视图已同步）");
+        }
+        catch (IOException)
+        {
+            Debug.LogWarning($"[CmdSync] 镜像写回失败（{Path.GetFileName(xlsxPath)} 可能被 Excel 占用），下次转换时自动重试。CSV 侧不受影响。");
+            return;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[CmdSync] 镜像写回异常（{Path.GetFileName(xlsxPath)}）：{e.Message}。CSV 侧不受影响。");
+            return;
+        }
+
+        // ---- 3. 同步更新三方合并基准（sidecar）——否则下次转换会误报「两边都改」冲突 ----
+        string sidecarPath = GetSidecarPath(csvPath);
+        var snapshot = LoadCommandSnapshot(sidecarPath);
+        snapshot[rowId] = command ?? "";
+        SaveCommandSnapshot(sidecarPath, snapshot);
+
+        // ---- 4. 防死循环：写回更新了 xlsx 修改时间，立即刷新该文件记录 ----
+        AutoExcelConverter.RefreshTimestampForFile(xlsxPath);
+    }
+
+    /// <summary>
+    /// 由 CSV 路径反推同名 Excel 源文件（递归查找，优先 .xlsx）。
+    /// 找不到或配置缺失返回 null。
+    /// </summary>
+    private static string LocateExcelFile(string csvPath)
+    {
+        if (!VNProjectConfig.TryGetInstance(out VNProjectConfig config)) return null;
+
+        string excelFolder = config.GetExcelFolderPath();
+        if (string.IsNullOrEmpty(excelFolder) || !Directory.Exists(excelFolder)) return null;
+
+        string baseName = Path.GetFileNameWithoutExtension(csvPath);
+        string fallback = null;
+        foreach (string file in Directory.GetFiles(excelFolder, "*.*", SearchOption.AllDirectories))
+        {
+            string ext = Path.GetExtension(file).ToLower();
+            if ((ext != ".xlsx" && ext != ".xls") || Path.GetFileNameWithoutExtension(file) != baseName)
+                continue;
+
+            if (ext == ".xlsx") return file; // .xlsx 优先
+            fallback = file;
+        }
+        return fallback;
+    }
+
     // ==================== sidecar 快照（三方合并基准） ====================
 
     private static string GetSidecarPath(string csvPath) => csvPath + ".cmdmap.json";

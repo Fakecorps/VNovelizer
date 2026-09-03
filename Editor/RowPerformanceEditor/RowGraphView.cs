@@ -160,6 +160,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             _suppressChangeEvents = false;
 
+            // 重建后 selection 已清空，刷新一次确保旧视图残留的范围高亮类不遗留
+            RefreshRangeHighlight();
+
             if (frameAll)
                 schedule.Execute(FrameAllIfNeeded).ExecuteLater(50);
         }
@@ -381,6 +384,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 SyncGraphDataFromView(change);
                 OnGraphChanged?.Invoke();
+
+                // 图结构已变（删节点/改连线），选中 Fork/Join 的影响范围可能变化，重算高亮
+                RefreshRangeHighlight();
             }
             else if (moved)
             {
@@ -711,12 +717,52 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             base.AddToSelection(selectable);
             OnNodeSelected?.Invoke(selectable as VNNodeViewBase);
+            RefreshRangeHighlight();
+        }
+
+        public override void RemoveFromSelection(ISelectable selectable)
+        {
+            base.RemoveFromSelection(selectable);
+            // 注意：不触发 OnNodeSelected——取消单个选中不应把 Inspector 切到刚取消的节点
+            RefreshRangeHighlight();
         }
 
         public override void ClearSelection()
         {
             base.ClearSelection();
             OnNodeSelected?.Invoke(null);
+            RefreshRangeHighlight();
+        }
+
+        /// <summary>
+        /// Fork/Join 范围高亮（2026-09-03 新增）：选中 Fork/Join 时，其配对范围
+        /// （中间节点 + 配对端点，含嵌套内部）加「vn-node--range」弱化高亮，
+        /// 帮助用户看清并行组的影响范围。多选取并集；被选中的节点本身保持选中
+        /// 样式、不叠加范围高亮；取消全部选中即全部清除。
+        /// </summary>
+        private void RefreshRangeHighlight()
+        {
+            if (_suppressChangeEvents) return;
+
+            // 1. 收集当前选中中的 Fork/Join，按 (泳道, 节点ID) 求范围并集
+            var rangeKeys = new HashSet<string>();
+            foreach (var sel in selection)
+            {
+                if (!(sel is ForkJoinNodeView fj)) continue;
+                var graph = fj.IsConfirmChain ? ConfirmGraph : EntryGraph;
+                if (!GraphToAst.TryResolveForkJoinRange(graph, fj.Data.Id, out _, out _, out var ids))
+                    continue;
+                foreach (var id in ids)
+                    rangeKeys.Add(NodeViewKey(fj.IsConfirmChain, id));
+            }
+
+            // 2. 应用 / 清除高亮类
+            foreach (var kvp in _nodeViews)
+            {
+                bool inRange = rangeKeys.Contains(kvp.Key) && !selection.Contains(kvp.Value);
+                if (inRange) kvp.Value.AddToClassList("vn-node--range");
+                else kvp.Value.RemoveFromClassList("vn-node--range");
+            }
         }
 
         /// <summary>在指定画布坐标处创建一个命令节点。</summary>
@@ -995,6 +1041,27 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
+        /// 按命令签名查找命令节点视图（文本编辑器单击命令 → 细节栏展示用，2026-09-03）。
+        /// 匹配：泳道 + 命令名（忽略大小写）+ 参数（两端 trim 后精确比较）。
+        /// 多个同名同参节点取第一个；找不到返回 null（调用方静默忽略）。
+        /// </summary>
+        public CommandNodeView FindCommandNode(bool isConfirm, string commandName, string args)
+        {
+            if (string.IsNullOrEmpty(commandName)) return null;
+            string a = args?.Trim() ?? "";
+
+            foreach (var kvp in _nodeViews)
+            {
+                if (!(kvp.Value is CommandNodeView cmd)) continue;
+                if (kvp.Value.IsConfirmChain != isConfirm) continue;
+                if (!string.Equals(cmd.Data.CommandName, commandName, StringComparison.OrdinalIgnoreCase)) continue;
+                if ((cmd.Data.Args ?? "").Trim() != a) continue;
+                return cmd;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// 仅按 id 查找节点 view（不区分泳道）——用于错误对话框等仅知 id 的场景。
         /// 找不到返回 null（节点可能已被删除或尚未创建）。
         /// </summary>
@@ -1045,12 +1112,25 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
     /// <summary>
     /// 自实现拖拽框选器。选框绘制到 contentViewContainer，坐标系与画布缩放/平移同步。
+    ///
+    /// <para>
+    /// <b>2026-09-03：兼任「点空白取消选中」</b>。取消选中原依赖 Unity 内置
+    /// <c>ClickSelector</c>，其激活条件要求 <c>clickCount == 1</c>——编辑节奏快时
+    /// （选中节点后紧接着快速点空白）系统把该次点击报成双击序列（clickCount &gt; 1），
+    /// 条件不满足 → 不清除，表现为「点空白取消选中不那么灵敏」。本选择器在空白处
+    /// 按下时已捕获指针，故由它直接处理：抬起时若从未拖动（纯点击）则显式清除选中，
+    /// 彻底摆脱 clickCount 依赖。ClickSelector 保留作装饰元素等未捕获场景的兜底。
+    /// </para>
     /// </summary>
     public class DragBoxSelector : Manipulator
     {
+        /// <summary>位移超过该阈值视为拖拽框选而非点击（画布坐标像素）</summary>
+        private const float DragThreshold = 3f;
+
         private VisualElement _box;
         private Vector2 _startLocal;
         private bool _active;
+        private bool _dragged;
 
         protected override void RegisterCallbacksOnTarget()
         {
@@ -1093,6 +1173,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             target.CapturePointer(evt.pointerId);
             _active = true;
+            _dragged = false;
             evt.StopPropagation();
         }
 
@@ -1125,6 +1206,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (graphView == null) return;
 
             Vector2 curLocal = graphView.contentViewContainer.WorldToLocal(evt.position);
+
+            // 位移超过阈值 → 判定为拖拽框选（抬起时不再当作"点击清除"）
+            if (!_dragged && (curLocal - _startLocal).magnitude > DragThreshold)
+                _dragged = true;
+
             float x = Mathf.Min(_startLocal.x, curLocal.x);
             float y = Mathf.Min(_startLocal.y, curLocal.y);
             float w = Mathf.Abs(curLocal.x - _startLocal.x);
@@ -1149,6 +1235,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 _box.RemoveFromHierarchy();
                 _box = null;
             }
+
+            // 纯点击（未拖动）空白 → 显式清除选中。不依赖内置 ClickSelector 的
+            // clickCount == 1 条件（快速连击时 clickCount > 1 导致时灵时不灵）。
+            // shift+点击空白保留多选，与 ClickSelector 语义一致。
+            if (!_dragged && !evt.shiftKey)
+                (target as GraphView)?.ClearSelection();
+
             target.ReleasePointer(evt.pointerId);
             evt.StopPropagation();
         }

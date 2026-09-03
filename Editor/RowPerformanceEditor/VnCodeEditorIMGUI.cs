@@ -92,6 +92,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         public event Action OnFocusRestoreRequested;
 
         /// <summary>
+        /// 用户单击落在某条命令范围内时触发（2026-09-03 新增）。
+        /// 参数：(是否出口段, 命令名, 参数原文)。外部（细节栏）据此展示命令信息；
+        /// 文本与图不同步（命令不在图中）时由外部静默忽略。
+        /// </summary>
+        public event Action<bool, string, string> OnCommandClicked;
+
+        /// <summary>
         /// 2026-09-03：Tab 按下后请求外部恢复焦点的标志。
         ///
         /// <para>IMGUI <see cref="HandleKeyDown"/> 处理 Tab 之后置为 true。外部
@@ -291,7 +298,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private static readonly Color ColCommand = new Color(0.435f, 0.722f, 0.91f);   // #6FB8E8
         private static readonly Color ColString = new Color(0.659f, 0.784f, 0.529f);   // #A8C887
         private static readonly Color ColNumber = new Color(0.91f, 0.784f, 0.498f);    // #E8C87F
-        private static readonly Color ColOperator = new Color(0.48f, 0.48f, 0.48f);    // #7A7A7A
+        private static readonly Color ColOperator = new Color(1f, 0.467f, 0.667f);   // #FF77AA 粉色，2026-09-03 醒目化控制流分隔符 & / ->
         private static readonly Color ColPunct = new Color(0.43f, 0.43f, 0.43f);
         private static readonly Color ColSelection = new Color(0.29f, 0.565f, 0.886f, 0.35f);
         private static readonly Color ColCursor = new Color(0.95f, 0.95f, 0.95f);
@@ -605,10 +612,102 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 // 直接点击：锚点与光标一起落到点击处 → 取消选区
                 if (!e.shift) _selectAnchor = index;
                 _cursor = index;
+
+                // 2026-09-03：单击落点在命令范围内时通知外部展示该命令信息
+                // （定位光标与查询信息互不冲突）；双击第二击不重复触发
+                if (e.clickCount == 1) NotifyCommandAtCursor(index);
             }
 
             _dragging = true;
             _desiredColumn = -1;
+        }
+
+        /// <summary>单击落在某命令范围内时触发 <see cref="OnCommandClicked"/>（命令名/括号/参数均命中）。</summary>
+        private void NotifyCommandAtCursor(int index)
+        {
+            if (!TryGetCommandRangeAt(index, out string cmd, out string args)) return;
+
+            int lineIdx = IndexToLine(index);
+            int confirmLine = FindConfirmLine();
+            bool isConfirm = confirmLine >= 0 && lineIdx >= confirmLine;
+            OnCommandClicked?.Invoke(isConfirm, cmd, args);
+        }
+
+        /// <summary>
+        /// 查找覆盖 <paramref name="index"/> 的命令范围（行内 cmd(args)，含命令名与参数）。
+        /// 行内词法扫描 + 括号匹配（跳过字符串内容，参数内可含嵌套括号）。
+        /// 返回 false 表示该位置不属于任何完整命令（空白 / 操作符 / 括号未闭合等）。
+        /// </summary>
+        public bool TryGetCommandRangeAt(int index, out string commandName, out string args)
+        {
+            commandName = null;
+            args = null;
+            if (string.IsNullOrEmpty(_text)) return false;
+
+            index = Mathf.Clamp(index, 0, _text.Length);
+            int lineIdx = IndexToLine(index);
+            string line = _lines[lineIdx];
+
+            // @Confirm: 标记行没有命令
+            if (line.Trim().Equals("@Confirm:", StringComparison.OrdinalIgnoreCase)) return false;
+
+            int col = index - _lineStarts[lineIdx];
+
+            int i = 0;
+            while (i < line.Length)
+            {
+                // 跳到下一个标识符起点
+                while (i < line.Length && !(char.IsLetter(line[i]) || line[i] == '_')) i++;
+                if (i >= line.Length) break;
+
+                int nameStart = i;
+                while (i < line.Length && (char.IsLetterOrDigit(line[i]) || line[i] == '_')) i++;
+                string name = line.Substring(nameStart, i - nameStart);
+
+                // 标识符后（跳过空格）必须是 '(' 才是命令
+                int j = i;
+                while (j < line.Length && line[j] == ' ') j++;
+                if (j >= line.Length || line[j] != '(') continue;
+
+                // 括号匹配：跳过字符串内部（含转义），参数可含嵌套括号
+                int depth = 0;
+                bool inString = false;
+                int k = j;
+                int argStart = j + 1;
+                int argEnd = -1;
+                while (k < line.Length)
+                {
+                    char c = line[k];
+                    if (inString)
+                    {
+                        if (c == '\\') { k += 2; continue; }
+                        if (c == '"') inString = false;
+                        k++;
+                        continue;
+                    }
+                    if (c == '"') { inString = true; k++; continue; }
+                    if (c == '(') depth++;
+                    else if (c == ')')
+                    {
+                        depth--;
+                        if (depth == 0) { argEnd = k; break; }
+                    }
+                    k++;
+                }
+                if (argEnd < 0) return false; // 括号未在同一行闭合（编辑中间态）→ 不响应
+
+                // 命中判定：点击列落在 [nameStart, argEnd]（含两端）
+                if (col >= nameStart && col <= argEnd)
+                {
+                    commandName = name;
+                    args = line.Substring(argStart, argEnd - argStart);
+                    return true;
+                }
+
+                i = argEnd + 1;
+            }
+
+            return false;
         }
 
         private void HandleMouseDrag(Rect rect, Event e)
@@ -1207,9 +1306,29 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     continue;
                 }
 
-                // 操作符（& -> 等）
-                if (c == '&' || c == '-' || c == '>' || c == '|')
+                // 操作符（& / -> 等，2026-09-03 强化：-> 整体识别为 Length=2 token，
+                // 避免拆成 - 与 > 两个 token 后分别绘制时字符间出现 1px 缝隙）
+                if (c == '&' || c == '|')
                 {
+                    tokens.Add(new Token
+                    {
+                        Text = c.ToString(), Column = i, Length = 1, Color = ColOperator
+                    });
+                    i++;
+                    continue;
+                }
+                if (c == '-' && i + 1 < line.Length && line[i + 1] == '>')
+                {
+                    tokens.Add(new Token
+                    {
+                        Text = "->", Column = i, Length = 2, Color = ColOperator
+                    });
+                    i += 2;
+                    continue;
+                }
+                if (c == '-' || c == '>')
+                {
+                    // 防御：孤立的 - / > 不会出现在合法语法里，但用户编辑中若出现仍染色
                     tokens.Add(new Token
                     {
                         Text = c.ToString(), Column = i, Length = 1, Color = ColOperator

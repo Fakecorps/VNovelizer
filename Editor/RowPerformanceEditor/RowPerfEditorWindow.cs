@@ -29,6 +29,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
     ///    → GraphToAst（SP 分解）
     ///    → ChainSerializer.SerializeAndVerify（含 ChainParser 反解析比对）
     ///    → 原子写 CSV（临时文件 + File.Replace）
+    ///    → 镜像写回 Excel（ClosedXML，该行 Command 列即时同步，见 ExcelToCsvConverter.MirrorRowCommandBackToExcel）
     /// </code>
     /// </summary>
     public class RowPerfEditorWindow : EditorWindow
@@ -195,6 +196,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             _textChain = new TextChainEditor(textChainRoot);
             _textChain.OnChainTextChanged += HandleChainTextChanged;
+
+            // 文本中单击命令 → 细节栏展示该命令信息（与点击图节点等价，但不改图选中状态）。
+            // 文本与图不同步（防抖期/解析失败）时 FindCommandNode 返回 null，静默不响应。
+            _textChain.OnCommandClicked += (isConfirm, commandName, args) =>
+            {
+                var view = _graphView.FindCommandNode(isConfirm, commandName, args);
+                if (view != null) _inspector.Show(view);
+            };
 
             var inspectorRoot = new VisualElement();
 
@@ -1414,11 +1423,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             row.Command = newCommand;
 
+            // 保存期间挂起自动转换轮询：CSV 原子写 + 镜像写回 xlsx 全程不被轮询读到半写文件
+            AutoExcelConverter.SuspendForSeconds(2.0);
+
             if (!TryWriteCsv(out string writeError))
             {
                 EditorUtility.DisplayDialog("写入失败", writeError, "好");
                 return;
             }
+
+            // CSV 落盘后立即把该行 Command 镜像写回 Excel（Phase 1：编辑器保存 → CSV → Excel 反向覆写，
+            // 见 VNCommandChainSpec.md §11.5）。写回失败仅告警，CSV 侧不受影响。
+            ExcelToCsvConverter.MirrorRowCommandBackToExcel(_csvPath, row.Id, newCommand);
 
             SavePositionsOnly(row);
             _isDirty = false;

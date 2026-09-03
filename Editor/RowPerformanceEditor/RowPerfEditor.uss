@@ -489,6 +489,13 @@
     border-width: 2px;
 }
 
+/* Fork/Join 范围高亮（弱化：浅蓝描边 + 淡蓝底，与选中态区分）。
+   双类选择器保证特异性高于分类色 / confirm / forkjoin 的背景边框规则。 */
+.vn-node.vn-node--range > #node-border {
+    border-color: #6A9BC8;
+    background-color: rgba(74, 144, 217, 0.10);
+}
+
 .vn-node--confirm > #node-border {
     background-color: #3A4A38;
     border-color: #5A8A3E;

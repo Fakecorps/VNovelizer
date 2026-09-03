@@ -19,6 +19,12 @@ public static class AutoExcelConverter
     /// <summary>上次检查的时间（EditorApplication.timeSinceStartup）</summary>
     private static double _lastCheckTime = 0;
 
+    /// <summary>
+    /// 轮询挂起截止时间（EditorApplication.timeSinceStartup）。
+    /// 行演出编辑器保存 CSV + 镜像写回 xlsx 期间挂起，避免轮询读到半写文件。
+    /// </summary>
+    private static double _suspendUntil = 0;
+
     /// <summary>检查间隔（秒）</summary>
     private const double CheckInterval = 2.0;
 
@@ -41,8 +47,11 @@ public static class AutoExcelConverter
             return;
         }
 
-        // 每 CheckInterval 秒检查一次
+        // 挂起期间不检查（编辑器正在写 CSV / 镜像写回 xlsx）
         double now = EditorApplication.timeSinceStartup;
+        if (now < _suspendUntil) return;
+
+        // 每 CheckInterval 秒检查一次
         if (now - _lastCheckTime < CheckInterval) return;
         _lastCheckTime = now;
 
@@ -166,5 +175,26 @@ public static class AutoExcelConverter
     public static void RefreshAllFileTimestamps()
     {
         ScanAndRecordTimestamps();
+    }
+
+    /// <summary>
+    /// 挂起自动转换轮询（秒）。行演出编辑器写 CSV 并镜像写回 xlsx 期间调用，
+    /// 与「临时文件 + File.Replace」原子写构成双保险，避免轮询读到半写文件
+    /// （见 VNCommandChainSpec.md §11.5 保存竞态防护）。
+    /// </summary>
+    public static void SuspendForSeconds(double seconds)
+    {
+        _suspendUntil = EditorApplication.timeSinceStartup + seconds;
+    }
+
+    /// <summary>
+    /// 刷新单个文件的修改时间记录：镜像写回 xlsx 属于程序性写入，会更新其修改时间，
+    /// 调用本方法避免下一轮轮询把它误判为「用户在 Excel 中的修改」而重复转换（防死循环）。
+    /// 只刷新指定文件，不影响其他文件尚未处理的真实修改（与 <see cref="RefreshAllFileTimestamps"/> 区分）。
+    /// </summary>
+    public static void RefreshTimestampForFile(string filePath)
+    {
+        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
+        _lastWriteTicks[filePath] = File.GetLastWriteTime(filePath).Ticks;
     }
 }
