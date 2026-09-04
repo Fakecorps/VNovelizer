@@ -113,7 +113,26 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         public static string BuildPromotedText(string existingUserChain,
             System.Collections.Generic.IReadOnlyCollection<string> slots = null)
         {
-            return DefaultPerformanceTemplate.BuildText(existingUserChain, slots);
+            // 2026-09-04：拆分 @Confirm: 出口段——出口段不能作为 userChain 嵌进
+            // 模板分支 B（否则 @Confirm: 会出现在进入段内部，Command 列的
+            // @Confirm 切分被破坏，进入段尾部残留悬空 -> 导致解析失败）。
+            // 出口段提升后拼在模板链尾，语义不变（用户确认推进时执行）。
+            string entry = existingUserChain ?? "";
+            string confirm = "";
+            if (!string.IsNullOrEmpty(existingUserChain))
+            {
+                int idx = RowPerfEditorWindow.IndexOfConfirmToken(existingUserChain);
+                if (idx >= 0)
+                {
+                    entry = existingUserChain.Substring(0, idx).Trim().TrimEnd('&').Trim();
+                    confirm = existingUserChain.Substring(idx + "@confirm:".Length).Trim();
+                }
+            }
+
+            string promoted = DefaultPerformanceTemplate.BuildText(entry, slots);
+            if (!string.IsNullOrWhiteSpace(confirm))
+                promoted += "&@Confirm:" + confirm;
+            return promoted;
         }
 
         /// <summary>
@@ -138,11 +157,34 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (string.IsNullOrWhiteSpace(commandChain)) return "";
 
-            var parsed = ChainParser.Parse(commandChain);
-            if (parsed.Root == null) return "";
+            // 2026-09-04：拆分 @Confirm: 出口段——ChainParser 不认识 @ 标记，
+            // 整串解析必然失败导致返回空串、出口段丢失。出口段不参与剔除
+            // （nextline 等流程命令非系统命令，应保留），剔除后原样拼回。
+            string entry = commandChain;
+            string confirm = "";
+            int idx = RowPerfEditorWindow.IndexOfConfirmToken(commandChain);
+            if (idx >= 0)
+            {
+                entry = commandChain.Substring(0, idx).Trim().TrimEnd('&').Trim();
+                confirm = commandChain.Substring(idx + "@confirm:".Length).Trim();
+            }
 
-            var stripped = StripNode(parsed.Root);
-            return stripped == null ? "" : ChainSerializer.Serialize(stripped);
+            string result = "";
+            if (!string.IsNullOrWhiteSpace(entry))
+            {
+                var parsed = ChainParser.Parse(entry);
+                if (parsed.Root == null) return "";
+
+                var stripped = StripNode(parsed.Root);
+                result = stripped == null ? "" : ChainSerializer.Serialize(stripped);
+            }
+
+            if (!string.IsNullOrWhiteSpace(confirm))
+            {
+                if (!string.IsNullOrWhiteSpace(result)) result += "&";
+                result += "@Confirm:" + confirm;
+            }
+            return result;
         }
 
         /// <summary>

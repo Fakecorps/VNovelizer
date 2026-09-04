@@ -728,10 +728,11 @@ ScriptParser → 三路径执行（默认模板 / 增强 / 定制）→ ChainExe
 ```
 
 - **列分工**：数据列归 Excel（批量录入 + 低门槛），Command 列归 Unity 图编辑器（高亮/补全/校验）
-- **镜像写回（ClosedXML，MIT，2026-08-25 选型）**：转换时顺带把 CSV 的 Command 列写回 xlsx，Excel 侧浏览剧本时看到的编排永远最新。三个关键设计：
+- **镜像写回（ClosedXML，MIT，2026-08-25 选型）**：转换时顺带把 CSV 的 Command 列写回 xlsx，Excel 侧浏览剧本时看到的编排永远最新。四个关键设计：
   - **对比后跳过**：写回前对比 xlsx 与 CSV 的 Command 列，一致则不发生物理写入（常态零扰动）
-  - **时机天然安全**：转换触发条件即"xlsx 刚被修改"（用户刚保存并关闭 Excel），文件必然未锁
+  - **文件锁自动处理（2026-09-04 新增）**：图编辑器保存 CSV 时 xlsx 可能正被 Excel/WPS 打开（文件锁占用，ClosedXML 保存抛 IOException）。`TrySaveWorkbook` 失败时经 Windows Restart Manager（`ExcelProcessHelper`）精确定位锁定该文件的电子表格进程 → 关闭 → 重试写回 → 成功后用系统默认应用重新打开恢复用户视图，全程自动。风险提示：被关闭的表格程序未保存的修改会丢失（文档恢复机制可找回）
   - **Command 列永远以 CSV 为准**：两侧都改且不一致时采用 CSV 值并警告（实现为单元格级三方合并，基准存 `.csv.cmdmap.json`）——Excel 模板应将 Command 列灰底标注"由 Unity 图编辑器维护"
+  - **写回失败自动补写**：关进程后仍写不进去（非表格进程锁定等）仅告警，CSV 侧不受影响；sidecar 基准不更新，下次转换时三方合并自然产生差异并再次尝试写回
 - **防死循环**：写回会更新 xlsx 修改时间 → 立即刷新 `AutoExcelConverter._lastWriteTicks`，避免下次轮询误判再次转换
 - **`.xls` 限制**：ClosedXML 仅支持 `.xlsx`；检测到 `.xls` 时跳过镜像写回并警告建议转存（.xls 为 2003 旧格式，另存即迁移）
 - **备选记录**：NPOI（Apache 2.0）支持 .xls 原地写，但 API 繁琐、格式保留弱，仅当出现 .xls 刚需再评估

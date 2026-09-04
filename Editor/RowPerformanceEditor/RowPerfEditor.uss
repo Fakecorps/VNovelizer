@@ -69,6 +69,25 @@
     color: #FFFFFF;
 }
 
+/* 绿色运行按钮（工具栏最右端，与出口段绿 #7FAC5B 同族） */
+.vn-toolbar Button.vn-toolbar-run {
+    background-color: #4C8C3A;
+    border-color: #5FA847;
+    color: #FFFFFF;
+    -unity-font-style: bold;
+}
+
+.vn-toolbar Button.vn-toolbar-run:hover {
+    background-color: #5FA847;
+    border-color: #74BC5C;
+    color: #FFFFFF;
+}
+
+.vn-toolbar Button.vn-toolbar-run:active {
+    background-color: #3E7A2E;
+    color: #FFFFFF;
+}
+
 .vn-toolbar-divider {
     width: 1px;
     height: 18px;

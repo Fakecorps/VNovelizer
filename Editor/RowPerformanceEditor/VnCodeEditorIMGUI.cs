@@ -455,7 +455,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 fontSize = FontSize,
                 richText = false,
                 alignment = TextAnchor.UpperLeft,
-                wordWrap = true,          // 2026-08-31：开启自动换行，长行不溢出
+                wordWrap = false,         // 2026-09-03：单 token Label 不需要 wrap；
+                                          //   wordWrap=true 会让 CalcSize 宽度略小于实际渲染宽度，
+                                          //   加之 TextClipping.Clip，等宽字体的最后一个字符（如
+                                          //   "showDialogue" 的 e）会被裁掉——而"showDialoguee"
+                                          //   长度更大，1px 偏差影响不到，反而完整显示。
                 clipping = TextClipping.Clip,
             };
             // 2026-09-01 v3：强制 padding = 0，否则 GUIStyle.CalcSize 返回的字符宽
@@ -1146,7 +1150,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     if (cursorX + sliceW > -200f && cursorX < rect.width + 200f)
                     {
                         Color c = isSelectedLine ? ColHighlight : token.Color;
-                        var r = new Rect(cursorX, y, sliceW, _lineHeight);
+                        // 2026-09-03：宽度 +1f 容纳 CalcSize 与 GUI.Label 实际渲染的 1px 偏差，
+                        //   防止等宽字体最后一个字符被 TextClipping.Clip 裁掉
+                        var r = new Rect(cursorX, y, sliceW + 1f, _lineHeight);
 
                         var old = _textStyle.normal.textColor;
                         _textStyle.normal.textColor = c;

@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEditor;
 using System.IO;
@@ -8,6 +9,7 @@ using ClosedXML.Excel;
 
 public class ExcelToCsvConverter : EditorWindow
 {
+    // 2026-09-04：镜像写回加锁占用自动关闭重试（见 TrySaveWorkbook / ExcelProcessHelper）
     public static void ConvertAllExcelFiles()
     {
         // 注册编码提供程序（ExcelDataReader 需要）
@@ -306,31 +308,78 @@ public class ExcelToCsvConverter : EditorWindow
             return;
         }
 
-        try
+        if (TrySaveWorkbook(xlsxPath, workbook =>
         {
-            using (var workbook = new XLWorkbook(xlsxPath))
-            {
-                var ws = workbook.Worksheet(1);
-                foreach (var d in diffs)
-                    ws.Cell(d.excelRow, excelCol).Value = d.value;
-                workbook.Save();
-            }
+            var ws = workbook.Worksheet(1);
+            foreach (var d in diffs)
+                ws.Cell(d.excelRow, excelCol).Value = d.value;
+        }))
+        {
             Debug.Log($"[CmdSync] 已镜像写回 {diffs.Count} 个 Command 单元格到 {Path.GetFileName(xlsxPath)}（Excel 侧视图已同步）");
         }
-        catch (IOException)
+        else
         {
             Debug.LogWarning($"[CmdSync] 镜像写回失败（{Path.GetFileName(xlsxPath)} 可能被 Excel 占用），下次转换时自动重试。CSV 侧不受影响。");
         }
-        catch (System.Exception e)
+    }
+
+    /// <summary>
+    /// 打开 xlsx 执行编辑并保存。文件被 Excel 占用（IOException）时，
+    /// 自动关闭锁定该文件的 Excel 进程后重试；成功写回后重新打开文件恢复视图
+    /// （详见 <see cref="ExcelProcessHelper"/>）。
+    /// </summary>
+    private static bool TrySaveWorkbook(string xlsxPath, Action<XLWorkbook> edit)
+    {
+        string fileName = Path.GetFileName(xlsxPath);
+        bool closedExcel = false;
+
+        for (int attempt = 1; attempt <= 4; attempt++)
         {
-            Debug.LogWarning($"[CmdSync] 镜像写回异常（{Path.GetFileName(xlsxPath)}）：{e.Message}。CSV 侧不受影响。");
+            try
+            {
+                using (var workbook = new XLWorkbook(xlsxPath))
+                {
+                    edit(workbook);
+                    workbook.Save();
+                }
+
+                // 确实关过 Excel → 写回成功后重新打开，恢复用户视图
+                if (closedExcel) ExcelProcessHelper.ReopenInDefaultApp(xlsxPath);
+                return true;
+            }
+            catch (IOException)
+            {
+                if (attempt == 1)
+                {
+                    // 首次失败：定位并关闭锁定该文件的 Excel（无锁定进程时返回 true，直接重试）
+                    if (!ExcelProcessHelper.CloseLockingExcel(xlsxPath, out closedExcel))
+                    {
+                        Debug.LogWarning($"[CmdSync] {fileName} 被其他进程锁定，放弃本次镜像写回。");
+                        return false;
+                    }
+                }
+                else
+                {
+                    System.Threading.Thread.Sleep(500); // 等文件句柄彻底释放
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[CmdSync] 镜像写回异常（{fileName}）：{e.Message}。CSV 侧不受影响。");
+                return false;
+            }
         }
+
+        Debug.LogWarning($"[CmdSync] 关闭 Excel 后仍无法写入 {fileName}，放弃本次镜像写回（下次转换时自动重试）。");
+        return false;
     }
 
     /// <summary>
     /// 行命令编辑器保存后调用：把该行 Command 终值即时镜像写回对应 xlsx（ClosedXML 原地编辑），
     /// 并同步更新三方合并基准（.csv.cmdmap.json），使下次转换零扰动。
     /// 找不到 xlsx / .xls 旧格式 / 文件被 Excel 占用时仅告警，CSV 侧不受影响（下次转换时自动补写）。
+    /// 2026-09-04：文件被 Excel 占用时自动关闭 Excel → 重试 → 写回成功后自动重新打开
+    /// （TrySaveWorkbook / ExcelProcessHelper）。
     /// </summary>
     /// <param name="csvPath">已保存的 CSV 路径（用于反推同名 xlsx 与 sidecar 路径）</param>
     /// <param name="rowId">行 ID（CSV 第一列值）</param>
@@ -393,24 +442,18 @@ public class ExcelToCsvConverter : EditorWindow
         if (commandColIndex < 0) return; // 列布局不满足（无 Command 列），静默跳过
 
         // ---- 2. ClosedXML 原地写回该单元格 ----
-        try
+        // 文件被 Excel 占用时自动关闭 Excel → 重试 → 写回成功后重新打开（TrySaveWorkbook）。
+        if (TrySaveWorkbook(xlsxPath, workbook =>
         {
-            using (var workbook = new XLWorkbook(xlsxPath))
-            {
-                var ws = workbook.Worksheet(1);
-                ws.Cell(excelRow, commandColIndex + 1).Value = command;
-                workbook.Save();
-            }
+            var ws = workbook.Worksheet(1);
+            ws.Cell(excelRow, commandColIndex + 1).Value = command;
+        }))
+        {
             Debug.Log($"[CmdSync] 已镜像写回行 {rowId} 的 Command 到 {Path.GetFileName(xlsxPath)}（Excel 侧视图已同步）");
         }
-        catch (IOException)
+        else
         {
             Debug.LogWarning($"[CmdSync] 镜像写回失败（{Path.GetFileName(xlsxPath)} 可能被 Excel 占用），下次转换时自动重试。CSV 侧不受影响。");
-            return;
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogWarning($"[CmdSync] 镜像写回异常（{Path.GetFileName(xlsxPath)}）：{e.Message}。CSV 侧不受影响。");
             return;
         }
 

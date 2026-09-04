@@ -195,6 +195,11 @@ public static class AutoExcelConverter
     public static void RefreshTimestampForFile(string filePath)
     {
         if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
+        // 统一键格式：轮询扫描（TryConvertModifiedExcelFiles）用 Path.GetFullPath 的
+        // 绝对路径做字典键，而镜像写回方传入的是 Assets/... 相对路径——不规范化则
+        // 刷新写入另一个键，防死循环失效，下次轮询会把程序性写回误判为「用户在
+        // Excel 中的修改」而触发一次多余转换。
+        filePath = Path.GetFullPath(filePath);
         _lastWriteTicks[filePath] = File.GetLastWriteTime(filePath).Ticks;
     }
 }

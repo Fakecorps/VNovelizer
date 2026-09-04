@@ -38,10 +38,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private const string PrefsKey = "VNovelizer.RowPerfEditor.Layout";
 
         // ---- 数据 ----
-        private string _csvPath;
+        // [SerializeField] 让 Unity 在 Domain Reload（Play 模式切换触发的程序集重载）
+        // 时自动序列化与恢复——这是 ScriptableObject 基类（EditorWindow 继承自它）的内置机制，
+        // 比 EditorPrefs 更原生可靠。窗口关闭后这些字段不持久化（符合「关闭即重置」的预期）。
+        [SerializeField] private string _csvPath;
+        [SerializeField] private int _currentRowIndex = -1;
         private string _scriptName;
+        // _rows 不能用 [SerializeField]——CsvRow 是私有嵌套类，Unity 不可序列化；保留为运行时数据，
+        // 在 CreateGUI 中通过 LoadCsv(_csvPath) 重建。
         private List<CsvRow> _rows = new List<CsvRow>();
-        private int _currentRowIndex = -1;
         private bool _isDirty;
 
         /// <summary>
@@ -248,7 +253,29 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }, TrickleDown.TrickleDown);
 
             if (string.IsNullOrEmpty(_csvPath)) TryAutoSelectScript();
-            else RefreshAll();
+            else RestoreSessionAfterReload();
+        }
+
+        /// <summary>
+        /// Domain Reload（Play 模式切换触发的程序集重载）后从 <c>[SerializeField]</c> 字段
+        /// 恢复会话。<see cref="LoadCsv"/> 内部会把 <c>_currentRowIndex</c> 重置为 -1，
+        /// 因此先备份再恢复——否则刚被 Unity 序列化保留下来的索引会被 LoadCsv 抹掉。
+        /// 文件被删时回退到自动选择。
+        /// </summary>
+        private void RestoreSessionAfterReload()
+        {
+            if (!File.Exists(_csvPath))
+            {
+                _csvPath = null;
+                TryAutoSelectScript();
+                return;
+            }
+            int savedIndex = _currentRowIndex;
+            LoadCsv(_csvPath);
+            if (savedIndex >= 0 && savedIndex < _rows.Count)
+                SelectRow(savedIndex);
+            else if (_rows.Count > 0)
+                SelectRow(0);
         }
 
         private static string FindStyleSheetPath()
@@ -269,7 +296,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var bar = new VisualElement();
             bar.AddToClassList("vn-toolbar");
 
-            var scriptButton = new Button(ShowScriptPicker) { text = "剧本…" };
+            var scriptButton = new Button(ShowScriptPicker) { text = "选择剧本" };
             scriptButton.tooltip = "选择要编辑的剧本 CSV";
             bar.Add(scriptButton);
 
@@ -332,6 +359,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             _saveButton = new Button(SaveCurrentRow) { text = "保存到 CSV" };
             bar.Add(_saveButton);
+
+            var runButton = new Button(RunCurrentRow) { text = "▶ 运行" };
+            runButton.tooltip = "运行本行：进入 Play 模式，从当前行 ID 开始播放（未保存的修改会自动保存）";
+            runButton.AddToClassList("vn-toolbar-run");
+            bar.Add(runButton);
 
             root.Add(bar);
         }
@@ -618,6 +650,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             SplitCommandColumn(row.Command, out string entryText, out string confirmText);
 
+            // 2026-09-04：所有行都有默认出口段——Command 列未声明 @Confirm: 时，
+            // 视图合成 nextline() 出口段（文本编辑器显示 @Confirm: nextline()，
+            // 图中出口泳道含 nextline 节点）。保存时兜底写回，见 SaveCurrentRow。
+            if (string.IsNullOrWhiteSpace(confirmText)) confirmText = "nextline()";
+
             var form = RowPromotion.DetermineForm(row.Command);
 
             // 2026-08-28：模板按 Char 列实际填写过滤——只生成用户用到的立绘槽位节点，
@@ -655,10 +692,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 templateCollapsed: false, showTemplate: false, frameAll: true);
 
             // 同步链文本到中部文本编辑器（合成模板时显示完整模板文本）
-            // 2026-09-01 v3：CSV 紧凑形式 → 格式化形式（含换行 + 4 空格缩进）显示
+            // 2026-09-01 v3：CSV 紧凑形式 → 格式化形式（含换行 + 4 空格缩进）显示。
+            // 2026-09-03 修复：合成模板行同样过 FormatTextForEditor —— 旧代码直接输出
+            // BuildText 的紧凑单行文本，Normal/Enhanced 行失去"规则排序"（只有 Custom 行正常）。
             string entryDisplay = _syntheticTemplate
-                ? DefaultPerformanceTemplate.BuildText(
-                    form == RowForm.Enhanced ? entryText : null, filledSlots)
+                ? FormatTextForEditor(DefaultPerformanceTemplate.BuildText(
+                    form == RowForm.Enhanced ? entryText : null, filledSlots))
                 : FormatTextForEditor(entryText);
             _textChain?.SetTexts(entryDisplay, FormatTextForEditor(confirmText));
 
@@ -732,7 +771,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             confirm = command.Substring(idx + "@confirm:".Length).Trim();
         }
 
-        private static int IndexOfConfirmToken(string source)
+        /// <summary>
+        /// 引号感知的 @confirm: 标记查找（未找到返回 -1）。
+        /// public 供 <see cref="RowPromotion"/> 等同类复用（提升/重置路径的出口段拆分）。
+        /// </summary>
+        public static int IndexOfConfirmToken(string source)
         {
             const string token = "@confirm:";
             bool inQuote = false;
@@ -1240,10 +1283,25 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             ChainClipboard.TryPaste(out string entry, out string confirm);
 
+            // 2026-09-04：粘贴的链没有出口段时兜底默认出口段 nextline()
+            // （与 RefreshAll 的视图合成、SaveCurrentRow 的保存兜底一致）。
+            if (string.IsNullOrWhiteSpace(confirm)) confirm = "nextline()";
+
             _graphView.Rebuild(BuildGraph(entry, isConfirm: false),
                 BuildGraph(confirm, isConfirm: true), null, true,
                 RowPromotion.DetermineForm(CurrentRow.Command) != RowForm.Custom,
                 frameAll: false);
+
+            // 粘贴是显式编辑：进入段不再是视图合成模板（否则保存走早退分支，粘贴内容不落盘）
+            _syntheticTemplate = false;
+
+            // 2026-09-04：粘贴后同步文本编辑器（与 HandleGraphChanged 的双向联动一致）
+            if (_textChain != null)
+            {
+                _textChain.EchoTexts(
+                    SerializeForTextTab(_graphView.EntryGraph),
+                    SerializeForTextTab(_graphView.ConfirmGraph));
+            }
 
             _isDirty = true;
             Validate();
@@ -1384,32 +1442,51 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
 
             // 2. 图 → AST → 文本（含幂等自校验）
-            // 2026-08-27：合成模板图未被用户编辑时，保持原 Command 列文本不写回
+            // 2026-08-27：合成模板图未被用户编辑时，进入段保持原 Command 列文本不写回
             // （Normal/Enhanced 行展开的模板节点是视图合成物，不主动"提升"）。
-            // _syntheticTemplate 与 _isDirty 双信号共同保证"用户真没编辑"才早退——
+            // _syntheticTemplate 与 _isDirty 双信号共同保证"用户真没编辑"才走此分支——
             // 单信号被漏触发时双信号互为冗余（_isDirty 漏触发但 _syntheticTemplate
             // 仍为 true → 仍走早退 → 改动丢失：这是已知风险，接受；用户手动点保存
             // 通常意味着至少动过图，应能反映到 _isDirty）。
-            if (_syntheticTemplate && !_isDirty)
+            string entryText;
+            if (_syntheticTemplate)
             {
-                SavePositionsOnly(row);
-                ShowNotification(new GUIContent("命令链未修改（展开的模板为视图合成），已保存节点位置"));
-                return;
-            }
+                // 2026-09-04：合成模板行 —— 进入段与模板规范化文本一致时保持 CSV
+                // 原进入段文本不写回（只编辑出口段不应把模板实体化、意外"提升"行形态）；
+                // 实质编辑过进入段才写回序列化结果（提升语义不变）。
+                SplitCommandColumn(row.Command, out string csvEntry, out _);
+                var form = RowPromotion.DetermineForm(row.Command);
+                string templateText = DefaultPerformanceTemplate.BuildText(
+                    form == RowForm.Enhanced ? csvEntry : null, CollectFilledSlots(row));
 
-            if (!TrySerialize(_graphView.EntryGraph, out string entryText, out string error) ||
-                !TrySerialize(_graphView.ConfirmGraph, out string confirmText, out error))
+                if (!TrySerialize(_graphView.EntryGraph, out entryText, out string error))
+                {
+                    EditorUtility.DisplayDialog("序列化失败", error, "好");
+                    return;
+                }
+
+                if (NormalizeChain(entryText) == NormalizeChain(templateText))
+                    entryText = csvEntry;
+            }
+            else if (!TrySerialize(_graphView.EntryGraph, out entryText, out string error))
             {
                 EditorUtility.DisplayDialog("序列化失败", error, "好");
                 return;
             }
 
-            string newCommand = entryText;
-            if (!string.IsNullOrWhiteSpace(confirmText))
+            if (!TrySerialize(_graphView.ConfirmGraph, out string confirmText, out string error2))
             {
-                if (!string.IsNullOrWhiteSpace(newCommand)) newCommand += "&";
-                newCommand += "@Confirm:" + confirmText;
+                EditorUtility.DisplayDialog("序列化失败", error2, "好");
+                return;
             }
+
+            // 2026-09-04：所有行都有默认出口段——出口段为空时兜底 nextline()，
+            // 与 RefreshAll 的视图合成一致，保证保存后 CSV 总是声明 @Confirm:。
+            if (string.IsNullOrWhiteSpace(confirmText)) confirmText = "nextline()";
+
+            string newCommand = entryText;
+            if (!string.IsNullOrWhiteSpace(newCommand)) newCommand += "&";
+            newCommand += "@Confirm:" + confirmText;
 
             // 3. 未变更则不写回——存量剧本手写的排版格式得以完整保留
             if (row.Command == newCommand)
@@ -1440,6 +1517,46 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _isDirty = false;
             RefreshAll();
             ShowNotification(new GUIContent("已保存到 CSV"));
+        }
+
+        /// <summary>
+        /// 运行本行：未保存的修改先自动落盘（保存失败即中止），然后进入 Play 模式
+        /// 从当前行 ID 开始播放。复用剧本管理器「试玩」的 PlayerPrefs 标记机制
+        /// （<c>VNRuntimeInitializer.AutoPlayOnPlayMode</c> 在任意场景进入 Play 时
+        /// 检测并调用 <c>VNManager.StartGame(scriptName, lineId)</c>）；
+        /// 已在 Play 模式时标记不会再被消费，直接调用运行时 API 切换。
+        /// </summary>
+        private void RunCurrentRow()
+        {
+            var row = CurrentRow;
+            if (row == null || string.IsNullOrEmpty(_csvPath)) return;
+
+            // 自动保存：序列化失败 / 校验致命错误 / 写入失败都会弹窗提示且
+            // _isDirty 保持 true → 以 _isDirty 是否复位判断是否继续运行
+            if (_isDirty)
+            {
+                SaveCurrentRow();
+                if (_isDirty) return;
+            }
+
+            string lineId = string.IsNullOrWhiteSpace(row.Id) ? "" : row.Id.Trim();
+
+            PlayerPrefs.SetString("Debug_LastScriptName", _scriptName);
+            PlayerPrefs.SetString("Debug_LastLineID", lineId);
+            PlayerPrefs.SetInt("Debug_Mode", 1);
+            PlayerPrefs.Save();
+
+            if (!EditorApplication.isPlaying)
+            {
+                EditorApplication.isPlaying = true;
+                ShowNotification(new GUIContent($"进入 Play 模式，从行 {lineId} 开始播放"));
+            }
+            else
+            {
+                // 已在 Play 模式：AutoPlayOnPlayMode 只在进入 Play 时执行一次，直接启动
+                VNManager.GetInstance().StartGame(_scriptName, lineId);
+                ShowNotification(new GUIContent($"已切换到行 {lineId} 播放"));
+            }
         }
 
         private void SavePositionsOnly(CsvRow row)
@@ -1488,6 +1605,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             text = serialized.Text;
             return true;
+        }
+
+        /// <summary>
+        /// 命令链文本的规范化形式（解析 → 紧凑序列化）——比较两段文本语义是否等价。
+        /// 解析失败返回 null（不会与任何规范化文本相等，防御性不相等处理）。
+        /// </summary>
+        private static string NormalizeChain(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+            var parsed = ChainParser.Parse(text);
+            if (!parsed.Success || parsed.Root == null) return null;
+            return ChainSerializer.Serialize(parsed.Root);
         }
 
         private string BuildIssueSummary()

@@ -53,6 +53,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private string _entryText = "";
         private string _confirmText = "";
 
+        /// <summary>上次已触发 <see cref="OnChainTextChanged"/> 的进入段文本（图已与之同步）。</summary>
+        private string _syncedEntry = "";
+
+        /// <summary>上次已触发 <see cref="OnChainTextChanged"/> 的出口段文本（图已与之同步）。</summary>
+        private string _syncedConfirm = "";
+
         private VNNodeViewBase _current;
 
         // ---- 防抖：避免每个 keystroke 都解析重建图 ----
@@ -96,6 +102,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (entry != null) _entryText = entry;
             if (confirm != null) _confirmText = confirm;
 
+            // 外部写入 = 图已与该文本同步，更新 synced 基线——
+            // 否则后续防抖比较会误判"该段已变化"而重复触发图重建
+            //（例如只编辑出口段时进入段被误触发，清除合成模板标志）。
+            if (entry != null) _syncedEntry = entry;
+            if (confirm != null) _syncedConfirm = confirm;
+
             if (_editor != null)
             {
                 // 2026-09-03：entry 和 confirm 都为 null 时表示"不改动文本"
@@ -117,6 +129,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (entry != null) _entryText = entry;
             if (confirm != null) _confirmText = confirm;
+
+            // 与 SetTexts 同理：图已与回填文本同步，更新 synced 基线
+            if (entry != null) _syncedEntry = entry;
+            if (confirm != null) _syncedConfirm = confirm;
 
             if (_editor != null)
             {
@@ -146,12 +162,22 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             string pending = _pendingText;
             _pendingText = null;
 
+            // 2026-09-04：编辑器文本与 pending 不同 = 用户已继续输入，
+            // pending 已过期——不覆盖用户输入，交给防抖用最新文本重建图。
+            if (_editor != null && _editor.Text != pending)
+            {
+                SplitByConfirm(_editor.Text, out string entry, out string confirm);
+                _entryText = entry;
+                _confirmText = confirm;
+                return;
+            }
+
             WriteTo(_editor, pending, resetHistory: false);
 
             // 同步拆分后的 entry/confirm 缓存（用于外部 GetEntryText/GetConfirmText 比对）
-            SplitByConfirm(pending, out string entry, out string confirm);
-            _entryText = entry;
-            _confirmText = confirm;
+            SplitByConfirm(pending, out string entry2, out string confirm2);
+            _entryText = entry2;
+            _confirmText = confirm2;
         }
 
         /// <summary>
@@ -320,14 +346,23 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 string current = _editor?.Text ?? "";
                 SplitByConfirm(current, out string curEntry, out string curConfirm);
 
-                // 分别触发进入段和出口段的图重建。
+                // 分别触发进入段和出口段的图重建，只触发实际变化的段。
                 // 两次触发都走 HandleChainTextChanged，各自独立解析重建对应泳道。
-                // 2026-09-02：去掉 Trim 比较逻辑，每次防抖稳定触发，
-                // 由 HandleChainTextChanged 决定是否重建图（解析失败的中间态会自动跳过）。
-                if (!string.IsNullOrEmpty(curEntry))
+                // 2026-09-02：去掉 Trim 比较逻辑，由 HandleChainTextChanged 决定是否
+                // 重建图（解析失败的中间态会自动跳过）。
+                // 2026-09-04：与 synced 基线比较——空文本（清空某段）也能触发；
+                // 未变化的段不触发，避免只编辑出口段时把进入段的合成模板标志
+                // （_syntheticTemplate）误清除、保存时被意外"提升"为定制行。
+                if (curEntry != _syncedEntry)
+                {
                     OnChainTextChanged?.Invoke(false, curEntry);
-                if (!string.IsNullOrEmpty(curConfirm))
+                    _syncedEntry = curEntry;
+                }
+                if (curConfirm != _syncedConfirm)
+                {
                     OnChainTextChanged?.Invoke(true, curConfirm);
+                    _syncedConfirm = curConfirm;
+                }
             }).StartingIn(DebounceMs);
 
             _debounce = scheduled;
@@ -348,10 +383,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             string current = _editor?.Text ?? "";
             SplitByConfirm(current, out string entry, out string confirm);
 
-            if (!string.IsNullOrEmpty(entry))
+            // 与防抖回调同规则：只触发相对 synced 基线变化的段（含清空场景）
+            if (entry != _syncedEntry)
+            {
                 OnChainTextChanged?.Invoke(false, entry);
-            if (!string.IsNullOrEmpty(confirm))
+                _syncedEntry = entry;
+            }
+            if (confirm != _syncedConfirm)
+            {
                 OnChainTextChanged?.Invoke(true, confirm);
+                _syncedConfirm = confirm;
+            }
         }
 
         // ---------------- @Confirm: 拆分 / 合并 ----------------
