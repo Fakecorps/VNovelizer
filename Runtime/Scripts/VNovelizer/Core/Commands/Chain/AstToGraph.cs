@@ -81,7 +81,8 @@ namespace VNovelizer.Core.Commands.Chain
             if (node is CommandNode cmd)
             {
                 string id = ctx.NextCommandId(cmd.Name);
-                ctx.Graph.AddNode(id, ChainGraphNodeKind.Command, cmd.Name, cmd.Args);
+                // 传递源文本偏移：运行时执行状态与编辑器节点的映射 key（R10）
+                ctx.Graph.AddNode(id, ChainGraphNodeKind.Command, cmd.Name, cmd.Args, cmd.Position);
                 return new Span(id, id);
             }
 
@@ -111,8 +112,9 @@ namespace VNovelizer.Core.Commands.Chain
 
                 string forkId = ctx.NextForkId();
                 string joinId = ctx.NextJoinId();
-                ctx.Graph.AddNode(forkId, ChainGraphNodeKind.Fork);
-                ctx.Graph.AddNode(joinId, ChainGraphNodeKind.Join);
+                // Fork/Join 也携带 Par 的源偏移：双击 Fork 重播时定位"从整个 Par 开始"（R10）
+                ctx.Graph.AddNode(forkId, ChainGraphNodeKind.Fork, sourcePosition: par.Position);
+                ctx.Graph.AddNode(joinId, ChainGraphNodeKind.Join, sourcePosition: par.Position);
 
                 bool anyBranch = false;
                 foreach (var child in par.Children)

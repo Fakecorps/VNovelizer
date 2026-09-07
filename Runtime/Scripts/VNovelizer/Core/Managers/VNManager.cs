@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
 using VNovelizer.Core.Commands;
+using VNovelizer.Core.Commands.Chain;
 using VNovelizer.Core.Commands.Meta;
 using UnityEngine.SceneManagement;
 using UnityEngine.Events;
@@ -98,6 +99,11 @@ public class VNManager : BaseManager<VNManager>
     private bool isListeningSceneLoad = false;
     private UnityAction onGameStartedCallback; // 游戏启动完成后的回调
 
+    // R10 重播请求（行命令编辑器双击节点 → StartGameFromCommand → PlayCurrentLine 消费）：
+    // 从指定源偏移的命令节点开始播放（之前的命令 Simulate 重建状态）
+    private int _replayStartPosition = -1;   // -1 = 正常播放
+    private bool _replayIsConfirm = false;   // true = 双击的是出口段（@Confirm）节点
+
     // 配置
     private bool isVoiceEnabled = true;
     private bool isTextSpeedEnabled = true;
@@ -140,11 +146,30 @@ public class VNManager : BaseManager<VNManager>
         this.pendingLineID = startLineID;
         this.onGameStartedCallback = onGameStarted;
 
+        // R10：重新开始游戏 = 运行时调试状态整体复位（行命令编辑器监听器数据源）
+        VNRuntimeDebugState.ResetAll();
+
         // 确保UIManager已初始化，这样会检查并创建Canvas
         UIManager.GetInstance().Init();
 
         // 直接运行游戏逻辑，不切换场景
         RunGameLogic();
+    }
+
+    /// <summary>
+    /// R10 重播入口：从指定行内命令节点开始播放（行命令编辑器双击节点调用）。
+    /// 之前的命令以 Simulate 方式重建状态（立绘/背景/BGM/flags），从该节点开始
+    /// Execute 动画；Par 内双击由编辑器归一化为"从整个 Par 开始"。
+    /// </summary>
+    /// <param name="scriptFileName">剧本文件名（不含扩展名）</param>
+    /// <param name="lineID">目标行 ID</param>
+    /// <param name="position">Command 列文本内的源偏移（ChainGraphNode.SourcePosition）</param>
+    /// <param name="isConfirm">true = 双击出口段（@Confirm）节点，false = 进入段节点</param>
+    public void StartGameFromCommand(string scriptFileName, string lineID, int position, bool isConfirm)
+    {
+        _replayStartPosition = position;
+        _replayIsConfirm = isConfirm;
+        StartGame(scriptFileName, lineID);
     }
 
     /// <summary>
@@ -370,6 +395,9 @@ public class VNManager : BaseManager<VNManager>
         replayEndLineID = "";
         CurrentLineIndex = -1;
         Time.timeScale = 1f;
+
+        // R10：退出演出 → 运行时调试状态收尾（行级"正在播放"标记清除）
+        VNRuntimeDebugState.EndLine();
 
         // 5. 恢复状态机（暂停/设置等嵌套面板栈一并回到 Gameplay 基线）
         var stateManager = GameStateManager.GetInstance();
@@ -936,6 +964,9 @@ public class VNManager : BaseManager<VNManager>
         // 老剧本的 Command 列不可能含系统命令（它们本次才引入），故恒为普通/增强行。
         bool isCustomRow = IsCustomPerformanceRow(currentLine);
 
+        // R10 埋点：行切换/行播放开始 → 行命令编辑器跟随翻页 + 状态重置
+        VNRuntimeDebugState.BeginLine(currentScriptName, currentLine.ID, isCustomRow);
+
         if (!isCustomRow)
         {
             UpdateVisualState(resolved);
@@ -955,10 +986,26 @@ public class VNManager : BaseManager<VNManager>
         if (!string.IsNullOrEmpty(currentLine.Command))
         {
             ClearAdvanceAfterCommandsRequest();
-            _flowCoroutine = MonoManager.GetInstance().StartCoroutine(ExecuteActionsAndContinue(currentLine.Command));
+            if (_replayStartPosition >= 0)
+            {
+                // R10 重播：从双击的命令节点开始播放（前置 Simulate + 裁剪执行）
+                int replayPos = _replayStartPosition;
+                bool replayConfirm = _replayIsConfirm;
+                _replayStartPosition = -1;
+                _replayIsConfirm = false;
+                _flowCoroutine = MonoManager.GetInstance()
+                    .StartCoroutine(ExecuteReplayFrom(currentLine, replayPos, replayConfirm));
+            }
+            else
+            {
+                _flowCoroutine = MonoManager.GetInstance().StartCoroutine(ExecuteActionsAndContinue(currentLine.Command));
+            }
         }
         else
         {
+            // 普通行无 Command 列可裁剪：消费可能残留的重播标记（防污染下一行）
+            _replayStartPosition = -1;
+            _replayIsConfirm = false;
             CheckAndTriggerAutoPlay();
         }
 
@@ -1182,6 +1229,9 @@ public class VNManager : BaseManager<VNManager>
         // 三层形态分流（与 PlayCurrentLine 一致）。
         // 本路径用于 skip / 快进落地：不播动画，直接呈现终态。
         bool isCustomRow = IsCustomPerformanceRow(currentLine);
+
+        // R10 埋点：skip/快进落地同样让行命令编辑器跟随翻页（行级标记）
+        VNRuntimeDebugState.BeginLine(currentScriptName, currentLine.ID, isCustomRow);
 
         if (!isCustomRow)
         {
@@ -2435,20 +2485,29 @@ public class VNManager : BaseManager<VNManager>
 
         _flowCoroutine = null;
 
+        AdvanceAfterEntryDone(preIndex);
+    }
+
+    /// <summary>
+    /// 进入段命令链执行完毕后的推进决策（跳转 / nextline / 命令驱动推进 / 自动播放）。
+    /// 与 <see cref="ExecuteReplayFrom"/> 共用（R10 重播的进入段沿用同一套推进语义）。
+    /// </summary>
+    private void AdvanceAfterEntryDone(int preIndex)
+    {
         bool shouldAdvanceAfterCommands = ConsumeAdvanceAfterCommandsRequest();
 
         GameStateManager stateManager = GameStateManager.GetInstance();
         if (stateManager != null && stateManager.CurrentState == GameState.Choice)
         {
             VNDebug.LogVerbose("[VNManager] 命令执行完成，当前处于 Choice 状态，停止继续前进");
-            yield break;
+            return;
         }
 
         // 如果命令过程中已经改了行号（例如 jump），优先播放新位置
         if (CurrentLineIndex != preIndex)
         {
             PlayCurrentLine();
-            yield break;
+            return;
         }
 
         // [NextLine 显式化 2026-08-31] 进入段链尾声明了 nextline()：
@@ -2462,11 +2521,11 @@ public class VNManager : BaseManager<VNManager>
             {
                 _flowCoroutine = null; // 当前协程即将结束，让出句柄给出口协程
                 LaunchConfirmExit();
-                yield break;
+                return;
             }
             CurrentLineIndex++;
             PlayCurrentLine();
-            yield break;
+            return;
         }
 
         // 如果某个命令登记了“命令全部执行完后自动前进”
@@ -2477,14 +2536,163 @@ public class VNManager : BaseManager<VNManager>
             {
                 _flowCoroutine = null; // 当前协程即将结束，让出句柄给出口协程
                 LaunchConfirmExit();
-                yield break;
+                return;
             }
             CurrentLineIndex++;
             PlayCurrentLine();
-            yield break;
+            return;
         }
 
         CheckAndTriggerAutoPlay();
+    }
+
+    /// <summary>
+    /// R10 重播协程：从双击的命令节点开始播放当前行。
+    ///
+    /// <para>
+    /// 进入段重播（isConfirm=false）：行内前置命令 Simulate（重建立绘/背景/BGM/flags）
+    /// → 同步视听状态到 UI → 从该节点起裁剪执行命令链 → 沿用进入段推进逻辑。
+    /// 出口段重播（isConfirm=true）：进入段全量 Simulate → UI 同步 → 出口段前置
+    /// Simulate → 从该节点起裁剪执行出口段 → 沿用出口段推进逻辑。
+    /// </para>
+    /// </summary>
+    private IEnumerator ExecuteReplayFrom(StoryLine line, int startPosition, bool isConfirm)
+    {
+        int preIndex = CurrentLineIndex;
+        string entryText = line.Command ?? "";
+
+        if (!isConfirm)
+        {
+            // ---- 进入段重播 ----
+            var entryChain = ChainParser.Parse(entryText);
+            if (entryChain.Root != null)
+            {
+                // Par 内双击归一化：起点退到包含目标的最近 Par（Par 是原子屏障）
+                startPosition = NormalizeReplayStart(entryChain.Root, startPosition);
+            }
+            CommandManager.GetInstance().SimulateCommandsBefore(entryText, startPosition);
+            SyncVisualAudioToUiAfterSimulate(line);
+
+            if (entryChain.Root != null)
+            {
+                var ctx = new ChainRunContext();
+                yield return ChainExecutor.Execute(entryChain.Root, ctx, startPosition, isConfirmChain: false);
+            }
+
+            _flowCoroutine = null;
+            AdvanceAfterEntryDone(preIndex);
+        }
+        else
+        {
+            // ---- 出口段重播 ----
+            CommandManager.GetInstance().SimulateCommands(entryText);
+            SyncVisualAudioToUiAfterSimulate(line);
+
+            var confirmChain = ChainParser.Parse(line.ConfirmCommands);
+            if (confirmChain.Root != null)
+            {
+                startPosition = NormalizeReplayStart(confirmChain.Root, startPosition);
+            }
+            CommandManager.GetInstance().SimulateCommandsBefore(line.ConfirmCommands, startPosition);
+
+            if (confirmChain.Root != null)
+            {
+                var ctx = new ChainRunContext();
+                yield return ChainExecutor.Execute(confirmChain.Root, ctx, startPosition, isConfirmChain: true);
+            }
+
+            _flowCoroutine = null;
+            _confirmExitConsumed = true;
+            AdvanceAfterConfirmDone(preIndex);
+        }
+    }
+
+    /// <summary>
+    /// R10 重播起点归一化：若目标命令位于某个 Par（并行组）内部，
+    /// 起点退到该 Par 的源偏移——「Par 内双击 = 从整个 Par 开始」（Par 是原子屏障）。
+    /// Fork 双击传入的本身就是 Par.Position（无命令与之精确相等），保持不变。
+    /// </summary>
+    private static int NormalizeReplayStart(ChainNode root, int startPosition)
+    {
+        if (root == null || startPosition < 0) return startPosition;
+        var par = FindSmallestParContaining(root, startPosition);
+        return par != null ? par.Position : startPosition;
+    }
+
+    /// <summary>找到包含指定命令偏移的最小 Par 节点（无则 null）。</summary>
+    private static ParNode FindSmallestParContaining(ChainNode node, int position)
+    {
+        if (node == null) return null;
+
+        if (node is ParNode par)
+        {
+            if (SubtreeContainsCommandAt(par, position))
+            {
+                foreach (var child in par.Children)
+                {
+                    var inner = FindSmallestParContaining(child, position);
+                    if (inner != null) return inner;
+                }
+                return par;
+            }
+            return null;
+        }
+
+        if (node is SeqNode seq)
+        {
+            foreach (var child in seq.Children)
+            {
+                var inner = FindSmallestParContaining(child, position);
+                if (inner != null) return inner;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>子树内是否存在源偏移恰为 position 的命令叶子。</summary>
+    private static bool SubtreeContainsCommandAt(ChainNode node, int position)
+    {
+        var cmds = new List<CommandNode>();
+        ChainExecutor.CollectCommands(node, cmds);
+        foreach (var c in cmds)
+            if (c.Position == position) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// R10 重播：行内前置 Simulate 只更新内部状态不触发 UI 事件，
+    /// 此处把积累的状态同步登台（立绘/背景/BGM），并显示本行对话。
+    /// </summary>
+    private void SyncVisualAudioToUiAfterSimulate(StoryLine line)
+    {
+        // 立绘登台（与 WaitLoadingQueueThenStartGameplay 的同步契约一致）
+        foreach (var kvp in currentCharacters)
+        {
+            string[] parts = kvp.Value.Split('#');
+            if (parts.Length != 3) continue;
+
+            var info = new Dictionary<string, string>
+            {
+                { "position", kvp.Key },
+                { "characterID", parts[0] },
+                { "group", parts[1] },
+                { "emotion", parts[2] }
+            };
+            EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
+        }
+
+        // 背景
+        if (!string.IsNullOrEmpty(currentBG))
+            EventCenter.GetInstance().EventTrigger(VNGameEvents.ChangeBackground, currentBG);
+
+        // BGM
+        if (!string.IsNullOrEmpty(currentBGM))
+            MusicManager.GetInstance().PlayBGM(currentBGM);
+        else
+            MusicManager.GetInstance().StopBGM();
+
+        // 对话（无论重播起点在哪，本行文本都应可见）
+        UpdateDialogue(line, ResolveLine(line));
     }
 
     // ==================== [Confirm 出口] 行尾出口执行（@Confirm: 语法糖） ====================
@@ -2515,21 +2723,31 @@ public class VNManager : BaseManager<VNManager>
     {
         int preIndex = CurrentLineIndex;
 
-        yield return CommandManager.GetInstance().ExecuteCommandsAsync(confirmCommands);
+        // R10：isConfirmChain=true —— 链执行埋点把节点状态写入出口段集合
+        yield return CommandManager.GetInstance().ExecuteCommandsAsync(confirmCommands, true);
 
         _flowCoroutine = null;
 
+        AdvanceAfterConfirmDone(preIndex);
+    }
+
+    /// <summary>
+    /// 出口段命令执行完毕后的推进决策（跳转 / nextline / 停在链尾）。
+    /// 与 <see cref="ExecuteReplayFrom"/> 共用（R10 重播的出口段沿用同一套推进语义）。
+    /// </summary>
+    private void AdvanceAfterConfirmDone(int preIndex)
+    {
         GameStateManager stateManager = GameStateManager.GetInstance();
         if (stateManager != null && stateManager.CurrentState == GameState.Choice)
         {
             // 出口段不应含 choice（解析期已报错拦截），防御性兜底：等待选择
-            yield break;
+            return;
         }
 
         if (CurrentLineIndex != preIndex)
         {
             PlayCurrentLine();
-            yield break;
+            return;
         }
 
         // [NextLine 显式化 2026-08-31] 出口段不再「执行完无条件推进」——
@@ -2541,7 +2759,7 @@ public class VNManager : BaseManager<VNManager>
             PendingNextLine = false;
             CurrentLineIndex++;
             PlayCurrentLine();
-            yield break;
+            return;
         }
 
         WarnMissingNextLine(lastLine, isConfirmSection: true);

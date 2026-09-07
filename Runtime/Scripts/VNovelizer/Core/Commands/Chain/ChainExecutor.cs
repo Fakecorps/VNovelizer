@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Diagnostics;
 
 namespace VNovelizer.Core.Commands.Chain
 {
@@ -25,6 +26,18 @@ namespace VNovelizer.Core.Commands.Chain
 
         /// <summary>已启动的并行分支协程句柄（Abort 时全部停止）</summary>
         public List<Coroutine> Branches = new List<Coroutine>();
+
+        /// <summary>
+        /// 出口段（@Confirm 链）标记：节点埋点写入 VNRuntimeDebugState 时
+        /// 区分进入段 / 出口段（两段各自有独立的 Position 空间）。
+        /// </summary>
+        public bool IsConfirmChain;
+
+        /// <summary>
+        /// 重播裁剪起点（-1 = 从头执行）：Position 小于该值的节点视为
+        /// 前置已 Simulate，执行时跳过。R10 双击节点重播使用。
+        /// </summary>
+        public int StartPosition = -1;
     }
 
     /// <summary>
@@ -74,9 +87,24 @@ namespace VNovelizer.Core.Commands.Chain
                     break;
 
                 case CommandNode cmd:
-                    yield return ExecuteCommand(cmd);
+                    yield return ExecuteCommand(cmd, ctx);
                     break;
             }
+        }
+
+        /// <summary>
+        /// R10 重播入口：从指定源偏移处开始执行命令链（之前的节点由调用方
+        /// 先 Simulate 重建状态）。同时指定本链是进入段还是出口段（埋点区分）。
+        /// </summary>
+        /// <param name="startPosition">裁剪起点源偏移（Position &lt; 该值的节点跳过）；-1 = 从头执行。</param>
+        /// <param name="isConfirmChain">true = 出口段（@Confirm），false = 进入段。</param>
+        public static IEnumerator Execute(ChainNode node, ChainRunContext ctx,
+            int startPosition, bool isConfirmChain)
+        {
+            if (ctx == null) yield break;
+            ctx.StartPosition = startPosition;
+            ctx.IsConfirmChain = isConfirmChain;
+            yield return Execute(node, ctx);
         }
 
         /// <summary>
@@ -119,6 +147,11 @@ namespace VNovelizer.Core.Commands.Chain
         /// </summary>
         private static IEnumerator ExecutePar(ParNode par, ChainRunContext ctx)
         {
+            // R10 裁剪：整个 Par 位于起点之前 → 前置已 Simulate，跳过
+            // （重播入口已把起点归一化为目标节点的最近 Par 祖先，Par 内不裁剪）
+            if (ctx.StartPosition >= 0 && par.Position < ctx.StartPosition)
+                yield break;
+
             if (par.Children.Count == 0)
                 yield break;
 
@@ -158,14 +191,32 @@ namespace VNovelizer.Core.Commands.Chain
         /// <summary>
         /// 命令叶子：复用现有命令体系（含引用计数与未知命令警告）。
         /// 命令失败/不存在时视为完成，不阻断整链（演出容错优先）。
+        ///
+        /// <para>
+        /// R10 埋点：执行前后写 <c>VNRuntimeDebugState</c>（行命令编辑器运行时
+        /// 监听器的数据源）。裁剪：Position &lt; <see cref="ChainRunContext.StartPosition"/>
+        /// 的节点视为前置已 Simulate，静默跳过。try/finally 保证协程被
+        /// StopCoroutine 杀死（用户跳过）时"完成"状态也落账。
+        /// </para>
         /// </summary>
-        private static IEnumerator ExecuteCommand(CommandNode cmd)
+        private static IEnumerator ExecuteCommand(CommandNode cmd, ChainRunContext ctx)
         {
             if (string.IsNullOrEmpty(cmd.Name))
                 yield break; // 错误恢复产生的占位命令，静默跳过
 
-            yield return CommandManager.GetInstance()
-                .ExecuteSingleCommandAsync(cmd.Name, cmd.Args);
+            if (ctx.StartPosition >= 0 && cmd.Position < ctx.StartPosition)
+                yield break; // R10 裁剪：前置已 Simulate
+
+            VNRuntimeDebugState.NodeStarted(cmd.Position, ctx.IsConfirmChain);
+            try
+            {
+                yield return CommandManager.GetInstance()
+                    .ExecuteSingleCommandAsync(cmd.Name, cmd.Args);
+            }
+            finally
+            {
+                VNRuntimeDebugState.NodeCompleted(cmd.Position, ctx.IsConfirmChain);
+            }
         }
 
         /// <summary>

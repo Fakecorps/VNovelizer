@@ -329,6 +329,34 @@ namespace VNovelizer.Core.Commands
             }
         }
 
+        /// <summary>
+        /// R10 重播前置状态重建：Simulate 源偏移 <paramref name="beforePosition"/> 之前的
+        /// 全部命令（不含该位置本身）。CollectCommands 按深度优先序展开 = 文本顺序，
+        /// Position 单调递增，因此遇第一个 >= 起点的命令即可停止。
+        /// 旧语法（无链结构）没有 Position 概念，回退为全量 Simulate。
+        /// </summary>
+        public void SimulateCommandsBefore(string commandString, int beforePosition)
+        {
+            if (string.IsNullOrEmpty(commandString)) return;
+
+            var chainResult = ChainParser.Parse(commandString);
+            if (chainResult.UsesChainSyntax && chainResult.Root != null)
+            {
+                var collected = new List<CommandNode>();
+                ChainExecutor.CollectCommands(chainResult.Root, collected);
+                foreach (var cmd in collected)
+                {
+                    if (cmd.Position >= beforePosition) break;
+                    string cmdName = cmd.Name.ToLower();
+                    if (_commandMap.ContainsKey(cmdName))
+                        _commandMap[cmdName].Simulate(cmd.Args);
+                }
+                return;
+            }
+
+            SimulateCommands(commandString);
+        }
+
         private bool ExecuteSingleCommand(string cmd, string args)
         {
             if (string.IsNullOrEmpty(cmd)) return false;
@@ -467,6 +495,16 @@ namespace VNovelizer.Core.Commands
 
         public IEnumerator ExecuteCommandsAsync(string commandString)
         {
+            return ExecuteCommandsAsync(commandString, false);
+        }
+
+        /// <summary>
+        /// 异步执行命令串。<paramref name="isConfirmChain"/> 为 true 表示本串是
+        /// 行的出口段（@Confirm:），链执行埋点据此把节点状态写入
+        /// VNRuntimeDebugState 的出口段集合（R10）。
+        /// </summary>
+        public IEnumerator ExecuteCommandsAsync(string commandString, bool isConfirmChain)
+        {
             if (string.IsNullOrEmpty(commandString)) yield break;
 
             // ===== 双轨切换 =====
@@ -490,6 +528,7 @@ namespace VNovelizer.Core.Commands
 
                     // 创建运行上下文并登记，支持点击跳过时整树中断
                     var ctx = new ChainRunContext();
+                    ctx.IsConfirmChain = isConfirmChain;
                     _activeChainContext = ctx;
                     yield return ChainExecutor.Execute(chainResult.Root, ctx);
 

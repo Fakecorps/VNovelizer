@@ -39,13 +39,23 @@ namespace VNovelizer.Core.Commands.Chain
         /// <summary>原始参数串（仅 Command 有效，与 <see cref="CommandNode.Args"/> 同语义）</summary>
         public string Args;
 
+        /// <summary>
+        /// 源文本偏移（Command 列文本内的起始位置）。由 <c>AstToGraph</c> 从
+        /// <see cref="CommandNode.Position"/> / <see cref="ParNode.Position"/> 传入，
+        /// 是运行时执行状态 ↔ 编辑器图节点的**映射 key**（运行时埋点记录同一文本
+        /// 解析出的 Position，编辑器按此字段匹配高亮与双击重播）。
+        /// -1 表示无源位置（哨兵/手工创建的节点）。
+        /// </summary>
+        public int SourcePosition = -1;
+
         public ChainGraphNode(string id, ChainGraphNodeKind kind,
-            string commandName = null, string args = null)
+            string commandName = null, string args = null, int sourcePosition = -1)
         {
             Id = id;
             Kind = kind;
             CommandName = commandName;
             Args = args;
+            SourcePosition = sourcePosition;
         }
 
         public override string ToString()
@@ -105,9 +115,9 @@ namespace VNovelizer.Core.Commands.Chain
         }
 
         public ChainGraphNode AddNode(string id, ChainGraphNodeKind kind,
-            string commandName = null, string args = null)
+            string commandName = null, string args = null, int sourcePosition = -1)
         {
-            return AddNode(new ChainGraphNode(id, kind, commandName, args));
+            return AddNode(new ChainGraphNode(id, kind, commandName, args, sourcePosition));
         }
 
         /// <summary>添加边。重复边会被忽略（同两点间不允许平行边——SP 图中无意义）。</summary>

@@ -38,6 +38,10 @@ public static class AutoExcelConverter
 
     private static void Update()
     {
+        // R10：Play 模式期间挂起自动转换——运行时正在播放，Excel 修改会重写 CSV
+        // 导致行命令编辑器的图与运行时内容不一致（状态高亮错位）。退出 Play 后恢复扫描。
+        if (EditorApplication.isPlaying) return;
+
         // 首次运行：扫描并记录所有 Excel 文件时间戳（不触发转换）
         if (!_firstScanDone)
         {

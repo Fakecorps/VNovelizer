@@ -399,11 +399,28 @@ namespace VNovelizer.Core.API
             return true;
         }
 
+        /// <summary>
+        /// 启动游戏（R10：普通/增强行整行重播与常规启动入口——与 VNManager.StartGame 同签名语义）。
+        /// </summary>
+        public static void StartGame(string scriptName, string lineId = "")
+            => VNManager.GetInstance().StartGame(scriptName, lineId);
+
         /// <summary>推进到下一句（与玩家点击下一句类似）。</summary>
         public static void NextLine() => VNManager.GetInstance().NextLine();
 
         /// <summary>无动画推进到下一句。</summary>
         public static void NextLineWithoutAnimation() => VNManager.GetInstance().NextLineWithoutAnimation();
+
+        /// <summary>
+        /// R10 从指定行内命令节点重播：之前的命令 Simulate 重建状态，
+        /// 从该节点开始 Execute 动画（行命令编辑器双击节点/token 调用）。
+        /// </summary>
+        /// <param name="scriptName">剧本文件名（不含扩展名）</param>
+        /// <param name="lineId">目标行 ID</param>
+        /// <param name="position">Command 列文本内的源偏移（编辑器节点的 SourcePosition）</param>
+        /// <param name="isConfirm">true = 出口段（@Confirm）节点，false = 进入段节点</param>
+        public static void ReplayFromCommand(string scriptName, string lineId, int position, bool isConfirm)
+            => VNManager.GetInstance().StartGameFromCommand(scriptName, lineId, position, isConfirm);
 
         /// <summary>当前游戏状态（面板打开、自动播放等）。</summary>
         public static GameState GetGameState() => GameStateManager.GetInstance().CurrentState;

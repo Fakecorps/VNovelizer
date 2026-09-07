@@ -12,7 +12,7 @@ This is a Unity UPM package without traditional CLI build/lint/test commands. Al
 
 - **Author scripts**: Use **VNovelizer → 剧本管理器** to create new Excel scripts. After editing, click "转换" to convert Excel to CSV, then use **VNovelizer → 资源管理器** to verify assets. Scripts are parsed from CSV at runtime via `ScriptParser.Parse()`.
 
-- **Manage resources**: Use the visual editors under the VNovelizer menu — **角色编辑器** for `CharacterProfile` ScriptableObjects, **画廊编辑器** for gallery content, **UI预制体管理器** for UI prefabs. The **资源管理器** validates all resource references.
+- **Manage resources**: Use the visual editors under the VNovelizer menu — **角色编辑器** for `CharacterProfile` ScriptableObjects, **画廊编辑器** for gallery content. UI prefab overrides are managed in **Edit → Project Settings → VNovelizer → UI 模板覆写** (via `VNUIPrefabTemplateCreator`, "从模板创建自定义 UI…" copies a package default prefab and assigns the override field). The **资源管理器** validates all resource references.
 
 - **Localization workflow**: Enable `VNProjectConfig.EnableLocalization`, then use **VNovelizer → Localization → 剧情本地化管理器** to generate `StringTableCollection` per script and sync keys from CSV. The `VN_LOCALIZATION` scripting define is automatically set when Unity Localization is installed (via `versionDefines` in the `.asmdef`).
 

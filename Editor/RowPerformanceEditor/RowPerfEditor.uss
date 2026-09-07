@@ -131,6 +131,23 @@
     margin-right: 14px;
 }
 
+/* ---------------- R10 运行时行级状态徽章 ---------------- */
+
+.vn-runtime-badge {
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    border-radius: 9px;
+    border-width: 1px;
+    border-color: #3E5A2E;
+    background-color: #2E3E26;
+    font-size: 11px;
+    color: #A8D08D;
+    -unity-font-style: bold;
+    margin-right: 10px;
+}
+
 /* ---------------- 行形态徽章 ---------------- */
 
 .vn-rowform-badge {
@@ -506,6 +523,30 @@
 .vn-node--warning > #node-border {
     border-color: #C8A03C;
     border-width: 2px;
+}
+
+/* ---------------- 节点：R10 运行时执行状态（三态 + 执行指针） ---------------- */
+
+/* 运行过：绿色描边 + 轻微暗化（与出口段绿同族） */
+.vn-node--executed > #node-border {
+    border-color: #5A8A3E;
+    border-width: 2px;
+}
+
+/* 正在运行：亮蓝描边 + 淡蓝底（系统命令蓝同族） */
+.vn-node--running > #node-border {
+    border-color: #4A90D9;
+    border-width: 2px;
+    background-color: rgba(74, 144, 217, 0.18);
+}
+
+/* 执行指针：橙色描边 + 标题栏亮起（调试器"当前行"式标记） */
+.vn-node--pointer > #node-border {
+    border-color: #D8A84A;
+    border-width: 2px;
+}
+.vn-node--pointer > #title {
+    background-color: #8A6E2C;
 }
 
 /* Fork/Join 范围高亮（弱化：浅蓝描边 + 淡蓝底，与选中态区分）。

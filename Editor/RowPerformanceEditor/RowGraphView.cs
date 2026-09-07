@@ -38,6 +38,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>仅节点被拖动（图数据未变）。Window 侧用于位置快照，避免 Undo 栈被拖动灌满。</summary>
         public event Action OnNodesMoved;
 
+        /// <summary>R10：节点双击（Play 模式下 = 从该节点重播）。</summary>
+        public event Action<VNNodeViewBase> OnNodeDoubleClicked;
+
         /// <summary>
         /// 节点拖动手势开始（左键在节点上按下）。Window 侧据此压入「移动前」快照——
         /// 每个拖动手势 = 一条独立 Undo 记录（业界标准），替代旧的 TopLabel 粘性合并
@@ -288,26 +291,35 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private VNNodeViewBase CreateNodeView(ChainGraphNode node, bool isConfirm)
         {
+            VNNodeViewBase view;
             switch (node.Kind)
             {
                 case ChainGraphNodeKind.Command:
-                    return new CommandNodeView(node, isConfirm);
+                    view = new CommandNodeView(node, isConfirm);
+                    break;
 
                 case ChainGraphNodeKind.Fork:
                 case ChainGraphNodeKind.Join:
-                    return new ForkJoinNodeView(node, isConfirm);
+                    view = new ForkJoinNodeView(node, isConfirm);
+                    break;
 
                 case ChainGraphNodeKind.Start:
-                    return new TerminalNodeView(node,
+                    view = new TerminalNodeView(node,
                         isConfirm ? TerminalKind.ConfirmStart : TerminalKind.LineStart, isConfirm);
+                    break;
 
                 case ChainGraphNodeKind.End:
-                    return new TerminalNodeView(node,
+                    view = new TerminalNodeView(node,
                         isConfirm ? TerminalKind.ChainEnd : TerminalKind.WaitConfirm, isConfirm);
+                    break;
 
                 default:
                     return null;
             }
+
+            // R10：节点双击统一转发给 Window（Play 模式 = 重播入口）
+            view.DoubleClicked += v => OnNodeDoubleClicked?.Invoke(v);
+            return view;
         }
 
         // ---------------- 泳道标签 ----------------
@@ -684,6 +696,40 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var e2 = templateView.OutputPort.ConnectTo(endView.InputPort);
             e2.capabilities &= ~Capabilities.Deletable;
             AddElement(e2);
+        }
+
+        // ---------------- R10 运行时执行状态可视化 ----------------
+
+        /// <summary>
+        /// 按运行时状态给节点上三态 + 执行指针样式。key = 节点 <see cref="ChainGraphNode.SourcePosition"/>
+        /// （与运行时埋点记录的 Command 列源偏移一致）。state 为 null（该行未播放过）时全部复位。
+        /// Fork/Join/哨兵的 SourcePosition 不在命令 Position 集合中，保持默认外观。
+        /// </summary>
+        public void SetRuntimeNodeStates(VNovelizer.Core.Diagnostics.LineNodeState state)
+        {
+            foreach (var view in _nodeViews.Values)
+            {
+                if (view?.Data == null) continue;
+
+                int pos = view.Data.SourcePosition;
+                if (pos < 0 || state == null)
+                {
+                    view.SetRuntimeState(RuntimeNodeState.None);
+                    continue;
+                }
+
+                var running = view.IsConfirmChain ? state.ConfirmRunning : state.EntryRunning;
+                var executed = view.IsConfirmChain ? state.ConfirmExecuted : state.EntryExecuted;
+                int pointer = view.IsConfirmChain ? state.ConfirmPointer : state.EntryPointer;
+
+                // 优先级：正在运行 > 执行指针 > 运行过
+                RuntimeNodeState s = RuntimeNodeState.None;
+                if (running.Contains(pos)) s = RuntimeNodeState.Running;
+                else if (pointer == pos) s = RuntimeNodeState.Pointer;
+                else if (executed.Contains(pos)) s = RuntimeNodeState.Executed;
+
+                view.SetRuntimeState(s);
+            }
         }
 
         // ---------------- 校验状态可视化 ----------------

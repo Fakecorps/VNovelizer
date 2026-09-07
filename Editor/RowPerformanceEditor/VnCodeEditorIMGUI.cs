@@ -54,6 +54,22 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>画布选中节点的命令签名（如 showbg()）——匹配行整行高亮。</summary>
         public string SelectedSignature;
 
+        /// <summary>
+        /// R10：Play 模式置 true——双击命令 = 重播（而非选词），
+        /// 且不响应键盘编辑（运行时锁定编辑）。
+        /// </summary>
+        public bool RuntimeReplayMode;
+
+        /// <summary>R10：运行时命令高亮区间（命令全文偏移 → 状态），由 Window 每帧注入。</summary>
+        private readonly List<RuntimeHighlightSpan> _runtimeSpans = new List<RuntimeHighlightSpan>();
+
+        private struct RuntimeHighlightSpan
+        {
+            public int Start;      // 命令在全文中的起始偏移（= AST Position）
+            public int Length;     // 命令文本长度（含括号与参数）
+            public RuntimeNodeState State;
+        }
+
         /// <summary>文本被用户编辑（每次改动立即触发；外部做防抖）。</summary>
         public event Action<string> OnTextChanged;
 
@@ -97,6 +113,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// 文本与图不同步（命令不在图中）时由外部静默忽略。
         /// </summary>
         public event Action<bool, string, string> OnCommandClicked;
+
+        /// <summary>
+        /// R10 重播：Play 模式（<see cref="RuntimeReplayMode"/> = true）下双击命令时触发。
+        /// 参数：(命令在全文中的起始偏移 = 源 Position, 是否出口段)。
+        /// </summary>
+        public event Action<int, bool> OnCommandDoubleClicked;
 
         /// <summary>
         /// 2026-09-03：Tab 按下后请求外部恢复焦点的标志。
@@ -305,6 +327,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private static readonly Color ColCurrentLine = new Color(1f, 1f, 1f, 0.04f);
         private static readonly Color ColHighlight = new Color(1f, 0.706f, 0.329f);    // #FFB454
 
+        // R10：运行时命令高亮背景（与节点三态同一色族：绿=运行过 / 蓝=正在运行 / 橙=执行指针）
+        private static readonly Color ColExecuted = new Color(0.353f, 0.541f, 0.243f, 0.30f);  // #5A8A3E
+        private static readonly Color ColRunning = new Color(0.29f, 0.565f, 0.851f, 0.35f);     // #4A90D9
+        private static readonly Color ColPointer = new Color(0.847f, 0.659f, 0.29f, 0.35f);      // #D8A84A
+
         // 2026-09-03：合二为一后 @Confirm: 标记与出口段的视觉区分
         // @Confirm: 标记行整行用醒目橙色（复用 ColHighlight）
         // 出口段所有行（含 @Confirm: 行及之后）加一层淡紫底色做视觉分组
@@ -423,6 +450,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             DrawConfirmSectionBackground(rect);
             DrawCurrentLine(rect);
             DrawSelection(rect);
+            DrawRuntimeHighlights(rect);
             DrawTokens(rect);
             DrawGutter(rect);
             if (_hasFocus) DrawCursor(rect);
@@ -606,8 +634,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             int index = ScreenToIndex(rect, e.mousePosition);
 
-            if (e.clickCount >= 2)  // 双击选词
+            if (e.clickCount >= 2)  // 双击选词 / R10 重播
             {
+                if (RuntimeReplayMode &&
+                    TryGetCommandStartAt(index, out int replayPos, out bool replayConfirm))
+                {
+                    OnCommandDoubleClicked?.Invoke(replayPos, replayConfirm);
+                    return;
+                }
                 SelectWordAt(index);
             }
             else
@@ -714,6 +748,151 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             return false;
         }
 
+        /// <summary>
+        /// R10：注入运行时命令高亮。state 为 null（该行未播放/退出 Play）时清空。
+        /// 扫描当前文本全部命令区间，按运行时 Position 集合判定三态/指针。
+        /// </summary>
+        public void SetRuntimeHighlights(VNovelizer.Core.Diagnostics.LineNodeState state)
+        {
+            _runtimeSpans.Clear();
+            if (state == null || string.IsNullOrEmpty(_text)) return;
+
+            EnsureLayout(0f); // 确保 _lines/_lineStarts 是最新的（可能在 OnGUI 外调用）
+
+            // 定位 @Confirm: 标记行
+            int confirmLine = -1;
+            for (int i = 0; i < _lines.Count; i++)
+            {
+                if (_lines[i].Trim().Equals("@Confirm:", StringComparison.OrdinalIgnoreCase))
+                {
+                    confirmLine = i;
+                    break;
+                }
+            }
+
+            for (int li = 0; li < _lines.Count; li++)
+            {
+                if (li == confirmLine) continue;
+                bool isConfirm = confirmLine >= 0 && li > confirmLine;
+                string line = _lines[li];
+
+                foreach (var cmd in ScanCommandSpans(line))
+                {
+                    int absStart = _lineStarts[li] + cmd.NameStart;
+
+                    var running = isConfirm ? state.ConfirmRunning : state.EntryRunning;
+                    var executed = isConfirm ? state.ConfirmExecuted : state.EntryExecuted;
+                    int pointer = isConfirm ? state.ConfirmPointer : state.EntryPointer;
+
+                    RuntimeNodeState s = RuntimeNodeState.None;
+                    if (running.Contains(absStart)) s = RuntimeNodeState.Running;
+                    else if (pointer == absStart) s = RuntimeNodeState.Pointer;
+                    else if (executed.Contains(absStart)) s = RuntimeNodeState.Executed;
+
+                    if (s == RuntimeNodeState.None) continue;
+                    _runtimeSpans.Add(new RuntimeHighlightSpan
+                    {
+                        Start = absStart,
+                        Length = cmd.ArgEnd - cmd.NameStart + 1,
+                        State = s
+                    });
+                }
+            }
+        }
+
+        /// <summary>行内命令区间（起始列与参数闭合列，含括号）。</summary>
+        private struct CommandSpan
+        {
+            public int NameStart;
+            public int ArgEnd;
+        }
+
+        /// <summary>扫描一行内全部完整命令（cmd(args)）的区间。括号匹配跳过字符串。</summary>
+        private static List<CommandSpan> ScanCommandSpans(string line)
+        {
+            var result = new List<CommandSpan>();
+            if (string.IsNullOrEmpty(line)) return result;
+
+            int i = 0;
+            while (i < line.Length)
+            {
+                while (i < line.Length && !(char.IsLetter(line[i]) || line[i] == '_')) i++;
+                if (i >= line.Length) break;
+
+                int nameStart = i;
+                while (i < line.Length && (char.IsLetterOrDigit(line[i]) || line[i] == '_')) i++;
+
+                int j = i;
+                while (j < line.Length && line[j] == ' ') j++;
+                if (j >= line.Length || line[j] != '(') continue;
+
+                int depth = 0;
+                bool inString = false;
+                int k = j;
+                bool closed = false;
+                while (k < line.Length)
+                {
+                    char c = line[k];
+                    if (inString)
+                    {
+                        if (c == '\\') { k += 2; continue; }
+                        if (c == '"') inString = false;
+                        k++;
+                        continue;
+                    }
+                    if (c == '"') { inString = true; k++; continue; }
+                    if (c == '(') depth++;
+                    else if (c == ')')
+                    {
+                        depth--;
+                        if (depth == 0) { closed = true; break; }
+                    }
+                    k++;
+                }
+                if (!closed) { i = j + 1; continue; } // 未闭合（编辑中间态）跳过
+
+                result.Add(new CommandSpan { NameStart = nameStart, ArgEnd = k });
+                i = k + 1;
+            }
+            return result;
+        }
+
+        /// <summary>定位覆盖 index 的命令全文起始偏移；返回 false 表示不在命令内。</summary>
+        public bool TryGetCommandStartAt(int index, out int startPosition, out bool isConfirm)
+        {
+            startPosition = -1;
+            isConfirm = false;
+            if (string.IsNullOrEmpty(_text)) return false;
+
+            if (!TryGetCommandRangeAt(index, out string cmdName, out _)) return false;
+            if (string.IsNullOrEmpty(cmdName)) return false;
+
+            int lineIdx = IndexToLine(index);
+            string line = _lines[lineIdx];
+            int col = index - _lineStarts[lineIdx];
+
+            // 重扫该行找到包含 col 的命令 span
+            foreach (var span in ScanCommandSpans(line))
+            {
+                if (col >= span.NameStart && col <= span.ArgEnd)
+                {
+                    startPosition = _lineStarts[lineIdx] + span.NameStart;
+
+                    // 是否出口段：本行在 @Confirm: 标记行之后
+                    for (int i = 0; i < _lines.Count; i++)
+                    {
+                        if (_lines[i].Trim().Equals("@Confirm:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            isConfirm = lineIdx > i;
+                            break;
+                        }
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private void HandleMouseDrag(Rect rect, Event e)
         {
             _cursor = ScreenToIndex(rect, e.mousePosition);
@@ -723,6 +902,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void HandleKeyDown(Event e)
         {
+            if (RuntimeReplayMode) return; // R10：运行时锁定编辑（文本只读，仅双击重播）
             bool shift = e.shift;
             bool ctrl = e.control || e.command;
 
@@ -1111,6 +1291,38 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 EditorGUI.DrawRect(new Rect(x0, y, Mathf.Max(x1 - x0, 1f), _lineHeight),
                     ColSelection);
+            }
+        }
+
+        /// <summary>R10：运行时命令高亮（三态背景条，绘制在选区之下、文字之上）。</summary>
+        private void DrawRuntimeHighlights(Rect rect)
+        {
+            if (_runtimeSpans.Count == 0) return;
+
+            foreach (var span in _runtimeSpans)
+            {
+                int line = IndexToLine(span.Start);
+                string lineStr = _lines[line];
+                EnsureLineAdvance(lineStr);
+
+                int aIdx = Mathf.Clamp(span.Start - _lineStarts[line], 0, lineStr.Length);
+                int bIdx = Mathf.Clamp(aIdx + span.Length, 0, lineStr.Length);
+                if (bIdx <= aIdx) continue;
+
+                float x0 = rect.x + GutterWidth + PadLeft + _lineAdvanceX[aIdx] - _scroll.x;
+                float x1 = rect.x + GutterWidth + PadLeft + _lineAdvanceX[bIdx] - _scroll.x;
+                float y = rect.y + PadTop + line * _lineHeight - _scroll.y;
+
+                if (y + _lineHeight < rect.y || y > rect.yMax) continue;
+
+                Color c;
+                switch (span.State)
+                {
+                    case RuntimeNodeState.Running: c = ColRunning; break;
+                    case RuntimeNodeState.Pointer: c = ColPointer; break;
+                    default: c = ColExecuted; break;
+                }
+                EditorGUI.DrawRect(new Rect(x0, y, Mathf.Max(x1 - x0, 1f), _lineHeight), c);
             }
         }
 

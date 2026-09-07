@@ -44,6 +44,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>自定义标题 label（隐藏在 base 之后）</summary>
         private Label _customTitleLabel;
 
+        /// <summary>R10 双击事件：Play 模式下双击节点 = 从该节点重播（Par 内双击 = 从整个 Par 开始）</summary>
+        public event System.Action<VNNodeViewBase> DoubleClicked;
+
         protected VNNodeViewBase(ChainGraphNode data, bool isConfirmChain)
         {
             Data = data;
@@ -60,6 +63,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _customTitleLabel.AddToClassList("vn-node-title");
             _customTitleLabel.pickingMode = PickingMode.Ignore;
             titleContainer.Insert(0, _customTitleLabel);
+
+            // R10 双击检测（不拦截单击选中，clickCount >= 2 才触发重播）
+            RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button == 0 && evt.clickCount >= 2)
+                    DoubleClicked?.Invoke(this);
+            });
         }
 
         /// <summary>设置节点显示标题（命令节点调用一次即可；图编辑器可对影子节点覆写标题）</summary>
@@ -202,6 +212,23 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             AddToClassList("vn-node--template");
         }
 
+        // ---------------- R10 运行时执行状态 ----------------
+
+        /// <summary>应用运行时执行状态样式（三态 + 执行指针，行命令编辑器 Play 监听器）。</summary>
+        public void SetRuntimeState(RuntimeNodeState state)
+        {
+            RemoveFromClassList("vn-node--executed");
+            RemoveFromClassList("vn-node--running");
+            RemoveFromClassList("vn-node--pointer");
+
+            switch (state)
+            {
+                case RuntimeNodeState.Executed: AddToClassList("vn-node--executed"); break;
+                case RuntimeNodeState.Running: AddToClassList("vn-node--running"); break;
+                case RuntimeNodeState.Pointer: AddToClassList("vn-node--pointer"); break;
+            }
+        }
+
         // ---------------- GraphView 行为 ----------------
 
         /// <summary>
@@ -209,5 +236,21 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// 而不是直接从图上移除，故由 GraphView 层拦截。
         /// </summary>
         public override bool IsCopiable() => Data != null && Data.Kind == ChainGraphNodeKind.Command;
+    }
+
+    /// <summary>R10 运行时节点执行状态。</summary>
+    public enum RuntimeNodeState
+    {
+        /// <summary>未运行（默认外观）</summary>
+        None = 0,
+
+        /// <summary>已执行完成（"运行过"持久染色）</summary>
+        Executed,
+
+        /// <summary>正在执行（"正在运行"高亮）</summary>
+        Running,
+
+        /// <summary>执行指针（最近开始执行的节点，调试器"当前行"式标记）</summary>
+        Pointer,
     }
 }

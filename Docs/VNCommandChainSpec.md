@@ -743,6 +743,30 @@ ScriptParser → 三路径执行（默认模板 / 增强 / 定制）→ ChainExe
   - `.csv.cmdmap.json` —— 三方合并**基准**，正确性直接决定 Excel↔CSV 不丢数据，**必须**进版本控制
   - `.csv.graphpos.json` —— 节点位置/折叠状态**纯缓存**，丢失仅导致重新 AutoLayout，可 `.gitignore`（避免团队协作位置冲突）
 
+### 11.5.1 运行时控制器/监听器（R10，2026-09-04）
+
+行命令编辑器在 Play 模式下充当**控制器 + 监听器**：
+
+- **数据流**：运行时埋点（`ChainExecutor` 节点级 + `VNManager` 行级）写入静态状态对象
+  `VNRuntimeDebugState`（按行持久：行 ID → 节点状态）；编辑器在 `EditorApplication.update`
+  中帧轮询（`Version` 脏检查），零事件生命周期问题、Domain Reload 自然恢复
+- **节点映射 key = Position**（Command 列源文本偏移）：`AstToGraph` 把 `CommandNode.Position`
+  写入 `ChainGraphNode.SourcePosition`，与运行时解析同一文本的偏移一一对应
+- **三态 + 执行指针**：运行过（绿描边）/ 正在运行（蓝高亮）/ 执行指针（橙描边 + 标题亮起，
+  调试器"当前行"式标记，解决瞬时命令一闪而过）；文本编辑器按命令区间同色系背景染色
+- **普通/增强行**：行级"▶ 播放中 / 已播放"状态栏徽章（隐式路径无节点概念，不追踪节点级）；
+  只有定制行（链语法 Command 列）有节点级三态
+- **双击重播**：双击命令节点 / Fork / 文本 token → `VNAPI.ReplayFromCommand(scriptName, lineId,
+  position, isConfirm)` → `VNManager.StartGameFromCommand`。行内前置命令 Simulate 重建状态
+  （立绘/背景/BGM/flags）→ 同步登台 UI → `ChainExecutor` 从该节点裁剪执行（`StartPosition`
+  裁剪：Position 小于起点的节点跳过）。**Par 是原子屏障**：Par 内双击归一化为"从整个 Par
+  开始"（`NormalizeReplayStart` 找最小包含 Par 祖先）
+- **运行时锁定编辑（只读）**：Play 期间图/文本/保存全部阻断，保证图与 CSV 一致、状态映射准确；
+  进 Play 时 dirty 静默自动保存（与"运行"按钮一致）；Play 期间 `AutoExcelConverter` 挂起
+  （防 Excel 修改导致 CSV 与图不一致）；退出 Play 自动解锁并清空运行态视觉
+- **行翻页跟随**：`VNRuntimeDebugState.CurrentLineId` 变化 → 编辑器 `SelectRow` 跟随
+  （含 `loadscript` 跨剧本跟随）；skip/快进落地（`PlayCurrentLineImmediately`）同样埋点
+
 ### 11.6 待实现组件清单（2026-08-26 修订）
 
 | 组件 | 说明 | 工作量 |

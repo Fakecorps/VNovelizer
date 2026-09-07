@@ -6,9 +6,11 @@ using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
+using VNovelizer.Core.API;
 using VNovelizer.Core.Commands;
 using VNovelizer.Core.Commands.Chain;
 using VNovelizer.Core.Commands.Meta;
+using VNovelizer.Core.Diagnostics;
 
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
@@ -84,6 +86,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private Label _statusValidation;
         private Label _statusUndo;
         private Label _statusChain;
+        private Label _runtimeBadge;
         private TextField _lineIdField;
         private Button _saveButton;
         private Button _resetButton;
@@ -91,6 +94,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         // ---- 校验状态 ----
         private ChainGraphValidationResult _entryValidation;
         private ChainGraphValidationResult _confirmValidation;
+
+        // ---- R10 运行时监听器状态 ----
+        /// <summary>上次已消费的运行时状态版本（脏检查，避免每帧重建 UI）。</summary>
+        private long _lastDebugVersion = -1;
+
+        /// <summary>上次跟随的运行时行 ID（行变化才翻页）。</summary>
+        private string _followedRuntimeLineId = "";
+
+        /// <summary>运行时文本染色/节点状态是否已应用（版本变化时刷新）。</summary>
+        private bool _runtimeVisualsDirty = true;
+
+        /// <summary>上一帧是否处于 Play（用于退出 Play 时一次性清理运行态视觉）。</summary>
+        private bool _wasPlaying = false;
 
         /// <summary>CSV 的一行（只保留编辑器需要的字段 + 原始整行用于写回）</summary>
         private class CsvRow
@@ -252,6 +268,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     e.PreventDefault();
             }, TrickleDown.TrickleDown);
 
+            // R10：运行时监听器（帧轮询 VNRuntimeDebugState + 双击重播 + 进 Play 自动保存）
+            _graphView.OnNodeDoubleClicked += HandleNodeDoubleClicked;
+            _textChain.OnCommandDoubleClicked += HandleTextDoubleClicked;
+            EditorApplication.update += OnEditorUpdate;
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            _followedRuntimeLineId = "";
+            _runtimeVisualsDirty = true;
+
             if (string.IsNullOrEmpty(_csvPath)) TryAutoSelectScript();
             else RestoreSessionAfterReload();
         }
@@ -276,6 +300,194 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 SelectRow(savedIndex);
             else if (_rows.Count > 0)
                 SelectRow(0);
+        }
+
+        /// <summary>注销全局订阅（窗口关闭 / Domain Reload 时 Unity 调用）。</summary>
+        private void OnDisable()
+        {
+            EditorApplication.update -= OnEditorUpdate;
+            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+        }
+
+        // ==================== R10 运行时控制器/监听器 ====================
+
+        /// <summary>
+        /// 帧轮询：Play 模式下读取 <see cref="VNRuntimeDebugState"/>——
+        /// ① 运行时行 ID 变化 → 编辑器跟随翻页（含跨剧本跟随）；
+        /// ② 状态版本变化 → 节点三态/指针 + 文本编辑器染色刷新；
+        /// ③ 编辑器只读锁定的 UI 状态同步。
+        /// </summary>
+        private void OnEditorUpdate()
+        {
+            if (!EditorApplication.isPlaying)
+            {
+                if (_wasPlaying)
+                {
+                    // 刚退出 Play：清空运行态视觉 + 解锁编辑（含文本编辑器重播模式复位）
+                    _wasPlaying = false;
+                    _runtimeVisualsDirty = false;
+                    _lastDebugVersion = -1;
+                    _followedRuntimeLineId = "";
+                    ApplyRuntimeVisualStates(null);
+                    _textChain?.SetRuntimeReplayMode(false);
+                    if (_runtimeBadge != null) _runtimeBadge.text = "";
+                }
+                return;
+            }
+            _wasPlaying = true;
+
+            // ① 行跟随（运行时行 ID 变化）
+            string rtLineId = VNRuntimeDebugState.CurrentLineId;
+            if (!string.IsNullOrEmpty(rtLineId) && rtLineId != _followedRuntimeLineId)
+            {
+                _followedRuntimeLineId = rtLineId;
+                FollowRuntimeLine(rtLineId);
+                _runtimeVisualsDirty = true;
+            }
+
+            // ② 节点/文本状态刷新（版本脏检查）
+            if (VNRuntimeDebugState.Version != _lastDebugVersion)
+            {
+                _lastDebugVersion = VNRuntimeDebugState.Version;
+                _runtimeVisualsDirty = true;
+            }
+
+            if (_runtimeVisualsDirty)
+            {
+                _runtimeVisualsDirty = false;
+                var row = CurrentRow;
+                ApplyRuntimeVisualStates(row != null
+                    ? VNRuntimeDebugState.GetLineState(row.Id)
+                    : null);
+            }
+
+            // ③ 只读锁定：Play 模式下禁用编辑/保存
+            SyncRuntimeReadOnlyUi();
+        }
+
+        /// <summary>运行时行 ID 变化 → 编辑器翻页跟随（同剧本按 ID 定位，跨剧本切换 CSV）。</summary>
+        private void FollowRuntimeLine(string lineId)
+        {
+            // 跨剧本跟随：运行时 loadscript 切了剧本
+            if (!string.IsNullOrEmpty(VNRuntimeDebugState.CurrentScriptName) &&
+                VNRuntimeDebugState.CurrentScriptName != _scriptName)
+            {
+                string csvPath = FindCsvPathByName(VNRuntimeDebugState.CurrentScriptName);
+                if (!string.IsNullOrEmpty(csvPath)) LoadCsv(csvPath);
+            }
+
+            for (int i = 0; i < _rows.Count; i++)
+            {
+                if (string.Equals(_rows[i].Id, lineId, StringComparison.Ordinal))
+                {
+                    SelectRow(i);
+                    return;
+                }
+            }
+        }
+
+        /// <summary>按剧本名（不含扩展名）定位 CSV 路径；找不到返回 null。</summary>
+        private static string FindCsvPathByName(string scriptName)
+        {
+            if (string.IsNullOrEmpty(scriptName)) return null;
+            foreach (string guid in AssetDatabase.FindAssets("t:TextAsset"))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) continue;
+                if (Path.GetFileNameWithoutExtension(path) == scriptName) return path;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 应用运行时节点状态与文本染色。state 为 null（该行未播放 / 退出 Play）时全部复位。
+        /// </summary>
+        private void ApplyRuntimeVisualStates(LineNodeState state)
+        {
+            _graphView.SetRuntimeNodeStates(state);
+            _textChain?.SetRuntimeHighlights(state);
+        }
+
+        /// <summary>节点双击：Play 模式下从该节点重播（前置 Simulate + 从节点开始执行）。</summary>
+        private void HandleNodeDoubleClicked(VNNodeViewBase view)
+        {
+            if (!EditorApplication.isPlaying) return;
+            if (view?.Data == null) return;
+
+            var row = CurrentRow;
+            if (row == null || string.IsNullOrEmpty(_csvPath)) return;
+
+            // 普通/增强行（无定制命令链）与哨兵节点：整行重播（隐式演出路径）
+            if (RowPromotion.DetermineForm(row.Command) != RowForm.Custom ||
+                view.Data.SourcePosition < 0)
+            {
+                ShowNotification(new GUIContent($"从行 {row.Id} 整行重播…"));
+                VNAPI.StartGame(_scriptName, row.Id);
+                return;
+            }
+
+            ShowNotification(new GUIContent($"从 {view.Data.CommandName} 重播…"));
+            VNAPI.ReplayFromCommand(_scriptName, row.Id, view.Data.SourcePosition, view.IsConfirmChain);
+        }
+
+        /// <summary>进 Play 前自动保存未保存修改（与「运行」按钮一致，无弹窗）。</summary>
+        private void OnPlayModeStateChanged(PlayModeStateChange change)
+        {
+            if (change == PlayModeStateChange.ExitingEditMode && _isDirty)
+            {
+                SaveCurrentRow();
+            }
+        }
+
+        /// <summary>Play 模式下锁定编辑：按钮禁用 + 文本编辑器切到重播模式 + 行级状态徽章。</summary>
+        private void SyncRuntimeReadOnlyUi()
+        {
+            bool locked = EditorApplication.isPlaying;
+            _saveButton?.SetEnabled(!locked);
+            _resetButton?.SetEnabled(!locked);
+            _textChain?.SetRuntimeReplayMode(locked);
+
+            // 行级状态徽章（普通/增强行的"正在播放/已播放"标记）
+            if (_runtimeBadge == null) return;
+            if (!locked)
+            {
+                _runtimeBadge.text = "";
+                return;
+            }
+            var row = CurrentRow;
+            if (row == null)
+            {
+                _runtimeBadge.text = "";
+                return;
+            }
+            var state = VNRuntimeDebugState.GetLineState(row.Id);
+            if (state == null)
+            {
+                _runtimeBadge.text = "未播放";
+                return;
+            }
+            _runtimeBadge.text = (row.Id == VNRuntimeDebugState.CurrentLineId && state.Playing)
+                ? "▶ 播放中"
+                : "已播放";
+        }
+
+        /// <summary>文本编辑器双击命令 token：Play 模式下从该命令重播。</summary>
+        private void HandleTextDoubleClicked(int startPosition, bool isConfirm)
+        {
+            if (!EditorApplication.isPlaying) return;
+            var row = CurrentRow;
+            if (row == null || string.IsNullOrEmpty(_csvPath)) return;
+
+            // 普通/增强行：整行重播
+            if (RowPromotion.DetermineForm(row.Command) != RowForm.Custom)
+            {
+                ShowNotification(new GUIContent($"从行 {row.Id} 整行重播…"));
+                VNAPI.StartGame(_scriptName, row.Id);
+                return;
+            }
+
+            ShowNotification(new GUIContent("从文本命令重播…"));
+            VNAPI.ReplayFromCommand(_scriptName, row.Id, startPosition, isConfirm);
         }
 
         private static string FindStyleSheetPath()
@@ -379,6 +591,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             var bar = new VisualElement();
             bar.AddToClassList("vn-statusbar");
+
+            // R10：运行时行级状态徽章（▶ 播放中 / 已播放 / 未播放；非 Play 隐藏）
+            _runtimeBadge = new Label("");
+            _runtimeBadge.AddToClassList("vn-runtime-badge");
+            bar.Add(_runtimeBadge);
 
             _statusForm = new Label("");
             bar.Add(_statusForm);
@@ -629,6 +846,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             RefreshAll();
             PushUndoSnapshot("打开行");
+
+            // R10：切行后刷新该行的运行时历史状态（会话内按行持久）
+            _runtimeVisualsDirty = true;
         }
 
         // ==================== 图重建与刷新 ====================
@@ -948,6 +1168,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void HandleCreateNode(string commandName, bool isConfirm, Vector2? position)
         {
+            if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑
             if (CurrentRow == null) return;
 
             // 有拖拽落点用落点，否则在泳道起始位置创建。
@@ -990,6 +1211,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void HandleCreateForkJoin(bool isConfirm)
         {
+            if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑
             if (CurrentRow == null) return;
 
             // Fork/Join 落在 layer 1 上（与命令节点初始落点同列）——用户拖动后自由安排。
@@ -1003,6 +1225,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void HandleGraphChanged()
         {
             if (_isRestoring) return; // Undo/Redo 重建期间的变更事件全部忽略（防重入）
+            if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑（图只读）
             _isDirty = true;
             Validate();
             UpdateHeaderAndStatus();
@@ -1039,6 +1262,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void HandleChainTextChanged(bool isConfirm, string newText)
         {
             if (_graphView == null) return;
+            if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑（文本只读）
 
             // 中间态检测：解析失败 → 不重建图
             ChainParseResult parsed = null;
@@ -1114,6 +1338,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void HandlePromotionRequest()
         {
+            if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑
             var row = CurrentRow;
             if (row == null) return;
 
@@ -1132,6 +1357,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void ResetToTemplate()
         {
+            if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑
             var row = CurrentRow;
             if (row == null) return;
             if (RowPromotion.DetermineForm(row.Command) != RowForm.Custom) return;
@@ -1424,6 +1650,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void SaveCurrentRow()
         {
+            if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑（Play 中不写 CSV）
             var row = CurrentRow;
             if (row == null || string.IsNullOrEmpty(_csvPath)) return;
 

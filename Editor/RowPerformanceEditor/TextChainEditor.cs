@@ -42,6 +42,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>文本被编辑（isConfirm, 新文本）——外部负责解析重建图。</summary>
         public event Action<bool, string> OnChainTextChanged;
 
+        /// <summary>R10：Play 模式下双击命令 token（命令全文偏移 = 源 Position, 是否出口段）。</summary>
+        public event Action<int, bool> OnCommandDoubleClicked;
+
         /// <summary>
         /// 用户在文本中单击了某条命令（2026-09-03 新增）：(是否出口段, 命令名, 参数原文)。
         /// 外部（Window）据此在图中定位对应命令节点并展示到细节栏；找不到时静默忽略。
@@ -280,6 +283,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _editor.OnCommandClicked += (isConfirm, commandName, args) =>
                 OnCommandClicked?.Invoke(isConfirm, commandName, args);
 
+            // R10：双击命令 → 从该命令重播（Play 模式）
+            _editor.OnCommandDoubleClicked += (startPosition, isConfirm) =>
+                OnCommandDoubleClicked?.Invoke(startPosition, isConfirm);
+
             // 失焦 = 用户这一轮输入结束 → 此刻才把规范化文本落回编辑器
             _editor.OnFocusLost += OnEditorFocusLost;
 
@@ -372,6 +379,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             _debounce?.Pause();
             _debounce = null;
+        }
+
+        /// <summary>R10：注入运行时命令高亮（state 为 null 时清空）。</summary>
+        public void SetRuntimeHighlights(VNovelizer.Core.Diagnostics.LineNodeState state)
+        {
+            _editor?.SetRuntimeHighlights(state);
+        }
+
+        /// <summary>R10：切换运行时重播模式（双击命令 = 重播；键盘只读）。</summary>
+        public void SetRuntimeReplayMode(bool replayMode)
+        {
+            if (_editor != null) _editor.RuntimeReplayMode = replayMode;
         }
 
         public void Flush()
