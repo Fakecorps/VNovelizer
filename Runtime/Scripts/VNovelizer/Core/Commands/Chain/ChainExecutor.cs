@@ -89,6 +89,10 @@ namespace VNovelizer.Core.Commands.Chain
                 case CommandNode cmd:
                     yield return ExecuteCommand(cmd, ctx);
                     break;
+
+                case ChoiceNode choice:
+                    yield return ExecuteChoice(choice, ctx);
+                    break;
             }
         }
 
@@ -223,6 +227,12 @@ namespace VNovelizer.Core.Commands.Chain
         /// 按深度优先串行序展开树，收集全部命令叶子。
         /// 用于 Simulate（预演）：不关心时序，只关心最终状态，
         /// 因此串行/并行结构都按出现顺序平铺。
+        ///
+        /// <para>
+        /// R11：choice 的选项链<b>不展开</b>——预演时玩家尚未选择，
+        /// 选项链内命令不得预执行（否则状态被"未选择的选项"污染）。
+        /// choice 节点自身不产生命令（面板由执行期打开）。
+        /// </para>
         /// </summary>
         public static void CollectCommands(ChainNode node, List<CommandNode> output)
         {
@@ -244,6 +254,37 @@ namespace VNovelizer.Core.Commands.Chain
                     if (!string.IsNullOrEmpty(cmd.Name))
                         output.Add(cmd);
                     break;
+
+                case ChoiceNode choice:
+                    // R11：不展开选项链（见方法注释）
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// R11：执行 choice 节点——把全部选项推入 ChoicePanel（同一行多个 choice
+        /// 命令会自然合并展示），不阻塞主链。选项被点击后由
+        /// <see cref="VNManager.ExecuteChoiceChain"/> 独立执行对应选项链。
+        ///
+        /// <para>
+        /// 埋点：choice 节点自身记录执行状态（执行指针停在此处等待玩家选择），
+        /// 被选中的选项链内命令随后按普通节点埋点（R10 三态可视化）。
+        /// </para>
+        /// </summary>
+        private static IEnumerator ExecuteChoice(ChoiceNode choice, ChainRunContext ctx)
+        {
+            if (ctx.StartPosition >= 0 && choice.Position < ctx.StartPosition)
+                yield break; // R10 裁剪：前置已 Simulate（重播不重新弹面板）
+
+            VNRuntimeDebugState.NodeStarted(choice.Position, ctx.IsConfirmChain);
+            try
+            {
+                // R11：段信息随选项传递——点击后选项链按所属段执行与埋点
+                ChoiceCommand.PushChoiceOptions(choice, ctx.IsConfirmChain);
+            }
+            finally
+            {
+                VNRuntimeDebugState.NodeCompleted(choice.Position, ctx.IsConfirmChain);
             }
         }
     }

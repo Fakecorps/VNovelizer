@@ -702,12 +702,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 while (i < line.Length && (char.IsLetterOrDigit(line[i]) || line[i] == '_')) i++;
                 string name = line.Substring(nameStart, i - nameStart);
 
-                // 标识符后（跳过空格）必须是 '(' 才是命令
+                // 标识符后（跳过空格）必须是 '(' 或 '{'（R11 choice 块）才是命令
                 int j = i;
                 while (j < line.Length && line[j] == ' ') j++;
-                if (j >= line.Length || line[j] != '(') continue;
+                if (j >= line.Length) continue;
+                bool isCurly = line[j] == '{';
+                if (line[j] != '(' && !isCurly) continue;
 
-                // 括号匹配：跳过字符串内部（含转义），参数可含嵌套括号
+                // 括号/大括号匹配：跳过字符串内部（含转义），参数可含嵌套括号与嵌套块
                 int depth = 0;
                 bool inString = false;
                 int k = j;
@@ -724,8 +726,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                         continue;
                     }
                     if (c == '"') { inString = true; k++; continue; }
-                    if (c == '(') depth++;
-                    else if (c == ')')
+                    if (c == '(' || c == '{') depth++;
+                    else if (c == ')' || c == '}')
                     {
                         depth--;
                         if (depth == 0) { argEnd = k; break; }
@@ -824,7 +826,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 int j = i;
                 while (j < line.Length && line[j] == ' ') j++;
-                if (j >= line.Length || line[j] != '(') continue;
+                if (j >= line.Length) continue;
+                if (line[j] != '(' && line[j] != '{') continue; // R11：choice 块同样识别
 
                 int depth = 0;
                 bool inString = false;
@@ -841,8 +844,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                         continue;
                     }
                     if (c == '"') { inString = true; k++; continue; }
-                    if (c == '(') depth++;
-                    else if (c == ')')
+                    if (c == '(' || c == '{') depth++;
+                    else if (c == ')' || c == '}')
                     {
                         depth--;
                         if (depth == 0) { closed = true; break; }

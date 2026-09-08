@@ -34,6 +34,8 @@ namespace VNovelizer.Editor
             public string ViaGraph;          // 文本 → AST → 图 → AST → 文本
             public bool AstEqual;            // 原 AST 与序列化再解析的 AST 是否等价
             public bool GraphRoundTripEqual; // 经图往返后是否仍等价
+            public string Formatted;         // R11：格式化排版文本（换行 + 缩进）
+            public bool FormattedRoundTripEqual; // 格式化文本反解析后是否结构等价
             public string Note;
         }
 
@@ -60,6 +62,16 @@ namespace VNovelizer.Editor
             "shake(screen,0.3) -> jump(2001)",
             // 默认模板结构（双分支 Par，与 DefaultPerformanceTemplate 一致：无 showSpeaker）
             "showdialogue(typewriter) & [showbg() & showchar(L) & playbgm() -> shake(screen,0.3)]",
+            // R11：choice 块语法（描述 + 命令链奇偶配对）
+            "showbg(Beach) -> choice{去海边, jump(2001), 回家, loadscript(Chapter2)}",
+            // R11：引号包裹含逗号的描述 + 空链选项
+            "choice{\"选项A,含逗号\", wait(0.5) -> jump(2001), 继续, }",
+            // R11：嵌套 choice（选项链内再弹选项）
+            "choice{问路, choice{走左边, jump(1001), 走右边, jump(1002)}, 离开, jump(2001)}",
+            // R11：选项链内含串行 + 分组（排版递归最深路径）
+            "choice{看风景, fadeBlackOut(1) -> [wait(0.5) & shake(screen,0.3)], 离开, }",
+            // R11：主链 choice 后接命令（choice 不在链尾的警告场景，验证排版不受影响）
+            "showbg(Beach) -> choice{去, jump(2001)} -> wait(1)",
         };
 
         [MenuItem("VNovelizer/命令链往返一致性验证", false, 221)]
@@ -79,7 +91,8 @@ namespace VNovelizer.Editor
             if (_hasRun)
             {
                 int pass = 0;
-                foreach (var r in _results) if (r.AstEqual && r.GraphRoundTripEqual) pass++;
+                foreach (var r in _results)
+                    if (r.AstEqual && r.GraphRoundTripEqual && r.FormattedRoundTripEqual) pass++;
                 GUILayout.Label($"通过 {pass} / {_results.Count}", EditorStyles.miniLabel);
             }
             EditorGUILayout.EndHorizontal();
@@ -89,8 +102,10 @@ namespace VNovelizer.Editor
                 EditorGUILayout.HelpBox(
                     "验证链路：\n" +
                     "① 文本 → ChainParser → AST → ChainSerializer → 文本 → 反解析，比对 AST 结构等价\n" +
-                    "② AST → 图（AstToGraph）→ GraphToAst → AST，比对结构等价\n\n" +
-                    "②覆盖的是 SP 分解与括号规则的正确性——它们是图编辑器保存链路的核心。",
+                    "② AST → 图（AstToGraph）→ GraphToAst → AST，比对结构等价\n" +
+                    "③ SerializeFormatted 格式化排版（换行/缩进/choice 块展开）→ 反解析，比对结构等价\n\n" +
+                    "②覆盖的是 SP 分解与括号规则的正确性——它们是图编辑器保存链路的核心。\n" +
+                    "③覆盖 R11 choice 块的排版规则（大括号对齐 []、选项对一行、链内递归换行）。",
                     MessageType.Info);
                 return;
             }
@@ -102,23 +117,33 @@ namespace VNovelizer.Editor
 
         private void DrawCase(CaseResult r)
         {
-            bool ok = r.AstEqual && r.GraphRoundTripEqual;
+            bool ok = r.AstEqual && r.GraphRoundTripEqual && r.FormattedRoundTripEqual;
 
+            // try/finally 保证缩进与 Begin/End 布局恒平衡——DrawCase 内任何异常
+            // 都不再引发 GUIClip 连锁错误（此前 NRE 导致 indentLevel 未恢复刷屏）。
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            int savedIndent = EditorGUI.indentLevel;
+            try
+            {
+                var prev = GUI.color;
+                GUI.color = ok ? new Color(0.6f, 0.9f, 0.55f) : new Color(1f, 0.55f, 0.5f);
+                EditorGUILayout.LabelField((ok ? "[OK] " : "[X] ") + r.Input, EditorStyles.boldLabel);
+                GUI.color = prev;
 
-            var prev = GUI.color;
-            GUI.color = ok ? new Color(0.6f, 0.9f, 0.55f) : new Color(1f, 0.55f, 0.5f);
-            EditorGUILayout.LabelField((ok ? "[OK] " : "[X] ") + r.Input, EditorStyles.boldLabel);
-            GUI.color = prev;
-
-            EditorGUI.indentLevel++;
-            EditorGUILayout.LabelField("序列化", r.TextToAstToText, EditorStyles.miniLabel);
-            EditorGUILayout.LabelField("经图往返", r.ViaGraph, EditorStyles.miniLabel);
-            if (!string.IsNullOrEmpty(r.Note))
-                EditorGUILayout.LabelField("说明", r.Note, EditorStyles.wordWrappedMiniLabel);
-            EditorGUI.indentLevel--;
-
-            EditorGUILayout.EndVertical();
+                EditorGUI.indentLevel++;
+                EditorGUILayout.LabelField("序列化", r.TextToAstToText ?? "", EditorStyles.miniLabel);
+                EditorGUILayout.LabelField("经图往返", r.ViaGraph ?? "", EditorStyles.miniLabel);
+                // R11：Formatted 在解析失败/图分解失败的提前返回路径可能为 null，判空防御
+                EditorGUILayout.LabelField("格式化排版", (r.Formatted ?? "").Replace("\n", " ⏎\n"),
+                    EditorStyles.wordWrappedMiniLabel);
+                if (!string.IsNullOrEmpty(r.Note))
+                    EditorGUILayout.LabelField("说明", r.Note, EditorStyles.wordWrappedMiniLabel);
+            }
+            finally
+            {
+                EditorGUI.indentLevel = savedIndent;
+                EditorGUILayout.EndVertical();
+            }
         }
 
         private void RunAll()
@@ -172,6 +197,15 @@ namespace VNovelizer.Editor
 
             if (!result.GraphRoundTripEqual)
                 notes.Append("经图往返后结构不等价（SP 分解或括号规则有误）");
+
+            // ---- ③ 格式化排版 → 反解析（R11 choice 块换行/缩进验证） ----
+            result.Formatted = ChainSerializer.SerializeFormatted(parsed.Root);
+            var reparsedFormatted = ChainParser.Parse(result.Formatted);
+            result.FormattedRoundTripEqual = reparsedFormatted.Success &&
+                ChainSerializer.AreStructurallyEqual(parsed.Root, reparsedFormatted.Root);
+
+            if (!result.FormattedRoundTripEqual)
+                notes.Append("格式化排版文本反解析不等价（换行/缩进规则有误）");
 
             result.Note = notes.ToString();
             return result;

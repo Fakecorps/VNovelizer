@@ -114,11 +114,49 @@ namespace VNovelizer.Core.Commands.Chain
             ValidatePorts(graph, result);
             ValidateForkJoinPairing(graph, result);
             ValidateCommands(graph, result, isConfirmSection);
+            ValidateChoices(graph, result, isConfirmSection);
             ValidateNestingDepth(graph, result);
             ValidateNextLineDeclared(graph, result, isConfirmSection);
             ValidateConfirmSectionReachability(graph, result, isConfirmSection, entrySectionHasChoice);
 
             return result;
+        }
+
+        /// <summary>
+        /// R11：choice 节点语义规则。
+        /// - 至少 1 个选项（致命）
+        /// - 选项描述非空（致命——面板按钮不能无文字）
+        ///
+        /// <para>
+        /// R11 修订：出口段允许 choice——@Confirm 本来就是「玩家点击后才执行」的段，
+        /// 出口段链尾放 choice 的语义是「点击 → 弹出选择」（如确认对话框），
+        /// 运行时 AdvanceAfterConfirmDone 的 Choice 状态兜底会等待选择，不会强行推进。
+        /// </para>
+        /// </summary>
+        private static void ValidateChoices(ChainGraph graph, ChainGraphValidationResult result,
+            bool isConfirmSection)
+        {
+            foreach (var node in graph.Nodes)
+            {
+                if (node.Kind != ChainGraphNodeKind.Choice) continue;
+
+                int count = node.ChoiceTexts != null ? node.ChoiceTexts.Count : 0;
+                if (count == 0)
+                {
+                    result.Add(ChainGraphIssueLevel.Fatal, 10,
+                        "choice 节点没有任何选项（至少需要 1 个）", node.Id);
+                    continue;
+                }
+
+                for (int i = 0; i < count; i++)
+                {
+                    if (string.IsNullOrWhiteSpace(node.ChoiceTexts[i]))
+                    {
+                        result.Add(ChainGraphIssueLevel.Fatal, 10,
+                            $"choice 的第 {i + 1} 个选项描述为空（选项按钮必须有文字）", node.Id);
+                    }
+                }
+            }
         }
 
         // ---------- 规则 1 / 5：唯一起终点、可达性、无环 ----------
@@ -259,6 +297,12 @@ namespace VNovelizer.Core.Commands.Chain
 
         private static void ValidatePorts(ChainGraph graph, ChainGraphValidationResult result)
         {
+            // R11：图中含 Choice 节点时 End 哨兵允许多入边——choice 的选项链尾
+            // 与主链延续边共享 End 出口（"执行完进入下一行"），多尾是合法结构。
+            bool hasChoice = false;
+            foreach (var n in graph.Nodes)
+                if (n.Kind == ChainGraphNodeKind.Choice) { hasChoice = true; break; }
+
             foreach (var node in graph.Nodes)
             {
                 int inDeg = graph.InDegree(node.Id);
@@ -298,6 +342,10 @@ namespace VNovelizer.Core.Commands.Chain
                                 $"JOIN 只有 {inDeg} 条入边（至少需要 2 条，否则无并行可汇合）", node.Id);
                         break;
 
+                    case ChainGraphNodeKind.Choice:
+                        ValidateChoicePorts(graph, node, result);
+                        break;
+
                     // 2026-08-28：哨兵端口规则——哨兵常驻后"多起点/多终点"改由哨兵出/入度表达
                     //（FindSources 统计被哨兵吸收，旧的多起点判定不再触发）。
                     case ChainGraphNodeKind.Start:
@@ -308,11 +356,85 @@ namespace VNovelizer.Core.Commands.Chain
                         break;
 
                     case ChainGraphNodeKind.End:
-                        if (inDeg > 1)
+                        // R11：choice 场景豁免（多选项链尾 + 主延续边共享 End）
+                        if (inDeg > 1 && !hasChoice)
                             result.Add(ChainGraphIssueLevel.Fatal, 2,
                                 $"终点终端接收了 {inDeg} 条线（命令链只能有一个终点，多路汇合请用 JOIN）",
                                 node.Id);
                         break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// R11：choice 节点端口规则。
+        /// 致命：多入边 / 主延续边多于一条 / 主延续边连了非 End 非 Choice 节点 /
+        /// 端口号重复 / 端口号越界。
+        /// 警告：存在空链选项（该选项点击后直接进入下一行）。
+        /// </summary>
+        private static void ValidateChoicePorts(ChainGraph graph, ChainGraphNode node,
+            ChainGraphValidationResult result)
+        {
+            if (graph.InDegree(node.Id) > 1)
+            {
+                result.Add(ChainGraphIssueLevel.Fatal, 2,
+                    $"choice 节点有 {graph.InDegree(node.Id)} 条入边（应为 1）", node.Id);
+            }
+
+            int optionCount = node.ChoiceTexts != null ? node.ChoiceTexts.Count : 0;
+            int mainCount = 0;
+            var usedPorts = new HashSet<int>();
+
+            foreach (var pair in graph.GetOrderedSuccessors(node.Id))
+            {
+                if (pair.Key == ChoicePort.Main)
+                {
+                    mainCount++;
+                    var target = graph.GetNode(pair.Value);
+                    if (target == null ||
+                        (target.Kind != ChainGraphNodeKind.Choice &&
+                         target.Kind != ChainGraphNodeKind.End))
+                    {
+                        result.Add(ChainGraphIssueLevel.Fatal, 2,
+                            "choice 的主链延续边只能连接 End 终端或另一个 choice 节点", node.Id);
+                    }
+                    continue;
+                }
+
+                if (pair.Key < 0) continue; // 防御：其他负值端口
+
+                if (!usedPorts.Add(pair.Key))
+                {
+                    result.Add(ChainGraphIssueLevel.Fatal, 2,
+                        $"choice 的选项端口 {pair.Key} 连出了多条线", node.Id);
+                    continue;
+                }
+
+                if (pair.Key >= optionCount)
+                {
+                    result.Add(ChainGraphIssueLevel.Fatal, 2,
+                        $"choice 的选项端口 {pair.Key} 超出选项数量 {optionCount}", node.Id);
+                }
+            }
+
+            if (mainCount > 1)
+            {
+                result.Add(ChainGraphIssueLevel.Fatal, 2,
+                    "choice 的主链延续边只能有一条", node.Id);
+            }
+
+            // 空链选项警告：端口未连线（点击后直接进入下一行）
+            if (optionCount > 0)
+            {
+                for (int i = 0; i < optionCount; i++)
+                {
+                    if (!usedPorts.Contains(i))
+                    {
+                        result.Add(ChainGraphIssueLevel.Warning, 2,
+                            $"选项「{(node.ChoiceTexts[i] ?? "")}」的命令链为空——点击后将直接进入下一行",
+                            node.Id);
+                        break; // 一条警告汇总即可
+                    }
                 }
             }
         }
@@ -364,16 +486,9 @@ namespace VNovelizer.Core.Commands.Chain
                     continue;
                 }
 
-                bool isChoice = name.ToLower() == "choice";
-
-                // 规则 6：出口段禁止 choice
-                // （出口执行后引擎立即推进，选项面板尚未响应即被跳过——
-                //   ScriptParser 在运行时报错，编辑期前置拦截）
-                if (isConfirmSection && isChoice)
-                {
-                    result.Add(ChainGraphIssueLevel.Fatal, 6,
-                        "出口段（@Confirm）不能包含 choice——出口执行后会立即推进，选项无法响应", node.Id);
-                }
+                // R11 修订：出口段允许 choice（旧语法 choice(desc|cmd) 同样放开）——
+                // 「点击 → 弹出选择」语义由 AdvanceAfterConfirmDone 的 Choice 状态兜底保证。
+                // （原规则 6「出口段禁止 choice」已废弃。）
 
                 // 规则 7：流程命令必须位于链尾（与运行时一致：警告级，不阻断）
                 // 2026-08-28：哨兵常驻后 sink 恒为 End 哨兵——"链尾"改按
@@ -451,6 +566,17 @@ namespace VNovelizer.Core.Commands.Chain
                 if (string.Equals((node.CommandName ?? "").Trim(), "nextline",
                     StringComparison.OrdinalIgnoreCase))
                     return; // 已声明，通过
+            }
+
+            // R11：出口段含 choice 时豁免 nextline 警告——choice 本身就是出口
+            // （玩家点击后弹面板，选项链内的 jump/nextline 决定去向）。
+            foreach (var node in graph.Nodes)
+            {
+                if (node.Kind == ChainGraphNodeKind.Choice) return;
+                if (node.Kind == ChainGraphNodeKind.Command &&
+                    string.Equals((node.CommandName ?? "").Trim(), "choice",
+                        StringComparison.OrdinalIgnoreCase))
+                    return;
             }
 
             // 定位链尾命令节点用于高亮（无命令节点时退化为全图问题）

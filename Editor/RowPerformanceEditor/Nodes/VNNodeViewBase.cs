@@ -61,6 +61,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 立即插入自定义标题（父类构造期间 titleContainer 已可写入）
             _customTitleLabel = new Label(data.CommandName ?? "(未指定)");
             _customTitleLabel.AddToClassList("vn-node-title");
+            // 双保险：inline style 优先 USS 选择器，避免 Unity USS 缓存导致修改不生效。
+            // 子类（Terminal/ForkJoin）在自己的 Build 里用 ResetTitleFontSize 覆盖回各自 USS 字号。
+            _customTitleLabel.style.fontSize = 18;
+            _customTitleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
             _customTitleLabel.pickingMode = PickingMode.Ignore;
             titleContainer.Insert(0, _customTitleLabel);
 
@@ -76,6 +80,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         public void SetTitle(string text)
         {
             if (_customTitleLabel != null) _customTitleLabel.text = text ?? "(未指定)";
+        }
+
+        /// <summary>覆盖标题字号（子类在 Build 中调用以恢复各自 USS 设计的字号）。</summary>
+        protected void SetTitleFontSize(float size)
+        {
+            if (_customTitleLabel != null) _customTitleLabel.style.fontSize = size;
         }
 
         /// <summary>隐藏 GraphView 默认标题（默认 label + 折叠按钮）</summary>

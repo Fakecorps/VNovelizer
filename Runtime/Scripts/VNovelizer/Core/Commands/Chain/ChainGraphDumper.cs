@@ -103,10 +103,18 @@ namespace VNovelizer.Core.Commands.Chain
                 if (head != null) graph.AddEdge(startId, head.Id);
             }
 
+            // R11：End 哨兵收接全部非哨兵 sink。choice 场景下多个选项链尾
+            // （各自独立的 sink）都连到 End——"选项执行完进入等待确认"的统一出口。
+            // 无 choice 的合法 SP 图 sink 唯一，行为与旧实现一致。
             if (graph.InDegree(endId) == 0)
             {
-                var tail = FindFreeEnd(graph, wantSource: false);
-                if (tail != null) graph.AddEdge(tail.Id, endId);
+                foreach (var n in graph.Nodes)
+                {
+                    if (n.Kind == ChainGraphNodeKind.Start || n.Kind == ChainGraphNodeKind.End) continue;
+                    if (n.Id == startId) continue;
+                    if (graph.OutDegree(n.Id) != 0) continue;
+                    graph.AddEdge(n.Id, endId, n.Kind == ChainGraphNodeKind.Choice ? ChoicePort.Main : 0);
+                }
             }
         }
 
@@ -125,7 +133,8 @@ namespace VNovelizer.Core.Commands.Chain
         // ---------------- 转储 ----------------
 
         /// <summary>
-        /// 把图转储为可逆文本。节点行 <c>N\tid\tkind\tcmd\targs</c>，边行 <c>E\tfrom\tto</c>。
+        /// 把图转储为可逆文本。节点行 <c>N\tid\tkind\tcmd\targs\tchoicetexts</c>，
+        /// 边行 <c>E\tfrom\tto\tport</c>（port 缺省 0；R11 choice 端口）。
         /// 字段内的 \、制表符、换行被转义为两字符序列，args 可含任意字符。
         /// 空图返回空串。
         /// </summary>
@@ -140,6 +149,7 @@ namespace VNovelizer.Core.Commands.Chain
                   .Append('\t').Append((int)n.Kind)
                   .Append('\t').Append(Escape(n.CommandName ?? ""))
                   .Append('\t').Append(Escape(n.Args ?? ""))
+                  .Append('\t').Append(n.ChoiceTexts != null ? Escape(string.Join("\u0001", n.ChoiceTexts)) : "")
                   .Append('\n');
             }
 
@@ -147,6 +157,7 @@ namespace VNovelizer.Core.Commands.Chain
             {
                 sb.Append("E\t").Append(Escape(e.FromId))
                   .Append('\t').Append(Escape(e.ToId))
+                  .Append('\t').Append(e.PortIndex)
                   .Append('\n');
             }
 
@@ -156,6 +167,7 @@ namespace VNovelizer.Core.Commands.Chain
         /// <summary>
         /// 从转储文本恢复图（<see cref="Dump"/> 的逆）。坏行跳过（防御），
         /// 绝不抛异常——快照数据宁可缺行也不能让撤销崩溃。
+        /// 兼容旧格式：节点行第 6 字段、边行第 4 字段缺失时取默认值。
         /// </summary>
         public static ChainGraph Restore(string dump)
         {
@@ -178,11 +190,19 @@ namespace VNovelizer.Core.Commands.Chain
                         (ChainGraphNodeKind)kind,
                         Unescape(parts[3]),
                         Unescape(parts[4]));
+                    if (parts.Length >= 6)
+                    {
+                        string texts = Unescape(parts[5]);
+                        if (!string.IsNullOrEmpty(texts))
+                            node.ChoiceTexts = new List<string>(texts.Split('\u0001'));
+                    }
                     graph.AddNode(node);
                 }
                 else if (parts[0] == "E" && parts.Length >= 3)
                 {
-                    graph.AddEdge(Unescape(parts[1]), Unescape(parts[2]));
+                    int port = 0;
+                    if (parts.Length >= 4) int.TryParse(parts[3], out port);
+                    graph.AddEdge(Unescape(parts[1]), Unescape(parts[2]), port);
                 }
             }
 

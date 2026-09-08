@@ -245,7 +245,8 @@ public static class ScriptParser
     /// 规则：
     ///   · 未出现 @Confirm: 时 ConfirmCommands 为空，行为与旧剧本完全一致；
     ///   · 出现多个 @Confirm: 时报错，仅第一个生效（容错继续解析）；
-    ///   · 出口段禁止 choice 命令（出口执行后面板尚未响应即被默认推进），进入段含 choice 时警告出口不会触发；
+    ///   · R11 起出口段允许 choice（「点击 → 弹出选择」语义，AdvanceAfterConfirmDone 等待选择）；
+    ///     进入段含 choice 时警告出口不会触发；
     ///   · 引号内的 @Confirm: 视为字面文本，不参与切分（如 showprompt("@Confirm: 是标记")）。
     /// </summary>
     private static void SplitConfirmSection(StoryLine line, string rawCommand)
@@ -276,16 +277,13 @@ public static class ScriptParser
         line.ConfirmCommands = rest.Trim();
 
         // 语义校验：choice 与 @Confirm 的互斥关系
-        if (!string.IsNullOrEmpty(line.ConfirmCommands))
+        // R11 修订：出口段允许 choice——@Confirm 本来就是「玩家点击后才执行」的段，
+        // 出口段链尾放 choice 的语义是「点击 → 弹出选择」（如确认对话框）。
+        // AdvanceAfterConfirmDone 有 Choice 状态兜底（等待选择，不强行推进）。
+        if (!string.IsNullOrEmpty(line.ConfirmCommands) &&
+            ContainsChoiceCommand(line.Command))
         {
-            if (ContainsChoiceCommand(line.ConfirmCommands))
-            {
-                Debug.LogError($"[ScriptParser] 行 {line.ID}: @Confirm: 出口段不允许 choice 命令（出口执行后面板尚未响应即被默认推进），请将 choice 移至进入段。");
-            }
-            if (ContainsChoiceCommand(line.Command))
-            {
-                Debug.LogWarning($"[ScriptParser] 行 {line.ID}: 进入段含 choice 命令，Choice 状态会拦截普通点击，本行 @Confirm: 出口段将不会执行（choice 选项命令优先生效）。");
-            }
+            Debug.LogWarning($"[ScriptParser] 行 {line.ID}: 进入段含 choice 命令，Choice 状态会拦截普通点击，本行 @Confirm: 出口段将不会执行（choice 选项命令优先生效）。");
         }
     }
 

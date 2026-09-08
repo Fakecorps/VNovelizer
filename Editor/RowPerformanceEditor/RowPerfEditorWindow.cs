@@ -79,6 +79,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private InspectorBuilder _inspector;
         private readonly GraphUndoStack _undoStack = new GraphUndoStack();
 
+        /// <summary>R11：当前选中的 choice 节点（Inspector 选项面板的目标；null = 未选中 choice）。</summary>
+        private ChoiceNodeView _selectedChoiceView;
+
         // ---- UI 引用 ----
         private Label _lineSummary;
         private Label _formBadge;
@@ -87,6 +90,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private Label _statusUndo;
         private Label _statusChain;
         private Label _runtimeBadge;
+
+        /// <summary>命令链文本侧边栏整列容器（含分隔条）—— 工具栏一键折叠/展开。</summary>
+        private VisualElement _textChainColumn;
+
+        /// <summary>折叠按钮引用（切换时更新图标与 tooltip）。</summary>
+        private Button _toggleTextChainButton;
+
+        /// <summary>EditorPrefs 键：命令链文本侧边栏折叠状态（会话间持久化）。</summary>
+        private const string PrefsKeyTextChainCollapsed = "VNovelizer.RowPerfEditor.TextChainCollapsed";
         private TextField _lineIdField;
         private Button _saveButton;
         private Button _resetButton;
@@ -208,12 +220,23 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             main.Add(_graphView);
 
             // 2026-08-28：中间右列 · 命令链文本编辑器（独立成列，不再挤在 Inspector Tab 内）
+            // 2026-09-07：外加 .vn-textchain-column 容器，便于工具栏一键折叠/展开（窗口变窄时画布占满空间）
+            _textChainColumn = new VisualElement();
+            _textChainColumn.AddToClassList("vn-textchain-column");
             var textChainRoot = new VisualElement();
+            // 外层列宽由 VnColumnResizer 控制（改 _textChainColumn.style.width），
+            // 内层 textChainRoot 必须用 flexGrow=1 自动填满——否则外层会按内容收缩导致内层极窄
+            textChainRoot.style.flexGrow = 1;
+            textChainRoot.style.flexShrink = 0;
+            textChainRoot.style.minWidth = 0;
+            _textChainColumn.Add(textChainRoot);
 
-            // 分隔条在 textChain 左侧 → invert（往右拖 = 画布变宽、文本列变窄）
-            main.Add(new VnColumnResizer(textChainRoot, 240f, 760f,
+            // 分隔条绑外层：拖动时改 _textChainColumn 宽度；invert=true（分隔条在列左侧）。
+            // 关键：resizer 必须作为 main 的直接子元素（与 palette/inspector resizer 同结构），
+            // 否则 resizer 内部的 panel.visualTree 事件挂载行为不一致会导致拖不动。
+            main.Add(new VnColumnResizer(_textChainColumn, 240f, 760f,
                 invert: true, prefsKey: PrefsKey + ".TextW", defaultWidth: 360f));
-            main.Add(textChainRoot);
+            main.Add(_textChainColumn);
 
             _textChain = new TextChainEditor(textChainRoot);
             _textChain.OnChainTextChanged += HandleChainTextChanged;
@@ -237,10 +260,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _inspector.OnValueChanged += HandleGraphChanged;
             _inspector.OnRequestJumpToColumn += HandleJumpToColumn;
 
+            // R11：choice 选项面板交互（新增 / 级联删除 / 选项链只读预览）
+            _inspector.OnRequestAddChoiceOption += HandleAddChoiceOption;
+            _inspector.OnRequestRemoveChoiceOption += HandleRemoveChoiceOption;
+            _inspector.ChoiceChainPreviewProvider = GetChoiceChainPreview;
+
             // 先订阅 _graphView 事件再初始化显示——避免初始化 Show 期间
             // 因事件竞态而错过初次选中通知
             _graphView.OnNodeSelected += node =>
             {
+                _selectedChoiceView = node as ChoiceNodeView; // R11：Inspector 选项预览需要
                 _inspector.Show(node);
                 _textChain.SetSelectedNode(node);
             };
@@ -278,6 +307,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             if (string.IsNullOrEmpty(_csvPath)) TryAutoSelectScript();
             else RestoreSessionAfterReload();
+
+            // 恢复命令链文本侧边栏的折叠状态（窗口栏变小时用户偏好隐藏，给画布更多空间）
+            ApplyTextChainCollapsedState();
         }
 
         /// <summary>
@@ -545,13 +577,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             redo.tooltip = "重做 (Ctrl+Y)";
             bar.Add(redo);
 
-            var copy = new Button(CopyChain) { text = "复制" };
-            copy.tooltip = "复制本行命令链 (Ctrl+C)——可粘到其他行、其他剧本，甚至发给同事";
-            bar.Add(copy);
-
-            var paste = new Button(PasteChain) { text = "粘贴" };
-            paste.tooltip = "粘贴命令链到当前行 (Ctrl+V)";
-            bar.Add(paste);
+            // 复制/粘贴按钮已移除：Ctrl+C / Ctrl+V 快捷键足够，工具栏留位置给更核心的动作。
 
             var relayout = new Button(() => _graphView?.RelayoutAll()) { text = "整理布局" };
             relayout.tooltip = "整理布局：按执行顺序重新排布全部节点";
@@ -561,17 +587,27 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _lineSummary.AddToClassList("vn-line-summary");
             bar.Add(_lineSummary);
 
+            // 视图控制：折叠/展开命令链文本侧边栏（靠左紧贴行摘要，与定制行徽章为"视图+行特性"组）
+            _toggleTextChainButton = new Button(ToggleTextChainColumn) { text = "▶▶" };
+            _toggleTextChainButton.tooltip = "折叠/展开命令链文本侧边栏";
+            _toggleTextChainButton.AddToClassList("vn-toolbar-toggle");
+            bar.Add(_toggleTextChainButton);
+
             _formBadge = new Label("—");
             _formBadge.AddToClassList("vn-rowform-badge");
             bar.Add(_formBadge);
 
             _resetButton = new Button(ResetToTemplate) { text = "重置模板" };
             _resetButton.tooltip = "移除系统命令，恢复为数据列驱动的默认演出";
+            _resetButton.AddToClassList("vn-rowform-reset");
             bar.Add(_resetButton);
+
+            bar.Add(MakeDivider());
 
             _saveButton = new Button(SaveCurrentRow) { text = "保存到 CSV" };
             bar.Add(_saveButton);
 
+            // 主操作放最右：运行 = 触发引擎开始播放（最频繁的最终动作）
             var runButton = new Button(RunCurrentRow) { text = "▶ 运行" };
             runButton.tooltip = "运行本行：进入 Play 模式，从当前行 ID 开始播放（未保存的修改会自动保存）";
             runButton.AddToClassList("vn-toolbar-run");
@@ -1180,6 +1216,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 isConfirm ? ChainAutoLayout.ConfirmLaneY : ChainAutoLayout.EntryLaneY);
 
             var info = CommandMetaReader.Get(commandName);
+
+            // R11：choice 是独立节点类型（多出端口 + 选项列表），不走通用命令节点
+            if (string.Equals(commandName, "choice", System.StringComparison.OrdinalIgnoreCase))
+            {
+                var choiceView = _graphView.CreateChoiceNode(pos, isConfirm);
+                _graphView.ClearSelection();
+                _graphView.AddToSelection(choiceView);
+                return;
+            }
+
             string defaultArgs = BuildDefaultArgs(info);
 
             var view = _graphView.CreateCommandNode(commandName, defaultArgs, pos, isConfirm);
@@ -1220,6 +1266,47 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 isConfirm ? ChainAutoLayout.ConfirmLaneY : ChainAutoLayout.EntryLaneY);
 
             _graphView.CreateForkJoinPair(pos, isConfirm);
+        }
+
+        // ---------------- R11：choice 选项面板交互 ----------------
+
+        private void HandleAddChoiceOption()
+        {
+            if (EditorApplication.isPlaying) return;
+            if (_selectedChoiceView == null) return;
+            _graphView.AddChoiceOption(_selectedChoiceView);
+            _inspector.Refresh();
+        }
+
+        private void HandleRemoveChoiceOption(int index)
+        {
+            if (EditorApplication.isPlaying) return;
+            if (_selectedChoiceView == null) return;
+
+            string optionText = _selectedChoiceView.Data?.ChoiceTexts != null &&
+                                index < _selectedChoiceView.Data.ChoiceTexts.Count
+                ? _selectedChoiceView.Data.ChoiceTexts[index] : "";
+            string display = string.IsNullOrWhiteSpace(optionText) ? $"(选项 {index + 1})" : optionText;
+
+            bool ok = EditorUtility.DisplayDialog(
+                "删除选项？",
+                $"将删除选项「{display}」，并级联删除其出端口连出的整条命令链。\n\n" +
+                "此操作不可恢复，确定删除吗？",
+                "删除", "取消");
+            if (!ok) return;
+
+            _graphView.RemoveChoiceOption(_selectedChoiceView, index);
+            _inspector.Refresh();
+        }
+
+        /// <summary>选项链只读预览：从图实时序列化该选项端口的链文本。</summary>
+        private string GetChoiceChainPreview(int portIndex)
+        {
+            if (_selectedChoiceView == null || _selectedChoiceView.Data == null) return "";
+            var graph = _selectedChoiceView.IsConfirmChain
+                ? _graphView.ConfirmGraph : _graphView.EntryGraph;
+            return GraphToAst.SerializeChoiceOptionChain(graph,
+                _selectedChoiceView.Data.Id, portIndex);
         }
 
         private void HandleGraphChanged()
@@ -1783,6 +1870,29 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 // 已在 Play 模式：AutoPlayOnPlayMode 只在进入 Play 时执行一次，直接启动
                 VNManager.GetInstance().StartGame(_scriptName, lineId);
                 ShowNotification(new GUIContent($"已切换到行 {lineId} 播放"));
+            }
+        }
+
+        /// <summary>切换命令链文本侧边栏的折叠/展开（EditorPrefs 持久化偏好）。</summary>
+        private void ToggleTextChainColumn()
+        {
+            bool collapsed = !EditorPrefs.GetBool(PrefsKeyTextChainCollapsed, false);
+            EditorPrefs.SetBool(PrefsKeyTextChainCollapsed, collapsed);
+            ApplyTextChainCollapsedState();
+        }
+
+        /// <summary>根据 EditorPrefs 偏好应用命令链文本侧边栏的显示状态与按钮图标。</summary>
+        private void ApplyTextChainCollapsedState()
+        {
+            if (_textChainColumn == null) return;
+            bool collapsed = EditorPrefs.GetBool(PrefsKeyTextChainCollapsed, false);
+            _textChainColumn.style.display = collapsed ? DisplayStyle.None : DisplayStyle.Flex;
+            if (_toggleTextChainButton != null)
+            {
+                _toggleTextChainButton.text = collapsed ? "◀◀" : "▶▶";
+                _toggleTextChainButton.tooltip = collapsed
+                    ? "展开命令链文本侧边栏"
+                    : "折叠命令链文本侧边栏（窗口栏窄时腾出空间给画布）";
             }
         }
 

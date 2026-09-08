@@ -42,6 +42,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         protected override void Build()
         {
+            // 模板胶囊用紧凑字号（USS .vn-tplcapsule .vn-node-title: 11px），不被父类默认 18px 覆盖
+            SetTitleFontSize(11);
             SetTitle("[默认演出]");
             tooltip = "本行使用引擎默认演出（数据列驱动），未占用 Command 列。\n\n" +
                       "双击展开查看完整结构。修改任一节点会把整行「提升」为定制行——" +

@@ -1,14 +1,13 @@
-using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
 using VNovelizer.Core.Localization;
 using VNovelizer.Core.Diagnostics;
 using VNovelizer.Core.Commands.Meta;
+using VNovelizer.Core.Commands.Chain;
 
 namespace VNovelizer.Core.Commands
 {
     [VNCommandMeta(VNCommandCategory.Flow,
-        "添加选项按钮（同一行多个 choice 会汇集成同一面板；本地化用 @loc:key，仅可置于链尾）",
+        "添加选项按钮（同一行多个 choice 会汇集成同一面板；本地化用 @loc:key，仅可置于链尾）。\n" +
+        "R11 块语法：choice{描述1, 命令链1, 描述2, 命令链2, ...}——每个选项一条命令链，支持完整链语法与嵌套 choice。",
         ArgSeparator = '|')]
     public class ChoiceCommand : VNCommand
     {
@@ -18,6 +17,11 @@ namespace VNovelizer.Core.Commands
             Description = "点击后执行的命令链，如 jump(Scene_010) 或 loadscript(Chapter2)")]
         public override string CommandName { get { return "choice"; } }
 
+        /// <summary>
+        /// 旧语法入口（R11 兼容路径）：<c>choice(desc|cmd)</c>。
+        /// 新块语法 <c>choice{...}</c> 被 ChainParser 解析为 <see cref="ChoiceNode"/>，
+        /// 由 <see cref="ChainExecutor"/> 经 <see cref="PushChoiceOptions"/> 推入面板，不经本方法。
+        /// </summary>
         public override bool Execute(string args)
         {
             // 1. 切换到 Choice 状态，阻止游戏点击下一句
@@ -28,7 +32,70 @@ namespace VNovelizer.Core.Commands
             string text = result.Item1;
             string cmd = result.Item2;
 
-            // 【新增】多语言 choice 参数：choice(@loc:FULL_KEY|jump(...))
+            text = ResolveLocalizedText(text);
+
+            VNDebug.LogVerbose($"[ChoiceCommand] 解析选项 -> Text: {text}, Cmd: {cmd}");
+
+            // 旧语法无段上下文，点击后走 ExecuteChoiceCommand（进入段语义，与旧版一致）
+            LastPushedIsConfirm = false;
+
+            PushSingleChoice(text, cmd, null);
+            return true;
+        }
+
+        // ---------------- R11：块语法面板入口（ChainExecutor 调用） ----------------
+
+        /// <summary>
+        /// 最后一批推入面板的选项所属段（false = 进入段，true = 出口段）。
+        /// <see cref="ChoicePanel.OnChoiceClicked"/> 据此把选项链交还给对应段的推进语义。
+        /// 同一面板的所有选项必然同段：进入段含 choice 时出口段不会执行（点击选项即消费出口）。
+        /// </summary>
+        public static bool LastPushedIsConfirm { get; private set; }
+
+        /// <summary>
+        /// 把 <see cref="ChoiceNode"/> 的全部选项推入共享 ChoicePanel。
+        /// 不阻塞主链——玩家点击后由 <see cref="VNManager.ExecuteChoiceChain"/> 执行选项链。
+        /// 同一行多个 choice 节点（或新旧语法混合）会自然合并展示（决策 7）。
+        /// </summary>
+        /// <param name="isConfirmChain">choice 所在段（出口段 choice 在 R11 修订后合法）</param>
+        public static void PushChoiceOptions(ChoiceNode choice, bool isConfirmChain)
+        {
+            if (choice == null) return;
+
+            LastPushedIsConfirm = isConfirmChain;
+
+            // 切换到 Choice 状态，阻止游戏点击下一句
+            GameStateManager.GetInstance().SetState(GameState.Choice);
+
+            foreach (var opt in choice.Options)
+            {
+                PushSingleChoice(ResolveLocalizedText(opt?.Text), null, opt?.Chain);
+            }
+        }
+
+        /// <summary>推单个选项：本地化解析 + 打开/复用面板。</summary>
+        private static void PushSingleChoice(string text, string commandText, ChainNode chain)
+        {
+            var panel = UIManager.GetInstance().Get<ChoicePanel>();
+
+            if (panel == null || !panel.gameObject.activeSelf)
+            {
+                // 如果面板没开，先打开（路径由 UIManager 注册表解析）
+                UIManager.GetInstance().Show<ChoicePanel>((p) =>
+                {
+                    p.AddChoice(text, commandText, chain);
+                });
+            }
+            else
+            {
+                // 如果已经开了，直接加按钮
+                panel.AddChoice(text, commandText, chain);
+            }
+        }
+
+        /// <summary>多语言 choice 参数：choice(@loc:FULL_KEY|...)。翻译缺失时回退可读尾段。</summary>
+        private static string ResolveLocalizedText(string text)
+        {
             if (VNLocalizationService.IsEnabled() && !string.IsNullOrEmpty(text) &&
                 text.TrimStart().StartsWith("@loc:", System.StringComparison.OrdinalIgnoreCase))
             {
@@ -44,27 +111,7 @@ namespace VNovelizer.Core.Commands
                     text = GetReadableTail(fullKey);
                 }
             }
-
-            VNDebug.LogVerbose($"[ChoiceCommand] 解析选项 -> Text: {text}, Cmd: {cmd}");
-
-            // 3. 获取或打开面板
-            var panel = UIManager.GetInstance().Get<ChoicePanel>();
-
-            if (panel == null || !panel.gameObject.activeSelf)
-            {
-                // 如果面板没开，先打开（路径由 UIManager 注册表解析）
-                UIManager.GetInstance().Show<ChoicePanel>((p) =>
-                {
-                    p.AddChoice(text, cmd);
-                });
-            }
-            else
-            {
-                // 如果已经开了，直接加按钮
-                panel.AddChoice(text, cmd);
-            }
-
-            return true;
+            return text;
         }
 
         private (string, string) ParseArgs(string args)

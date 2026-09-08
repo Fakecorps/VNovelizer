@@ -194,12 +194,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             _current = node;
 
-            var cmdView = node as CommandNodeView;
             string sig = null;
-            if (cmdView?.Data != null && !string.IsNullOrEmpty(cmdView.Data.CommandName))
+            if (node is CommandNodeView cmdView &&
+                cmdView.Data != null && !string.IsNullOrEmpty(cmdView.Data.CommandName))
             {
                 sig = (cmdView.Data.CommandName ?? "") + "(" +
                       (cmdView.Data.Args ?? "") + ")";
+            }
+            else if (node is ChoiceNodeView choiceView && choiceView.Data != null)
+            {
+                // R11：choice 整块作为复合命令高亮。格式化排版后 choice 与 { 分行，
+                // 故用 "choice" 定位首行（编辑器按行文本 IndexOf 匹配）。
+                sig = "choice";
             }
 
             if (_editor != null)
@@ -259,6 +265,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             var help = new Label(
                 "语法：cmd(args) · 串行分隔 -> ，并行分隔 & ，分组用 [] 嵌套。\n" +
+                "choice 选项：choice{描述1, 命令链1, 描述2, 命令链2, ...}（描述含逗号时用双引号包裹）。\n" +
                 "用 @Confirm: 单独成行分隔进入段与出口段，@Confirm: 之后的命令在用户确认推进时执行。\n" +
                 "文本与节点图双向实时联动 —— 编辑即重建节点图（200ms 防抖），解析失败的中间态不会破坏图。\n" +
                 "选中画布节点时，编辑器里对应行会整行高亮（橙色）。");

@@ -82,9 +82,10 @@ namespace VNovelizer.Core.Commands.Chain
                     continue;
                 }
 
-                // 命令单元：读取到顶层（括号深度 0 且引号外）分隔符为止
+                // 命令单元：读取到顶层（括号/大括号深度 0 且引号外）分隔符为止
                 int start = pos;
                 int parenDepth = 0;
+                int curlyDepth = 0;
                 bool inQuote = false;
 
                 while (pos < len)
@@ -116,7 +117,19 @@ namespace VNovelizer.Core.Commands.Chain
                         continue; // 括号闭合后仍可继续读取（顶层遇到分隔符才断开）
                     }
 
-                    if (parenDepth == 0)
+                    // R11：choice{...} 块语法——大括号平衡读取，使整个块保持为一个命令单元。
+                    // 块内允许任意链符号（-> & []）与嵌套 choice{...}，由 Parser 递归处理。
+                    if (cc == '{') { curlyDepth++; pos++; continue; }
+
+                    if (cc == '}')
+                    {
+                        // 多余的 '}' 与 ')' 同理：深度 clamp 到 0，语法错误交由解析器报告。
+                        if (curlyDepth > 0) curlyDepth--;
+                        pos++;
+                        continue;
+                    }
+
+                    if (parenDepth == 0 && curlyDepth == 0)
                     {
                         // 顶层遇到链式语法符号 → 命令单元结束
                         if (cc == '&' || cc == '[' || cc == ']') break;

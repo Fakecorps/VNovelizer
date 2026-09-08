@@ -2025,6 +2025,48 @@ public class VNManager : BaseManager<VNManager>
             PlayCurrentLine();
     }
 
+    /// <summary>
+    /// R11：执行 choice 块语法的选项链（ChoicePanel 点击回调）。
+    /// 选项链经 <see cref="ChainExecutor"/> 独立执行——支持完整链语法
+    /// （&amp; 并行 / -&gt; 串行 / [] 分组 / 嵌套 choice），节点埋点与 R10 一致。
+    /// </summary>
+    /// <param name="isConfirmChain">choice 所在段：false = 进入段（推进用进入段语义），
+    /// true = 出口段（R11 修订后合法——「点击 → 弹出选择」，推进用出口段语义）。</param>
+    public void ExecuteChoiceChain(ChainNode chain, bool isConfirmChain)
+    {
+        // 与 ExecuteChoiceCommand 相同的并发防护：终止当前行的残余演出
+        if (_flowCoroutine != null)
+        {
+            MonoManager.GetInstance().StopCoroutine(_flowCoroutine);
+            _flowCoroutine = null;
+            CommandManager.GetInstance().InterruptAll();
+        }
+
+        if (chain != null)
+            _flowCoroutine = MonoManager.GetInstance().StartCoroutine(
+                ExecuteChoiceChainCoroutine(chain, isConfirmChain));
+        else
+            PlayCurrentLine();
+    }
+
+    /// <summary>选项链执行协程：执行被选中的选项链 → 按所属段沿用推进决策。</summary>
+    private IEnumerator ExecuteChoiceChainCoroutine(ChainNode chain, bool isConfirmChain)
+    {
+        int preIndex = CurrentLineIndex;
+
+        var ctx = new ChainRunContext { IsConfirmChain = isConfirmChain };
+        yield return ChainExecutor.Execute(chain, ctx);
+
+        _flowCoroutine = null;
+
+        // 选项链执行完毕：jump/nextline 等流程命令已改行号或置标志，
+        // 按 choice 所属段复用推进语义。
+        if (isConfirmChain)
+            AdvanceAfterConfirmDone(preIndex);
+        else
+            AdvanceAfterEntryDone(preIndex);
+    }
+
     public bool IsAutoPlaying() { return isAutoPlaying; }
     public bool IsSkipping() { return isSkipping; }
 
@@ -2740,7 +2782,8 @@ public class VNManager : BaseManager<VNManager>
         GameStateManager stateManager = GameStateManager.GetInstance();
         if (stateManager != null && stateManager.CurrentState == GameState.Choice)
         {
-            // 出口段不应含 choice（解析期已报错拦截），防御性兜底：等待选择
+            // R11：出口段 choice（合法）——链执行到 choice 弹出面板后停下等待选择，
+            // 玩家点击选项后由 ExecuteChoiceChain 再次进入本方法完成推进。
             return;
         }
 

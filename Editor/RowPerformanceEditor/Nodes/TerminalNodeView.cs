@@ -61,6 +61,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         protected override void Build()
         {
+            // 终端节点用较小字号（USS .vn-terminal .vn-node-title: 14px），不被父类默认 18px 覆盖
+            SetTitleFontSize(14);
             SetTitle(ResolveTitle());
 
             var hint = ResolveHint();

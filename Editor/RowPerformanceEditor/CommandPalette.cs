@@ -149,8 +149,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 foreach (var info in items)
                 {
                     if (!Matches(info, filter)) continue;
-                    // 出口段禁止 choice（执行后立即推进，选项无法响应）
-                    if (TargetConfirmChain && info.Name == "choice") continue;
+                    // R11：出口段允许 choice——「点击 → 弹出选择」语义
                     visible.Add(info);
                 }
 
@@ -270,6 +269,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             if (!string.IsNullOrEmpty(info.Description))
                 sb.Append('\n').Append(info.Description);
+
+            // R11：choice 说明块语法与节点形态
+            if (string.Equals(info.Name, "choice", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.Append("\n\n块语法：choice{描述1, 命令链1, 描述2, 命令链2, ...}——")
+                  .Append("每个选项一条命令链，支持完整链语法与嵌套 choice。")
+                  .Append("\n拖入画布创建选项节点：每个选项一行、行右侧出端口连出命令链，")
+                  .Append("右下角 + 号新增选项，Inspector 可增删选项。")
+                  .Append("\n旧语法 choice(描述|命令) 仍完全兼容。");
+            }
 
             if (!info.HasMeta)
                 sb.Append("\n\n该命令尚未标注元数据，将以通用节点形态添加。");

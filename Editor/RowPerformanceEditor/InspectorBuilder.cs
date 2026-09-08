@@ -37,6 +37,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>请求跳转到数据列（📎 徽章点击）</summary>
         public event Action<string> OnRequestJumpToColumn;
 
+        /// <summary>R11：请求给当前选中的 choice 节点新增一个空选项。</summary>
+        public event Action OnRequestAddChoiceOption;
+
+        /// <summary>R11：请求删除当前 choice 节点的第 N 个选项（级联删除其命令链）。</summary>
+        public event Action<int> OnRequestRemoveChoiceOption;
+
+        /// <summary>R11：选项链只读预览文本提供者（Window 侧注入；portIndex → 链文本）。</summary>
+        public Func<int, string> ChoiceChainPreviewProvider;
+
         private readonly VisualElement _root;
         private VNNodeViewBase _current;
 
@@ -75,7 +84,109 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 return;
             }
 
+            if (_current is ChoiceNodeView choiceView)
+            {
+                BuildChoiceInspector(choiceView);
+                return;
+            }
+
             BuildStructuralInspector(_current);
+        }
+
+        // ---------------- R11：choice 选项面板 ----------------
+
+        /// <summary>
+        /// choice 节点的 Inspector：选项列表（描述可编辑 + 选项链只读预览 + 删除）
+        /// + 底部「添加选项」按钮。选项链的编辑完全通过图上连线完成（决策 10）。
+        /// </summary>
+        private void BuildChoiceInspector(ChoiceNodeView view)
+        {
+            var data = view.Data;
+
+            BuildHeader("choice", CommandMetaReader.Get("choice"));
+
+            if (!string.IsNullOrEmpty(CommandMetaReader.Get("choice")?.Description))
+            {
+                var descSection = new VisualElement();
+                descSection.AddToClassList("vn-insp-section");
+                descSection.Add(new Label(CommandMetaReader.Get("choice").Description));
+                _root.Add(descSection);
+            }
+
+            var section = new VisualElement();
+            section.AddToClassList("vn-insp-section");
+
+            var title = new Label("选项（" + view.OptionCount + "）");
+            title.AddToClassList("vn-insp-sectitle");
+            section.Add(title);
+
+            var hint = new Label(
+                "描述在本处编辑；选项命令链在图上从该选项的出端口连线构成（此处只读预览）。\n" +
+                "未连线的选项 = 空链：点击后直接进入下一行。");
+            hint.AddToClassList("vn-insp-desc");
+            section.Add(hint);
+
+            for (int i = 0; i < view.OptionCount; i++)
+                section.Add(BuildChoiceOptionField(view, i));
+
+            _root.Add(section);
+
+            var addBtn = new Button(() => OnRequestAddChoiceOption?.Invoke())
+            {
+                text = "+ 添加选项"
+            };
+            addBtn.tooltip = "新增一个空选项（描述待填、命令链待连）。";
+            addBtn.AddToClassList("vn-insp-add-choice");
+            _root.Add(addBtn);
+
+            BuildBehaviorSection(CommandMetaReader.Get("choice"));
+        }
+
+        private VisualElement BuildChoiceOptionField(ChoiceNodeView view, int index)
+        {
+            var wrapper = new VisualElement();
+            wrapper.AddToClassList("vn-insp-choice-option");
+
+            var head = new Label("选项 " + (index + 1));
+            head.AddToClassList("vn-insp-sectitle");
+            wrapper.Add(head);
+
+            // 描述编辑
+            string text = view.Data.ChoiceTexts != null && index < view.Data.ChoiceTexts.Count
+                ? view.Data.ChoiceTexts[index] : "";
+            var textField = new TextField("描述") { value = text ?? "" };
+            textField.AddToClassList("vn-insp-field");
+            textField.tooltip = "选项按钮上显示的文字。空描述无法保存。";
+            textField.RegisterCallback<FocusOutEvent>(_ =>
+            {
+                if (view.Data.ChoiceTexts == null) view.Data.ChoiceTexts = new List<string>();
+                while (view.Data.ChoiceTexts.Count <= index) view.Data.ChoiceTexts.Add("");
+                if (view.Data.ChoiceTexts[index] == (textField.value ?? "")) return;
+                view.Data.ChoiceTexts[index] = textField.value ?? "";
+                view.RefreshOptionLabel(index);
+                view.ChoiceChanged?.Invoke(view);
+                OnValueChanged?.Invoke();
+            });
+            wrapper.Add(textField);
+
+            // 选项链只读预览
+            string preview = ChoiceChainPreviewProvider != null
+                ? ChoiceChainPreviewProvider(index) : "";
+            var chainLabel = new Label(string.IsNullOrEmpty(preview) ? "（空链：点击后直接进入下一行）" : preview);
+            chainLabel.AddToClassList("vn-insp-choice-chain");
+            chainLabel.tooltip = "该选项点击后执行的命令链。\n通过图上连线编辑——把选项行右侧的出端口连到命令节点即可。";
+            wrapper.Add(chainLabel);
+
+            // 删除按钮
+            var removeBtn = new Button(() => OnRequestRemoveChoiceOption?.Invoke(index))
+            {
+                text = "删除此选项"
+            };
+            removeBtn.AddToClassList("vn-insp-choice-remove");
+            removeBtn.tooltip = "删除该选项，并级联删除其端口连出的整条命令链（不可恢复）。";
+            wrapper.Add(removeBtn);
+
+            return wrapper;
         }
 
         // ---------------- 空状态 ----------------

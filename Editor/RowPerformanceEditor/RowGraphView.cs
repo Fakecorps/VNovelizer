@@ -255,13 +255,28 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             // 全部连线由图数据渲染——含哨兵锚点边（Start→链头、链尾→End）。
             // 锚点边是真实图数据：断开即断链，校验会提示。
+            // R11：choice 节点按边 PortIndex 选择对应出端口（选项端口 / 主延续端口）。
             foreach (var edge in graph.Edges)
             {
                 var from = GetNodeView(isConfirm, edge.FromId);
                 var to = GetNodeView(isConfirm, edge.ToId);
-                if (from?.OutputPort == null || to?.InputPort == null) continue;
+                if (from == null || to == null || to.InputPort == null) continue;
 
-                var e = from.OutputPort.ConnectTo(to.InputPort);
+                Port outPort = null;
+                if (from is ChoiceNodeView choiceFrom)
+                {
+                    outPort = edge.PortIndex == ChoicePort.Main
+                        ? choiceFrom.MainOutputPort
+                        : choiceFrom.GetOptionPort(edge.PortIndex);
+                }
+                else
+                {
+                    outPort = from.OutputPort;
+                }
+
+                if (outPort == null) continue;
+
+                var e = outPort.ConnectTo(to.InputPort);
                 AddElement(e);
             }
 
@@ -303,6 +318,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     view = new ForkJoinNodeView(node, isConfirm);
                     break;
 
+                case ChainGraphNodeKind.Choice:
+                    view = new ChoiceNodeView(node, isConfirm);
+                    break;
+
                 case ChainGraphNodeKind.Start:
                     view = new TerminalNodeView(node,
                         isConfirm ? TerminalKind.ConfirmStart : TerminalKind.LineStart, isConfirm);
@@ -334,24 +353,35 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var startView = startPort.node as VNNodeViewBase;
             if (startView == null) return compatible;
 
-            ports.ForEach(port =>
+            // R11：choice 的选项端口不在 input/outputContainer 中（跟随选项行定位），
+            // 需并入枚举。
+            ports.ForEach(port => CheckPort(startPort, startView, port, compatible));
+            foreach (var n in nodes.ToList())
             {
-                if (port == startPort) return;
-                if (port.direction == startPort.direction) return;
-                if (port.node == startPort.node) return;
-
-                var portView = port.node as VNNodeViewBase;
-                if (portView == null) return;
-                if (portView.IsConfirmChain != startView.IsConfirmChain) return;
-
-                // 影子节点（如空出口段的 NextLine 提示）是纯视图装饰——
-                // 连到它身上的边永远进不了图数据，干脆禁止连线避免误导。
-                if (portView.ClassListContains("vn-node--template")) return;
-
-                compatible.Add(port);
-            });
+                if (!(n is ChoiceNodeView cv)) continue;
+                foreach (var p in cv.AllOutputPorts)
+                    CheckPort(startPort, startView, p, compatible);
+            }
 
             return compatible;
+        }
+
+        private static void CheckPort(Port startPort, VNNodeViewBase startView,
+            Port port, List<Port> compatible)
+        {
+            if (port == startPort) return;
+            if (port.direction == startPort.direction) return;
+            if (port.node == startPort.node) return;
+
+            var portView = port.node as VNNodeViewBase;
+            if (portView == null) return;
+            if (portView.IsConfirmChain != startView.IsConfirmChain) return;
+
+            // 影子节点（如空出口段的 NextLine 提示）是纯视图装饰——
+            // 连到它身上的边永远进不了图数据，干脆禁止连线避免误导。
+            if (portView.ClassListContains("vn-node--template")) return;
+
+            compatible.Add(port);
         }
 
         private GraphViewChange OnGraphViewChanged(GraphViewChange change)
@@ -442,6 +472,20 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 已占用时拒绝新连线（用户应先断开旧的）。
             if (a is TerminalNodeView && a.OutputPort != null && a.OutputPort.connected) return false;
             if (b is TerminalNodeView && b.InputPort != null && b.InputPort.connected) return false;
+
+            // R11：choice 节点连线。
+            // 起点是 choice：每个选项端口/主延续端口只容一条边；choice 不参与插入改写。
+            if (a is ChoiceNodeView)
+            {
+                if (newEdge.output != null && newEdge.output.connected) return false;
+                if (b is CommandNodeView && b.InputPort != null && b.InputPort.connected) return false;
+                return true;
+            }
+            // 终点是 choice：入端口只能一条（已占用则拒绝）。
+            if (b is ChoiceNodeView)
+            {
+                return b.InputPort == null || !b.InputPort.connected;
+            }
 
             // Fork 的 Multi 出口 / Join 的 Multi 入口：多连线合法，直连放行。
             bool aOutMulti = a is ForkJoinNodeView forkA && forkA.IsFork;
@@ -622,7 +666,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 用户连「终端 → 节点」的锚点边是真实图数据。
             if (!validIds.Contains(from.Data.Id) || !validIds.Contains(to.Data.Id)) return;
 
-            rebuilt.AddEdge(from.Data.Id, to.Data.Id);
+            // R11：choice 出边携带端口号
+            int portIndex = 0;
+            if (from is ChoiceNodeView cv) portIndex = cv.GetPortIndex(edge.output);
+
+            rebuilt.AddEdge(from.Data.Id, to.Data.Id, portIndex);
         }
 
         /// <summary>
@@ -828,6 +876,148 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             if (notifyChange) OnGraphChanged?.Invoke();
             return view;
+        }
+
+        /// <summary>
+        /// R11：在指定画布坐标处创建 choice 节点（默认 2 个空选项）。
+        /// 创建后自动把主延续端口连到 End 哨兵（"选项执行完进入等待确认"的默认出口）。
+        /// </summary>
+        /// <param name="notifyChange">是否触发 OnGraphChanged（批量操作如粘贴传 false，由调用方统一收尾）</param>
+        public ChoiceNodeView CreateChoiceNode(Vector2 canvasPosition, bool isConfirm,
+            bool notifyChange = true)
+        {
+            var graph = isConfirm ? ConfirmGraph : EntryGraph;
+            string id = GenerateNodeId(graph, "choice");
+
+            var data = graph.AddNode(id, ChainGraphNodeKind.Choice);
+            data.ChoiceTexts = new List<string> { "", "" };
+
+            var view = new ChoiceNodeView(data, isConfirm);
+            view.SetPosition(new Rect(canvasPosition, new Vector2(0f, 0f)));
+
+            AddElement(view);
+            _nodeViews[NodeViewKey(isConfirm, id)] = view;
+
+            // 主延续边自动连 End 哨兵（默认出口；多 choice 合并展示时用户可改连另一 choice）
+            string endId = ChainGraphDumper.SentinelId(isConfirm, false);
+            var endView = GetNodeView(isConfirm, endId);
+            if (endView?.InputPort != null && view.MainOutputPort != null)
+            {
+                graph.AddEdge(id, endId, ChoicePort.Main);
+                var e = view.MainOutputPort.ConnectTo(endView.InputPort);
+                AddElement(e);
+            }
+
+            if (notifyChange) OnGraphChanged?.Invoke();
+            return view;
+        }
+
+        /// <summary>
+        /// R11：给 choice 节点新增一个空选项（描述为空、端口未连）。
+        /// </summary>
+        public void AddChoiceOption(ChoiceNodeView view)
+        {
+            if (view == null) return;
+            view.AddOption();
+            OnGraphChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// R11：删除 choice 的第 <paramref name="index"/> 个选项——
+        /// 级联删除该端口连出的整条链（含分支下游全部非哨兵节点，哨兵/其他泳道保留）。
+        /// 删除后其余选项端口前移一位，出边按新索引重新渲染。
+        /// </summary>
+        public void RemoveChoiceOption(ChoiceNodeView view, int index)
+        {
+            if (view == null || view.Data == null) return;
+            var graph = view.IsConfirmChain ? ConfirmGraph : EntryGraph;
+
+            _suppressChangeEvents = true;
+            try
+            {
+                // 1. 收集下游节点（从该选项端口 BFS，哨兵除外）
+                var toDelete = new HashSet<string>();
+                var queue = new Queue<string>();
+                foreach (var pair in graph.GetOrderedSuccessors(view.Data.Id))
+                {
+                    if (pair.Key != index) continue;
+                    var target = graph.GetNode(pair.Value);
+                    if (target == null) continue;
+                    if (target.Kind == ChainGraphNodeKind.Start ||
+                        target.Kind == ChainGraphNodeKind.End) continue;
+                    if (toDelete.Add(pair.Value)) queue.Enqueue(pair.Value);
+                }
+
+                while (queue.Count > 0)
+                {
+                    string id = queue.Dequeue();
+                    var n = graph.GetNode(id);
+                    if (n == null) continue;
+                    foreach (string s in graph.GetSuccessors(id))
+                    {
+                        var sn = graph.GetNode(s);
+                        if (sn == null) continue;
+                        if (sn.Kind == ChainGraphNodeKind.Start ||
+                            sn.Kind == ChainGraphNodeKind.End) continue;
+                        if (toDelete.Add(s)) queue.Enqueue(s);
+                    }
+                }
+
+                // 2. 视图删除：choice 的全部出边（端口重编号后需按新索引重建）
+                //    + 下游节点及其间连线。
+                var viewEdgesToRemove = edges.ToList().Where(e =>
+                {
+                    var f = e.output?.node as VNNodeViewBase;
+                    var t = e.input?.node as VNNodeViewBase;
+                    if (f == view) return true;
+                    if (t != null && t.Data != null && toDelete.Contains(t.Data.Id)) return true;
+                    if (f != null && f.Data != null && toDelete.Contains(f.Data.Id)) return true;
+                    return false;
+                }).ToList();
+                if (viewEdgesToRemove.Count > 0) DeleteElements(viewEdgesToRemove);
+
+                foreach (var id in toDelete)
+                {
+                    var v = GetNodeView(view.IsConfirmChain, id);
+                    if (v != null)
+                    {
+                        RemoveElement(v);
+                        _nodeViews.Remove(NodeViewKey(view.IsConfirmChain, id));
+                    }
+                }
+
+                // 3. 数据层：删选项端口边 → 端口重编号 → 级联删节点
+                foreach (var pair in graph.GetOrderedSuccessors(view.Data.Id))
+                    if (pair.Key == index)
+                        graph.RemoveEdge(view.Data.Id, pair.Value, index);
+
+                graph.ShiftChoicePorts(view.Data.Id, index);
+
+                foreach (var id in toDelete)
+                    graph.RemoveNode(id);
+
+                // 4. 视图：移除选项数据 + 重建行（端口实例随 RebuildOptions 更新）
+                view.RemoveOptionDataAt(index);
+
+                // 5. 按新端口索引重新渲染该 choice 的全部出边
+                foreach (var edge in graph.Edges)
+                {
+                    if (edge.FromId != view.Data.Id) continue;
+                    var to = GetNodeView(view.IsConfirmChain, edge.ToId);
+                    if (to?.InputPort == null) continue;
+                    var outPort = edge.PortIndex == ChoicePort.Main
+                        ? view.MainOutputPort
+                        : view.GetOptionPort(edge.PortIndex);
+                    if (outPort == null) continue;
+                    AddElement(outPort.ConnectTo(to.InputPort));
+                }
+            }
+            finally
+            {
+                _suppressChangeEvents = false;
+            }
+
+            OnGraphChanged?.Invoke();
         }
 
         // ---------------- 节点级复制 / 粘贴 ----------------

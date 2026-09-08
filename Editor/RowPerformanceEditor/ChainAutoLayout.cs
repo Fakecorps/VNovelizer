@@ -409,6 +409,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 case ChainGraphNodeKind.Start:
                 case ChainGraphNodeKind.End:
                     return W_TERMINAL;
+                case ChainGraphNodeKind.Choice:
+                    // R11：choice 节点带选项列表，宽度接近命令节点
+                    return W_COMMAND;
                 default:
                     return string.IsNullOrWhiteSpace(node.Args) ? W_COMMAND_NOARGS : W_COMMAND;
             }

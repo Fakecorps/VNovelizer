@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using VNovelizer.Core.Commands;
+using VNovelizer.Core.Commands.Chain;
 
 public class ChoicePanel : BasePanel
 {
@@ -41,13 +43,13 @@ public class ChoicePanel : BasePanel
             // 绑定事件
             Button btn = btnObj.GetComponent<Button>();
             btn.onClick.RemoveAllListeners();
-            btn.onClick.AddListener(() => OnChoiceClicked(data.Command));
+            btn.onClick.AddListener(() => OnChoiceClicked(data.Command, data.Chain));
         }
 
         ShowMe();
     }
 
-    private void OnChoiceClicked(string command)
+    private void OnChoiceClicked(string command, ChainNode chain)
     {
         // 关闭面板
         UIManager.GetInstance().HidePanel("ChoicePanel");
@@ -60,10 +62,16 @@ public class ChoicePanel : BasePanel
         // 自动存档：在执行选项跳转命令前触发（快照停留在 choice 行，读档后重新弹出选项）
         VNManager.GetInstance().TriggerAutoSaveOnChoice();
 
-        // 注意：这里需要调用 VNManager 或 CommandManager 来执行
-        if (!string.IsNullOrEmpty(command))
+        // R11：块语法选项携带 AST 子树 → 经 ChainExecutor 独立执行（支持完整链语法）。
+        // 段信息随选项传递：出口段 choice 的选项链按出口段语义推进与埋点。
+        if (chain != null)
         {
-
+            VNManager.GetInstance().ExecuteChoiceChain(chain,
+                VNovelizer.Core.Commands.ChoiceCommand.LastPushedIsConfirm);
+        }
+        else if (!string.IsNullOrEmpty(command))
+        {
+            // 旧语法路径（完全兼容）
             VNManager.GetInstance().ExecuteChoiceCommand(command);
         }
         else
@@ -73,9 +81,13 @@ public class ChoicePanel : BasePanel
         }
     }
 
-    // 在 ChoicePanel.cs 中添加/修改
-
-    public void AddChoice(string text, string command)
+    /// <summary>
+    /// 追加一个选项按钮。
+    /// </summary>
+    /// <param name="text">按钮文字（本地化已解析）</param>
+    /// <param name="command">旧语法命令文本（可为 null）</param>
+    /// <param name="chain">R11 块语法选项链 AST（可为 null = 空链，点击后直接下一行）</param>
+    public void AddChoice(string text, string command, ChainNode chain = null)
     {
         // 确保 Container 存在
         if (container == null) container = transform.Find("ChoiceContainer");
@@ -84,12 +96,11 @@ public class ChoicePanel : BasePanel
         activeItems.Add(btnObj);
 
         TMP_Text textComp = btnObj.GetComponentInChildren<TMP_Text>();
-        Debug.Log(textComp.text);
         if (textComp != null) textComp.text = text;
 
         Button btn = btnObj.GetComponent<Button>();
         btn.onClick.RemoveAllListeners();
-        btn.onClick.AddListener(() => OnChoiceClicked(command));
+        btn.onClick.AddListener(() => OnChoiceClicked(command, chain));
 
         ShowMe();
     }
@@ -100,4 +111,7 @@ public class ChoiceData
 {
     public string Text;
     public string Command;
+
+    /// <summary>R11：块语法选项链 AST（旧语法为 null）</summary>
+    public ChainNode Chain;
 }

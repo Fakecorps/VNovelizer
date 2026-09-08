@@ -44,6 +44,33 @@ namespace VNovelizer.Core.Commands.Chain
     }
 
     /// <summary>
+    /// choice 命令的一个选项：描述文字 + 点击后执行的命令链（可为 null = 空链，
+    /// 点击后直接进入下一行）。
+    /// </summary>
+    public class ChoiceOption
+    {
+        /// <summary>选项按钮文字（本地化 @loc:key 在运行时解析）</summary>
+        public string Text;
+
+        /// <summary>选项命令链 AST（支持完整链语法，允许嵌套 ChoiceNode；null = 空链）</summary>
+        public ChainNode Chain;
+    }
+
+    /// <summary>
+    /// choice 命令节点（R11 重构）：对应文本 <c>choice{desc1, chain1, desc2, chain2, ...}</c>。
+    ///
+    /// <para>
+    /// 与 CommandNode 的差异：选项链不是主链的一部分——玩家点击某个选项后，
+    /// 仅该选项的链被 <see cref="ChainExecutor"/> 独立执行。Simulate 预演时
+    /// 选项链不展开（未选择 = 不产生状态）。
+    /// </para>
+    /// </summary>
+    public class ChoiceNode : ChainNode
+    {
+        public List<ChoiceOption> Options = new List<ChoiceOption>();
+    }
+
+    /// <summary>
     /// 命令链解析/词法错误。
     /// </summary>
     public struct ChainError

@@ -27,6 +27,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         protected override void Build()
         {
+            // Fork/Join 用紧凑字号（USS .vn-forkjoin .vn-node-title: 11px），不被父类默认 18px 覆盖
+            SetTitleFontSize(11);
             if (IsFork)
             {
                 SetTitle("FORK");

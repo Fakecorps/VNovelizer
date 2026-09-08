@@ -62,6 +62,9 @@ namespace VNovelizer.Core.Commands.Chain
             /// <summary>Fork/Join 编号（与命令序号分开，避免插入命令导致 Fork ID 全变）</summary>
             public int ForkJoinOrdinal;
 
+            /// <summary>R11：Choice 节点编号（独立计数器，与命令/Fork 序号互不干扰）</summary>
+            public int ChoiceOrdinal;
+
             public Context(ChainGraph graph)
             {
                 Graph = graph;
@@ -74,6 +77,7 @@ namespace VNovelizer.Core.Commands.Chain
 
             public string NextForkId() => "fork" + ForkJoinOrdinal;
             public string NextJoinId() => "join" + ForkJoinOrdinal++;
+            public string NextChoiceId() => "choice" + ChoiceOrdinal++;
         }
 
         private static Span Emit(Context ctx, ChainNode node)
@@ -83,6 +87,27 @@ namespace VNovelizer.Core.Commands.Chain
                 string id = ctx.NextCommandId(cmd.Name);
                 // 传递源文本偏移：运行时执行状态与编辑器节点的映射 key（R10）
                 ctx.Graph.AddNode(id, ChainGraphNodeKind.Command, cmd.Name, cmd.Args, cmd.Position);
+                return new Span(id, id);
+            }
+
+            // R11：choice 节点——N 个选项端口各连一条选项链首节点；
+            // 主延续边（PortIndex=-1）由父级（Seq/Par）按"choice 的 span 出口"铺设。
+            if (node is ChoiceNode choiceNode)
+            {
+                string id = ctx.NextChoiceId();
+                var data = ctx.Graph.AddNode(id, ChainGraphNodeKind.Choice, sourcePosition: choiceNode.Position);
+                data.ChoiceTexts = new List<string>();
+
+                foreach (var opt in choiceNode.Options)
+                {
+                    int port = data.ChoiceTexts.Count;
+                    data.ChoiceTexts.Add(opt.Text ?? "");
+
+                    var span = Emit(ctx, opt.Chain);
+                    if (span.EntryId != null)
+                        ctx.Graph.AddEdge(id, span.EntryId, port);
+                }
+
                 return new Span(id, id);
             }
 
@@ -97,7 +122,10 @@ namespace VNovelizer.Core.Commands.Chain
                     if (span.EntryId == null) continue;
 
                     if (entry == null) entry = span.EntryId;
-                    else ctx.Graph.AddEdge(prevExit, span.EntryId);
+                    else ctx.Graph.AddEdge(prevExit, span.EntryId,
+                        // R11：前驱是 Choice 节点 → 该边是主延续边而非选项端口
+                        ctx.Graph.GetNode(prevExit)?.Kind == ChainGraphNodeKind.Choice
+                            ? ChoicePort.Main : 0);
 
                     prevExit = span.ExitId;
                 }
@@ -123,7 +151,10 @@ namespace VNovelizer.Core.Commands.Chain
                     if (span.EntryId == null) continue;
 
                     ctx.Graph.AddEdge(forkId, span.EntryId);
-                    ctx.Graph.AddEdge(span.ExitId, joinId);
+                    // R11：分支尾是 Choice 节点 → 连 Join 的边是主延续边
+                    ctx.Graph.AddEdge(span.ExitId, joinId,
+                        ctx.Graph.GetNode(span.ExitId)?.Kind == ChainGraphNodeKind.Choice
+                            ? ChoicePort.Main : 0);
                     anyBranch = true;
                 }
 

@@ -64,8 +64,10 @@ namespace VNovelizer.Core.Commands.Chain
             var tokens = ChainLexer.Tokenize(source, errors);
 
             // 检测是否使用链式语法（引号外存在 -> 或 [）
+            // R11：choice{...} 块语法同样启用链式语义（其内命令链由 ChainExecutor 独立执行）
             result.UsesChainSyntax = tokens.Any(t =>
-                t.Type == ChainTokenType.Arrow || t.Type == ChainTokenType.LBracket);
+                t.Type == ChainTokenType.Arrow || t.Type == ChainTokenType.LBracket ||
+                t.Text.IndexOf('{') > 0);
 
             // 词法阶段无有效 Token（如空串或全部为空白）
             if (tokens.Count == 0)
@@ -93,57 +95,101 @@ namespace VNovelizer.Core.Commands.Chain
         /// <summary>
         /// 语义校验（产生警告，不阻断执行）：
         /// 1. 流程命令（jump 族 / loadscript 族 / choice / loadscene，见 <see cref="FlowCommands"/>）
-        ///    必须是深度优先展开后的最后一个命令
+        ///    必须是其所在串行链的最后一个元素
         /// 2. playvideo 的"结束后命令"第二参数在链式语法下应改用 "-&gt;" 表达
+        ///
+        /// <para>
+        /// <b>R11 结构感知</b>：choice 的选项链不是主链的一部分——未选中的选项链不会执行，
+        /// 因此不参与"choice 之后还有命令"的展开序判定（旧 DFS 平铺会把全部选项链命令
+        /// 排在 choice 之后造成误报）。选项链各自作为独立上下文递归校验。
+        /// </para>
         /// </summary>
         private static void ValidateFlowCommands(ChainNode root, ChainParseResult result)
         {
             if (root == null) return;
+            ValidateFlowRecursive(root, result, isTail: true);
+        }
 
-            var collected = new List<CommandNode>();
-            ChainExecutor.CollectCommands(root, collected);
-            if (collected.Count == 0) return;
+        /// <summary>
+        /// 结构感知递归。<paramref name="isTail"/>：本节点是否是其所在串行链的最后一个元素
+        /// （尾元素之后的命令不存在，流程命令在链尾合法）。
+        /// </summary>
+        private static void ValidateFlowRecursive(ChainNode node, ChainParseResult result, bool isTail)
+        {
+            if (node == null) return;
 
-            for (int i = 0; i < collected.Count; i++)
+            switch (node)
             {
-                var cmd = collected[i];
-                string name = cmd.Name.ToLower();
+                case SeqNode seq:
+                    for (int i = 0; i < seq.Children.Count; i++)
+                        ValidateFlowRecursive(seq.Children[i], result,
+                            isTail && i == seq.Children.Count - 1);
+                    break;
 
-                // 校验 1：流程命令不在链尾
-                if (FlowCommands.Contains(name) && i < collected.Count - 1)
-                {
-                    result.Warnings.Add(new ChainError(
-                        $"流程命令 '{name}' 应位于命令链的最后一个位置——其后的命令会在行/剧本切换后的上下文中执行，可能产生演出污染",
-                        cmd.Position));
-                }
+                case ParNode par:
+                    // 并行分支间无先后：分支的"链尾性"沿用 Par 整体在父链中的位置。
+                    // （Par 之后的兄弟命令须等全部分支完成才执行，分支内流程命令
+                    //   改变行号后其并行分支在"行已切换"上下文收尾，与原平铺判定
+                    //   对非尾 Par 的语义一致。）
+                    foreach (var child in par.Children)
+                        ValidateFlowRecursive(child, result, isTail);
+                    break;
 
-                // 校验 2：playvideo 第二参数携带流程命令
-                if (name == "playvideo")
-                {
-                    int commaIndex = cmd.Args != null ? cmd.Args.IndexOf(',') : -1;
-                    if (commaIndex >= 0)
+                case ChoiceNode choice:
+                    // 校验 1-choice：choice 必须位于其所在串行链的末尾
+                    //（其后主链命令会在选项面板弹出前执行，演出污染）。
+                    if (!isTail)
                     {
-                        string rest = cmd.Args.Substring(commaIndex + 1).ToLower();
-                        // 【2026-08-26】改为遍历 FlowCommands 集合，与校验 1 共用同一份定义
-                        // （此前硬编码 jump/loadscript/loadscene 三个，漏掉条件跳转族）
-                        bool carriesFlowCommand = false;
-                        foreach (var flow in FlowCommands)
-                        {
-                            if (rest.Contains(flow + "("))
-                            {
-                                carriesFlowCommand = true;
-                                break;
-                            }
-                        }
+                        result.Warnings.Add(new ChainError(
+                            "流程命令 'choice' 应位于命令链的最后一个位置——其后的命令会在选项面板弹出前执行，可能产生演出污染",
+                            choice.Position));
+                    }
+                    // 选项链独立上下文：链尾无后继，内部命令按自身结构校验。
+                    foreach (var opt in choice.Options)
+                        ValidateFlowRecursive(opt.Chain, result, isTail: true);
+                    break;
 
-                        if (carriesFlowCommand)
+                case CommandNode cmd:
+                    {
+                        string name = cmd.Name.ToLower();
+
+                        // 校验 1：流程命令不在链尾
+                        if (FlowCommands.Contains(name) && !isTail)
                         {
                             result.Warnings.Add(new ChainError(
-                                "链式语法下建议使用 '-&gt;' 代替 playvideo 的第二参数（如 playvideo(a.mp4) -&gt; jump(x)），避免双重流程语义",
+                                $"流程命令 '{name}' 应位于命令链的最后一个位置——其后的命令会在行/剧本切换后的上下文中执行，可能产生演出污染",
                                 cmd.Position));
                         }
+
+                        // 校验 2：playvideo 第二参数携带流程命令
+                        if (name == "playvideo")
+                        {
+                            int commaIndex = cmd.Args != null ? cmd.Args.IndexOf(',') : -1;
+                            if (commaIndex >= 0)
+                            {
+                                string rest = cmd.Args.Substring(commaIndex + 1).ToLower();
+                                // 【2026-08-26】改为遍历 FlowCommands 集合，与校验 1 共用同一份定义
+                                // （此前硬编码 jump/loadscript/loadscene 三个，漏掉条件跳转族）
+                                bool carriesFlowCommand = false;
+                                foreach (var flow in FlowCommands)
+                                {
+                                    if (rest.Contains(flow + "("))
+                                    {
+                                        carriesFlowCommand = true;
+                                        break;
+                                    }
+                                }
+
+                                if (carriesFlowCommand)
+                                {
+                                    result.Warnings.Add(new ChainError(
+                                        "链式语法下建议使用 '-&gt;' 代替 playvideo 的第二参数（如 playvideo(a.mp4) -&gt; jump(x)），避免双重流程语义",
+                                        cmd.Position));
+                                }
+                            }
+                        }
                     }
-                }
+                    break;
             }
         }
 
@@ -237,7 +283,7 @@ namespace VNovelizer.Core.Commands.Chain
             if (token.Type == ChainTokenType.Command)
             {
                 index++;
-                return ParseCommandToken(token);
+                return ParseCommandToken(token, errors, warnings);
             }
 
             if (token.Type == ChainTokenType.RBracket)
@@ -298,10 +344,27 @@ namespace VNovelizer.Core.Commands.Chain
             return child;
         }
 
-        // ---------------- 命令 Token → CommandNode ----------------
+        // ---------------- 命令 Token → CommandNode / ChoiceNode ----------------
 
-        private static CommandNode ParseCommandToken(ChainToken token)
+        private static ChainNode ParseCommandToken(ChainToken token,
+            List<ChainError> errors, List<ChainError> warnings)
         {
+            // R11：choice{...} 块语法（大括号平衡已由 Lexer 保证，整个块是一个 Token）。
+            // 块内「desc, chain」奇偶配对；chain 递归 Parse，天然支持嵌套 choice 与完整链语法。
+            int curlyStart = token.Text.IndexOf('{');
+            if (curlyStart > 0 && token.Text.TrimEnd().EndsWith("}"))
+            {
+                string name = token.Text.Substring(0, curlyStart).Trim();
+                string body = token.Text.Substring(curlyStart + 1, token.Text.Length - curlyStart - 2);
+
+                if (name.ToLower() == "choice")
+                    return ParseChoiceBlock(body, token.Position, curlyStart, errors, warnings);
+
+                errors.Add(new ChainError(
+                    $"命令 '{name}' 不支持大括号块语法（仅 choice 支持）", token.Position + curlyStart));
+                return CreatePlaceholderCommand();
+            }
+
             var node = new CommandNode { Position = token.Position };
 
             int parenStart = token.Text.IndexOf('(');
@@ -323,6 +386,174 @@ namespace VNovelizer.Core.Commands.Chain
             }
 
             return node;
+        }
+
+        // ---------------- choice{...} 块解析 ----------------
+
+        /// <summary>
+        /// 解析 choice 块内容。块内语法：<c>desc1, chain1, desc2, chain2, ...</c>——
+        /// 逗号分隔、奇偶交替（描述 → 命令链）。描述含逗号/大括号时必须用双引号包裹。
+        /// 命令链段递归 <see cref="Parse"/>，支持完整链语法与嵌套 choice{...}。
+        /// </summary>
+        /// <param name="body">大括号内的原文（不含大括号）</param>
+        /// <param name="tokenPosition">choice Token 的源偏移</param>
+        /// <param name="curlyOffset">'{' 在 Token 内的偏移（块内文本起点 = tokenPosition + curlyOffset + 1）</param>
+        private static ChainNode ParseChoiceBlock(string body, int tokenPosition, int curlyOffset,
+            List<ChainError> errors, List<ChainError> warnings)
+        {
+            var node = new ChoiceNode { Position = tokenPosition };
+
+            var segments = SplitChoiceBody(body, errors, tokenPosition + curlyOffset + 1);
+
+            if (segments.Count == 0)
+            {
+                errors.Add(new ChainError("choice 块不能为空（至少需要一个选项）", tokenPosition));
+                return node;
+            }
+
+            if (segments.Count % 2 == 1)
+            {
+                errors.Add(new ChainError(
+                    $"choice 块的最后一个选项缺少命令链：'{segments[segments.Count - 1].Text.Trim()}'",
+                    tokenPosition + curlyOffset + 1 + segments[segments.Count - 1].Offset));
+            }
+
+            int pairCount = segments.Count / 2;
+            for (int i = 0; i < pairCount; i++)
+            {
+                var descSeg = segments[i * 2];
+                var chainSeg = segments[i * 2 + 1];
+
+                var opt = new ChoiceOption
+                {
+                    Text = UnquoteChoiceText(descSeg.Text.Trim(),
+                        errors, tokenPosition + curlyOffset + 1 + descSeg.Offset),
+                };
+
+                string chainText = chainSeg.Text.Trim();
+                if (!string.IsNullOrEmpty(chainText))
+                {
+                    // 递归解析选项链（其内嵌套 choice 自然递归）
+                    int chainBase = tokenPosition + curlyOffset + 1 + chainSeg.Offset;
+                    var sub = Parse(chainText);
+                    ShiftPositions(sub.Root, chainBase);
+
+                    foreach (var e in sub.Errors)
+                        errors.Add(new ChainError(e.Message, chainBase + e.Position));
+                    foreach (var w in sub.Warnings)
+                        warnings.Add(new ChainError(w.Message, chainBase + w.Position));
+
+                    opt.Chain = sub.Root;
+                }
+
+                node.Options.Add(opt);
+            }
+
+            return node;
+        }
+
+        /// <summary>块内切段结果：文本 + 相对块内容起点的偏移。</summary>
+        private struct ChoiceSegment
+        {
+            public string Text;
+            public int Offset;
+        }
+
+        /// <summary>
+        /// 按顶层逗号切分 choice 块内容。引号、圆括号、方括号、大括号感知——
+        /// 嵌套 choice{...} 与命令参数内的逗号不会被切散。
+        /// </summary>
+        private static List<ChoiceSegment> SplitChoiceBody(string body, List<ChainError> errors, int basePosition)
+        {
+            var segments = new List<ChoiceSegment>();
+            if (string.IsNullOrEmpty(body)) return segments;
+
+            var sb = new System.Text.StringBuilder();
+            bool inQuote = false;
+            int paren = 0, bracket = 0, curly = 0;
+            int segStart = 0;
+
+            for (int i = 0; i < body.Length; i++)
+            {
+                char c = body[i];
+
+                if (inQuote)
+                {
+                    sb.Append(c);
+                    if (c == '\\' && i + 1 < body.Length) { sb.Append(body[i + 1]); i++; }
+                    else if (c == '"') inQuote = false;
+                    continue;
+                }
+
+                if (c == '"') { inQuote = true; sb.Append(c); continue; }
+
+                if (c == '(') { paren++; sb.Append(c); continue; }
+                if (c == ')') { paren = System.Math.Max(0, paren - 1); sb.Append(c); continue; }
+                if (c == '[') { bracket++; sb.Append(c); continue; }
+                if (c == ']') { bracket = System.Math.Max(0, bracket - 1); sb.Append(c); continue; }
+                if (c == '{') { curly++; sb.Append(c); continue; }
+                if (c == '}') { curly = System.Math.Max(0, curly - 1); sb.Append(c); continue; }
+
+                if (c == ',' && paren == 0 && bracket == 0 && curly == 0)
+                {
+                    segments.Add(new ChoiceSegment { Text = sb.ToString(), Offset = segStart });
+                    sb.Length = 0;
+                    segStart = i + 1;
+                    continue;
+                }
+
+                sb.Append(c);
+            }
+
+            segments.Add(new ChoiceSegment { Text = sb.ToString(), Offset = segStart });
+            return segments;
+        }
+
+        /// <summary>
+        /// 解析选项描述：双引号包裹 → 去引号并还原转义；裸文本原样返回。
+        /// 引号未闭合时报错（不阻断，返回已读内容）。
+        /// </summary>
+        private static string UnquoteChoiceText(string text, List<ChainError> errors, int position)
+        {
+            if (text.Length < 2 || !text.StartsWith("\"") || !text.EndsWith("\""))
+                return text;
+
+            var sb = new System.Text.StringBuilder();
+            for (int i = 1; i < text.Length - 1; i++)
+            {
+                char c = text[i];
+                if (c == '\\' && i + 1 < text.Length - 1)
+                {
+                    sb.Append(text[i + 1]);
+                    i++;
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>把子树内全部节点的源偏移平移 <paramref name="delta"/>（递归选项链的偏移修正）。</summary>
+        private static void ShiftPositions(ChainNode node, int delta)
+        {
+            if (node == null || delta == 0) return;
+
+            node.Position += delta;
+
+            if (node is SeqNode seq)
+            {
+                foreach (var child in seq.Children) ShiftPositions(child, delta);
+            }
+            else if (node is ParNode par)
+            {
+                foreach (var child in par.Children) ShiftPositions(child, delta);
+            }
+            else if (node is ChoiceNode choice)
+            {
+                foreach (var opt in choice.Options) ShiftPositions(opt.Chain, delta);
+            }
         }
 
         /// <summary>空占位命令（错误恢复用，执行时会被静默跳过）</summary>

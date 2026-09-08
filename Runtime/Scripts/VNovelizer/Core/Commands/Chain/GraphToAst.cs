@@ -85,12 +85,16 @@ namespace VNovelizer.Core.Commands.Chain
 
             // 终点检查（哨兵感知）：有 End 哨兵时非哨兵 sink 数必须为 0；
             // 无哨兵时（Runtime 兼容路径）维持唯一 sink 判定。
+            // R11：choice 豁免——链尾 choice 节点自身、选项链尾（含未连 End 的留空）
+            // 都是合法 sink，不阻断分解（Validator 层负责警告提示）。
             var straySinks = new List<string>();
             bool hasEndSentinel = false;
             foreach (var s in graph.FindSinks())
             {
                 if (s.Kind == ChainGraphNodeKind.End) { hasEndSentinel = true; continue; }
                 if (s.Kind == ChainGraphNodeKind.Start) continue; // 空链时 Start 也是 sink
+                if (s.Kind == ChainGraphNodeKind.Choice) continue; // R11：链尾 choice（主延续缺失）
+                if (IsReachableFromChoicePort(graph, s.Id)) continue; // R11：选项链尾留空
                 straySinks.Add(s.Id);
             }
 
@@ -105,12 +109,37 @@ namespace VNovelizer.Core.Commands.Chain
             }
             else
             {
-                var sinks = graph.FindSinks();
-                if (sinks.Count != 1)
+                // R11：无哨兵路径同样豁免 choice 产生的多 sink。
+                // 主链终点 = 主链可达集合内的 sink + 主延续边缺失的主链 choice。
+                // 选项链内节点（含嵌套 choice）经选项端口可达，不属于主链——
+                // 否则「嵌套 choice 在选项链尾」会被误算成第二个主链终点。
+                var mainChain = CollectMainChainNodes(graph, startId);
+
+                int mainEnds = 0;
+                foreach (var s in graph.FindSinks())
                 {
-                    result.Errors.Add(sinks.Count == 0
+                    if (s.Kind == ChainGraphNodeKind.Choice) continue;
+                    if (!mainChain.Contains(s.Id)) continue;
+                    mainEnds++;
+                }
+
+                foreach (var n in graph.Nodes)
+                {
+                    if (n.Kind != ChainGraphNodeKind.Choice) continue;
+                    if (!mainChain.Contains(n.Id)) continue;
+                    bool hasMain = false;
+                    foreach (var pair in graph.GetOrderedSuccessors(n.Id))
+                    {
+                        if (pair.Key == ChoicePort.Main) { hasMain = true; break; }
+                    }
+                    if (!hasMain) mainEnds++;
+                }
+
+                if (mainEnds != 1)
+                {
+                    result.Errors.Add(mainEnds == 0
                         ? "图中不存在终点（可能存在环）"
-                        : $"图中存在 {sinks.Count} 个终点，命令链必须有唯一终点");
+                        : $"图中存在 {mainEnds} 个终点，命令链必须有唯一终点");
                     return result;
                 }
             }
@@ -211,7 +240,7 @@ namespace VNovelizer.Core.Commands.Chain
             public readonly ChainGraph Graph;
             public readonly Result Result;
 
-            /// <summary>已访问节点（检测重复访问——畸形图的兜底）</summary>
+            /// <summary>已访问节点（检测重复访问——畸形图的兜底；哨兵豁免）</summary>
             public readonly HashSet<string> Visited = new HashSet<string>();
 
             public Context(ChainGraph graph, Result result)
@@ -219,6 +248,135 @@ namespace VNovelizer.Core.Commands.Chain
                 Graph = graph;
                 Result = result;
             }
+        }
+
+        /// <summary>
+        /// R11：把 choice 节点第 <paramref name="portIndex"/> 个选项连出的链
+        /// 单独序列化为命令链文本（Inspector 只读预览用）。空链/分解失败返回空串或占位。
+        /// </summary>
+        public static string SerializeChoiceOptionChain(ChainGraph graph, string choiceId, int portIndex)
+        {
+            if (graph == null || string.IsNullOrEmpty(choiceId)) return "";
+
+            string startId = null;
+            foreach (var pair in graph.GetOrderedSuccessors(choiceId))
+            {
+                if (pair.Key == portIndex)
+                {
+                    startId = pair.Value;
+                    break;
+                }
+            }
+            if (startId == null) return ""; // 空链
+
+            var result = new Result();
+            var ctx = new Context(graph, result);
+            var seq = ParseSequence(ctx, startId, null, 0);
+            if (!result.Success) return "(选项链无法分解)";
+
+            return ChainSerializer.Serialize(Normalize(seq));
+        }
+
+        /// <summary>
+        /// R11：分解图中的一个 Choice 节点为 <see cref="ChoiceNode"/>。
+        /// 每个选项端口（PortIndex ≥ 0）递归分解出一条独立的命令链；
+        /// 未连线的端口 = 空链（点击后直接进入下一行）。
+        /// </summary>
+        private static ChoiceNode ParseChoiceNode(Context ctx, ChainGraphNode node, int depth)
+        {
+            var choice = new ChoiceNode { Position = node.SourcePosition };
+
+            var texts = node.ChoiceTexts;
+            int optionCount = texts != null ? texts.Count : 0;
+
+            foreach (var pair in ctx.Graph.GetOrderedSuccessors(node.Id))
+            {
+                if (pair.Key < 0) continue; // 主延续边由主链 ParseSequence 消费
+
+                var opt = new ChoiceOption
+                {
+                    Text = pair.Key < optionCount ? (texts[pair.Key] ?? "") : "",
+                };
+
+                var branch = ParseSequence(ctx, pair.Value, null, depth + 1);
+                if (!ctx.Result.Success) return choice;
+
+                opt.Chain = Normalize(branch);
+                choice.Options.Add(opt);
+            }
+
+            // 选项文本数多于已连线端口（空链选项）：补齐为独立空链选项。
+            for (int i = choice.Options.Count; i < optionCount; i++)
+            {
+                choice.Options.Add(new ChoiceOption { Text = texts[i] ?? "", Chain = null });
+            }
+
+            return choice;
+        }
+
+        /// <summary>
+        /// R11：主链可达集合——从起点 BFS，choice 节点只沿主延续边（Port=Main）扩展，
+        /// 普通节点沿全部出边扩展。选项链内节点（含嵌套 choice）不在集合中。
+        /// </summary>
+        private static HashSet<string> CollectMainChainNodes(ChainGraph graph, string startId)
+        {
+            var reachable = new HashSet<string>();
+            if (string.IsNullOrEmpty(startId)) return reachable;
+
+            var queue = new Queue<string>();
+            queue.Enqueue(startId);
+            reachable.Add(startId);
+
+            while (queue.Count > 0)
+            {
+                string id = queue.Dequeue();
+                var node = graph.GetNode(id);
+                if (node == null) continue;
+
+                foreach (var pair in graph.GetOrderedSuccessors(id))
+                {
+                    // choice 节点只沿主延续边进入主链（选项端口是独立分支）
+                    if (node.Kind == ChainGraphNodeKind.Choice && pair.Key != ChoicePort.Main)
+                        continue;
+                    if (reachable.Add(pair.Value))
+                        queue.Enqueue(pair.Value);
+                }
+            }
+
+            return reachable;
+        }
+
+        /// <summary>
+        /// R11：从任一 Choice 节点的任一选项端口出发能否到达 <paramref name="sinkId"/>。
+        /// 用于豁免"选项链尾未连 End"的 sink 检查（合法 = 空链语义）。
+        /// </summary>
+        private static bool IsReachableFromChoicePort(ChainGraph graph, string sinkId)
+        {
+            if (graph == null || string.IsNullOrEmpty(sinkId)) return false;
+
+            var queue = new Queue<string>();
+            var seen = new HashSet<string>();
+
+            foreach (var n in graph.Nodes)
+            {
+                if (n.Kind != ChainGraphNodeKind.Choice) continue;
+                foreach (var pair in graph.GetOrderedSuccessors(n.Id))
+                {
+                    if (pair.Key < 0) continue; // 只走选项端口
+                    queue.Enqueue(pair.Value);
+                    seen.Add(pair.Value);
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                string id = queue.Dequeue();
+                if (id == sinkId) return true;
+                foreach (string next in graph.GetSuccessors(id))
+                    if (seen.Add(next)) queue.Enqueue(next);
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -246,10 +404,34 @@ namespace VNovelizer.Core.Commands.Chain
                     return seq;
                 }
 
-                if (!ctx.Visited.Add(current))
+                // R11：哨兵豁免重复访问——choice 的多条选项链尾都连 End 哨兵，
+                // 主链/首条选项链分解时已访问过 End，后续分支再遇不应报"重复访问"。
+                bool isSentinel = node.Kind == ChainGraphNodeKind.Start ||
+                                  node.Kind == ChainGraphNodeKind.End;
+                if (!isSentinel && !ctx.Visited.Add(current))
                 {
                     ctx.Result.Errors.Add($"节点被重复访问（图中存在环或 Fork/Join 不配对）：{node}");
                     return seq;
+                }
+
+                if (node.Kind == ChainGraphNodeKind.Choice)
+                {
+                    seq.Children.Add(ParseChoiceNode(ctx, node, depth + 1));
+                    if (!ctx.Result.Success) return seq;
+
+                    // 主延续边（PortIndex=-1）：连 End 哨兵或下一个 choice。
+                    // 缺失 = 主链在 choice 处结束（链尾）。
+                    string mainNext = null;
+                    foreach (var pair in ctx.Graph.GetOrderedSuccessors(node.Id))
+                    {
+                        if (pair.Key == ChoicePort.Main)
+                        {
+                            mainNext = pair.Value;
+                            break;
+                        }
+                    }
+                    current = mainNext;
+                    continue;
                 }
 
                 if (node.Kind == ChainGraphNodeKind.Fork)
@@ -420,6 +602,13 @@ namespace VNovelizer.Core.Commands.Chain
                     par.Children[i] = Normalize(par.Children[i]);
 
                 return par.Children.Count == 1 ? par.Children[0] : par;
+            }
+
+            // R11：choice 不剥单选项包装（N 选项的块语法不可退化），仅递归归一化各选项链
+            if (node is ChoiceNode choice)
+            {
+                foreach (var opt in choice.Options)
+                    opt.Chain = Normalize(opt.Chain);
             }
 
             return node;
