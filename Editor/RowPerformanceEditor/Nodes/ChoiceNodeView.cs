@@ -63,7 +63,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 输入端口（标准左侧单入）
             InputPort = CreatePort(Direction.Input, Port.Capacity.Single);
 
-            // 主延续端口：标题栏右侧独立定位
+            // 主延续端口：节点右上角（mockup 原位置）。EdgeConnector 是 Port 自身的 manipulator，
+            // 在 titleContainer 内同样可以拖线（上一版"无法拖线"判断有误，回退）。
             MainOutputPort = InstantiateChoicePort(Direction.Output, Port.Capacity.Single,
                 "vn-port-choice-main");
             MainOutputPort.tooltip = "主链延续：通常连接 End 终端（执行完选项链后等待确认）；\n" +

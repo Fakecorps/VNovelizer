@@ -85,6 +85,27 @@ namespace VNovelizer.Core.Commands.Meta
 
         /// <summary>嵌套命令串（如 choice 的选项命令、playvideo 的结束后命令）</summary>
         CommandString,
+
+        // ---- 条件命令族（jumpif / loadscriptif 等）专用 ----
+
+        /// <summary>
+        /// flag 条件表达式（与前置的 <see cref="FlagName"/> 参数共享同一序列化段）。
+        /// 编辑器表单渲染为「操作符下拉（&gt; &lt; &gt;= &lt;= == != 或 直判/!）+ 值控件」，
+        /// 序列化时与 flag 合并回旧二段格式（如 `intflag1&gt;1`）。
+        /// </summary>
+        FlagCondition,
+
+        /// <summary>跨剧本行 ID（候选来自前置 ScriptName 参数所指向剧本的全部行）</summary>
+        ScriptLineId,
+
+        /// <summary>CG 画廊条目名（候选来自画廊编辑器 CG 登记项）</summary>
+        GalleryCgName,
+
+        /// <summary>音乐画廊条目名（候选来自画廊编辑器音乐登记项）</summary>
+        GalleryMusicName,
+
+        /// <summary>场景回想条目名（候选来自画廊编辑器场景登记项）</summary>
+        GallerySceneName,
     }
 
     /// <summary>

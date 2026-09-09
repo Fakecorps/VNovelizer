@@ -205,12 +205,51 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _paramsContainer.AddToClassList("vn-node-params");
 
             var values = SplitArgs();
+
+            // 条件命令族（jumpif / loadscriptif 等）：flag + condition 共享序列化段 0，
+            // chip 拆开显示（flag / 操作符+值 / 后续参数按物理段错位一位）。
+            bool condFamily = Info.Parameters.Count >= 2
+                && Info.Parameters[0].Type == VNParamType.FlagName
+                && Info.Parameters[1].Type == VNParamType.FlagCondition;
+
+            string condFlag = null, condOp = null, condValue = null;
+            if (condFamily && values.Count > 0)
+            {
+                ConditionParser.Condition cond;
+                string error;
+                if (ConditionParser.TryParse(values[0], out cond, out error))
+                {
+                    condFlag = cond.Name;
+                    condOp = cond.Negated ? "!" : cond.Op;
+                    condValue = cond.Value;
+                }
+                else
+                {
+                    condFlag = values[0].Trim(); // 无法拆分 → 原文兜底
+                    condOp = null;
+                    condValue = null;
+                }
+            }
+
             bool anyShown = false;
 
             for (int i = 0; i < Info.Parameters.Count; i++)
             {
                 var p = Info.Parameters[i];
-                string value = i < values.Count ? values[i].Trim() : "";
+
+                string value;
+                if (condFamily)
+                {
+                    if (i == 0) value = condFlag ?? "";
+                    else if (i == 1)
+                        value = string.IsNullOrEmpty(condFlag)
+                            ? "" : BuildConditionDisplay(condOp, condValue);
+                    else value = (i - 1) < values.Count ? values[i - 1].Trim() : "";
+                }
+                else
+                {
+                    value = i < values.Count ? values[i].Trim() : "";
+                }
 
                 // 空值且支持隐式绑定 → 已由 >> 角标表达，不重复占位
                 if (string.IsNullOrEmpty(value) && p.ImplicitBinding) continue;
@@ -243,10 +282,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 anyShown = true;
             }
 
-            // 溢出参数（可变长命令 / 参数数超过声明）
-            if (values.Count > Info.Parameters.Count)
+            // 溢出参数（可变长命令 / 参数数超过声明；条件族段数 = 参数数 - 1）
+            int declaredSegments = condFamily ? Info.Parameters.Count - 1 : Info.Parameters.Count;
+            if (values.Count > declaredSegments)
             {
-                int extra = values.Count - Info.Parameters.Count;
+                int extra = values.Count - declaredSegments;
                 var row = new VisualElement();
                 row.AddToClassList("vn-param-row");
                 row.tooltip = "超出元数据声明的额外参数（可变长命令属正常）";
@@ -264,6 +304,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
 
             if (!anyShown) _paramsContainer.RemoveFromClassList("vn-node-params");
+        }
+
+        /// <summary>条件操作符 + 值的紧凑显示（直判 → true；取反 → false）</summary>
+        private static string BuildConditionDisplay(string op, string value)
+        {
+            if (string.IsNullOrEmpty(op)) return "true"; // 直判
+            if (op == "!") return "false";               // 取反
+            if (string.IsNullOrEmpty(value)) return op;
+            return op + " " + value;
         }
 
         private string BuildParamTooltip(VNParamInfo p, string value)

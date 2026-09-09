@@ -7,10 +7,10 @@ namespace VNovelizer.Core.Commands
         "切换剧本（跨剧本自动存档；仅可置于链尾）")]
     public class LoadScriptCommand : VNCommand
     {
-        [VNParam(0, "script", VNParamType.String,
+        [VNParam(0, "script", VNParamType.ScriptName,
             Description = "剧本名（CSV 文件名，不含扩展名）")]
-        [VNParam(1, "startId", VNParamType.String, Optional = true,
-            Description = "起始行 ID（缺省从头开始；跳转目标行会自动预演重建状态）")]
+        [VNParam(1, "startId", VNParamType.ScriptLineId, Optional = true,
+            Description = "起始行 ID（缺省从头开始；候选来自所选剧本的全部行）")]
         public override string CommandName { get { return "loadscript"; } }
 
         public override bool Execute(string args)

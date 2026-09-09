@@ -801,7 +801,7 @@
     background-color: #F0BA78;
 }
 
-/* 主延续端口（标题栏右侧） */
+/* 主延续端口（节点右上角） */
 .vn-choice-mainport-slot {
     flex-shrink: 0;
     margin-left: auto;
@@ -1321,6 +1321,19 @@
     min-width: 84px;
     font-size: 11px;
     color: #AAAAAA;
+}
+
+.vn-insp-cond-row {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+
+.vn-insp-cond-row > .vn-insp-field {
+    flex-grow: 1;
+    margin-bottom: 0;
+    margin-right: 6px;
 }
 
 .vn-insp-bound {

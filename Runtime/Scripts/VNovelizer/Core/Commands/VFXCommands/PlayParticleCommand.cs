@@ -13,7 +13,7 @@ namespace VNovelizer.Core.Commands
         "播放常驻粒子特效（雪/雨/花瓣等；同名特效自动去重不叠加）")]
     public class PlayParticleCommand : VNCommand
     {
-        [VNParam(0, "effect", VNParamType.String,
+        [VNParam(0, "effect", VNParamType.ParticleName,
             Description = "特效资源名（Particle 特效目录下的预制体）")]
         public override string CommandName { get { return "playparticle"; } }
 

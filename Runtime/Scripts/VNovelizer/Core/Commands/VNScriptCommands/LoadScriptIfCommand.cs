@@ -15,12 +15,14 @@ namespace VNovelizer.Core.Commands
         "条件加载剧本：条件为真时等价 loadscript（仅可置于链尾）")]
     public class LoadScriptIfCommand : VNCommand
     {
-        [VNParam(0, "condition", VNParamType.String,
-            Description = "条件表达式，如 Amy_Favor >= 80 / Met_Amy / !Met_Amy / PlayerName == \"Alice\"")]
-        [VNParam(1, "script", VNParamType.String,
+        [VNParam(0, "flag", VNParamType.FlagName,
+            Description = "被判断的标志名（候选来自 Flag 注册表；未注册时兼容模式）")]
+        [VNParam(1, "condition", VNParamType.FlagCondition,
+            Description = "条件：操作符（> < >= <= == != 或留空=直判、! 取反）+ 值")]
+        [VNParam(2, "script", VNParamType.ScriptName,
             Description = "剧本名（CSV 文件名，不含扩展名）")]
-        [VNParam(2, "startId", VNParamType.String, Optional = true,
-            Description = "起始行 ID（可选）")]
+        [VNParam(3, "startId", VNParamType.ScriptLineId, Optional = true,
+            Description = "起始行 ID（可选；候选来自所选剧本的全部行）")]
         public override string CommandName { get { return "loadscriptif"; } }
 
         /// <summary>子类覆写为 true 即得到 loadscriptifnot</summary>

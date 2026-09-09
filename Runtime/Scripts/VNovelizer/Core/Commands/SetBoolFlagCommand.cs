@@ -14,8 +14,8 @@ namespace VNovelizer.Core.Commands
         "设置布尔标志（缺省为 true）")]
     public class SetBoolFlagCommand : VNCommand
     {
-        [VNParam(0, "flag", VNParamType.String,
-            Description = "标志名（区分大小写）")]
+        [VNParam(0, "flag", VNParamType.FlagName,
+            Description = "标志名（候选来自 Flag 注册表；区分大小写）")]
         [VNParam(1, "value", VNParamType.Bool, Default = "true",
             Optional = true, Description = "true / false（缺省 true）")]
         public override string CommandName { get { return "setboolflag"; } }

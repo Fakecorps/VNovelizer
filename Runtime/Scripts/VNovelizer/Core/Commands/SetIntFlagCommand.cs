@@ -17,8 +17,8 @@ namespace VNovelizer.Core.Commands
         "设置整数标志（支持 +10/-10/*2//2 相对运算）")]
     public class SetIntFlagCommand : VNCommand
     {
-        [VNParam(0, "flag", VNParamType.String,
-            Description = "标志名（区分大小写）")]
+        [VNParam(0, "flag", VNParamType.FlagName,
+            Description = "标志名（候选来自 Flag 注册表；区分大小写）")]
         [VNParam(1, "value", VNParamType.String,
             Description = "整数值或相对运算：100（绝对）/ +10 / -10 / *2 / /2（整数除法）")]
         public override string CommandName { get { return "setintflag"; } }

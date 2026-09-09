@@ -11,7 +11,7 @@ namespace VNovelizer.Core.Commands
         "播放 Animator 动画特效（挂在特效层；loop 结尾缀名表循环播放）")]
     public class PlayAnimCommand : VNCommand
     {
-        [VNParam(0, "anim", VNParamType.String,
+        [VNParam(0, "anim", VNParamType.AnimName,
             Description = "动画资源名（Animation 目录下的预制体）")]
         [VNParam(1, "pos", VNParamType.String, Default = "M", Optional = true,
             Description = "显示位置：L/ML/M/MR/R 槽位或 left/center/right 屏幕三区（默认 M）")]

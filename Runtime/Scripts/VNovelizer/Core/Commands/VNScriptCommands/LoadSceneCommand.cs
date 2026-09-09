@@ -12,7 +12,7 @@ namespace VNovelizer.Core.Commands
         "加载 Unity 场景（场景须加入 Build Settings；仅可置于链尾）")]
     public class LoadSceneCommand : VNCommand
     {
-        [VNParam(0, "scene", VNParamType.String,
+        [VNParam(0, "scene", VNParamType.SceneName,
             Description = "场景名（Build Settings 中的名称）")]
         public override string CommandName { get { return "loadscene"; } }
 

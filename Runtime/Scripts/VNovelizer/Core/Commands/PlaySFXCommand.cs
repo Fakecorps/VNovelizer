@@ -15,7 +15,7 @@ namespace VNovelizer.Core.Commands
         "播放音效（按次数顺序播放，等全部播完才推进下一行）")]
     public class PlaySFXCommand : VNCommand
     {
-        [VNParam(0, "name", VNParamType.String,
+        [VNParam(0, "name", VNParamType.SfxName,
             Description = "音效资源名（SFX 资源目录下，不含扩展名）")]
         [VNParam(1, "times", VNParamType.Int, Min = 1, Max = 50, Default = "1",
             Optional = true, Description = "播放次数（默认 1）")]

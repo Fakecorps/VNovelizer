@@ -15,8 +15,8 @@ namespace VNovelizer.Core.Commands
         "设置字符串标志（值含逗号时用引号包裹）")]
     public class SetStringFlagCommand : VNCommand
     {
-        [VNParam(0, "flag", VNParamType.String,
-            Description = "标志名（区分大小写）")]
+        [VNParam(0, "flag", VNParamType.FlagName,
+            Description = "标志名（候选来自 Flag 注册表；区分大小写）")]
         [VNParam(1, "value", VNParamType.String,
             Description = "字符串值；含逗号时用双引号包裹，如 \"Hello, World\"")]
         public override string CommandName { get { return "setstringflag"; } }

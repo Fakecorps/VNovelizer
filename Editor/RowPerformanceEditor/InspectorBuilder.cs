@@ -255,7 +255,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     _root.Add(section);
                 }
 
-                BuildStructuredParams(view, info);
+                if (IsFlagConditionFamily(info))
+                    BuildFlagConditionParams(view, info);
+                else
+                    BuildStructuredParams(view, info);
+
                 BuildBehaviorSection(info);
             }
 
@@ -330,6 +334,282 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
 
             _root.Add(section);
+        }
+
+        // ---------------- 条件命令族三字段表单（jumpif / loadscriptif 等） ----------------
+
+        /// <summary>
+        /// 条件命令族（jumpif / jumpifnot / loadscriptif / loadscriptifnot）：
+        /// 元数据声明 flag + condition + 后续参数，但序列化仍为旧二段格式
+        /// （段 0 = 合并后的条件表达式，如 `intflag1>1`）。
+        /// 本表单把段 0 拆为三个控件编辑：flag 下拉 + 操作符下拉 + 值控件，
+        /// 写回时合并回段 0，运行时与存量剧本 100% 兼容。
+        /// </summary>
+        private static bool IsFlagConditionFamily(VNCommandInfo info)
+        {
+            return info != null && info.Parameters.Count >= 2
+                && info.Parameters[0].Type == VNParamType.FlagName
+                && info.Parameters[1].Type == VNParamType.FlagCondition;
+        }
+
+        /// <summary>元数据参数位置 → 序列化段下标（条件族 flag+condition 共享段 0）</summary>
+        private static int PhysicalIndex(VNCommandInfo info, int metaIndex)
+        {
+            return IsFlagConditionFamily(info) && metaIndex >= 2 ? metaIndex - 1 : metaIndex;
+        }
+
+        private void BuildFlagConditionParams(CommandNodeView view, VNCommandInfo info)
+        {
+            var section = new VisualElement();
+            section.AddToClassList("vn-insp-section");
+
+            var title = new Label("参数");
+            title.AddToClassList("vn-insp-sectitle");
+            section.Add(title);
+
+            var values = SplitArgs(view.Data.Args, info.ArgSeparator);
+            string rawCond = values.Count > 0 ? values[0].Trim() : "";
+
+            // ---- 从旧二段格式的段 0 拆出 flag / 操作符 / 值 ----
+            string flag = "";
+            string opKey = "";
+            string condValue = "";
+            bool keepQuotes = false;
+            string parseError = null;
+
+            if (!string.IsNullOrEmpty(rawCond))
+            {
+                ConditionParser.Condition cond;
+                string error;
+                if (ConditionParser.TryParse(rawCond, out cond, out error))
+                {
+                    flag = cond.Name ?? "";
+                    keepQuotes = cond.ValueIsQuoted;
+                    opKey = cond.Negated ? "!" : (cond.Op ?? "");
+                    condValue = cond.Value ?? "";
+                }
+                else
+                {
+                    // 兜底：无法拆分的表达式整段作为 flag 自由文本展示
+                    flag = rawCond;
+                    parseError = error;
+                }
+            }
+
+            FlagType flagType = FlagType.Bool;
+            bool flagRegistered = ParamCandidateProvider.TryGetFlagType(flag, out flagType);
+
+            // ---- flag 下拉 ----
+            var flagParam = info.Parameters[0];
+            var flagChoices = ParamCandidateProvider.GetCandidates(flagParam, null);
+            if (flagChoices == null) flagChoices = new List<string>();
+
+            const string kNoFlag = "（未选择标志）";
+            if (string.IsNullOrEmpty(flag))
+            {
+                if (!flagChoices.Contains(kNoFlag)) flagChoices.Insert(0, kNoFlag);
+            }
+            else if (!flagChoices.Contains(flag))
+            {
+                flagChoices.Add(flag); // 未注册 flag 也保留当前值可显示
+            }
+
+            if (flagChoices.Count > 0)
+            {
+                string flagDisplay = string.IsNullOrEmpty(flag) ? kNoFlag : flag;
+                var flagPopup = new PopupField<string>(flagParam.Name, flagChoices,
+                    Mathf.Max(0, flagChoices.IndexOf(flagDisplay)));
+                flagPopup.AddToClassList("vn-insp-field");
+                flagPopup.tooltip = BuildParamTooltip(flagParam);
+                flagPopup.RegisterValueChangedCallback(evt =>
+                {
+                    string newFlag = evt.newValue == kNoFlag ? "" : (evt.newValue ?? "");
+                    string newOp = opKey;
+                    FlagType t;
+                    if (!string.IsNullOrEmpty(newFlag) &&
+                        ParamCandidateProvider.TryGetFlagType(newFlag, out t) &&
+                        !IsOpAllowed(newOp, t))
+                        newOp = ""; // 新 flag 类型不支持当前操作符 → 回退直判
+                    MergeFlagCondition(view, info, newFlag, newOp, condValue, keepQuotes);
+                    Refresh(); // flag 类型变了 → 重建操作符候选与值控件
+                });
+                section.Add(flagPopup);
+            }
+
+            // ---- condition（操作符下拉 + 值控件）----
+            var condParam = info.Parameters[1];
+
+            var condRow = new VisualElement();
+            condRow.AddToClassList("vn-insp-cond-row");
+
+            var opDisplayChoices = BuildOpDisplayChoices(
+                flagRegistered ? flagType : (FlagType?)null, opKey);
+            string opDisplay = OpDisplay(opKey);
+            if (!opDisplayChoices.Contains(opDisplay)) opDisplayChoices.Add(opDisplay);
+            var opPopup = new PopupField<string>(condParam.Name, opDisplayChoices,
+                Mathf.Max(0, opDisplayChoices.IndexOf(opDisplay)));
+            opPopup.AddToClassList("vn-insp-field");
+            opPopup.tooltip = BuildParamTooltip(condParam);
+            opPopup.SetEnabled(!string.IsNullOrEmpty(flag)); // flag 未选 → 操作符不可用
+            opPopup.RegisterValueChangedCallback(evt =>
+            {
+                MergeFlagCondition(view, info, flag, OpKeyFromDisplay(evt.newValue),
+                    condValue, keepQuotes);
+                Refresh(); // 操作符变了 → 值控件显示/隐藏、候选变化
+            });
+            condRow.Add(opPopup);
+
+            if (IsComparisonOp(opKey))
+            {
+                if (flagRegistered && flagType == FlagType.Bool)
+                {
+                    // bool flag：值为 true/false 下拉（序列化为 flag == true / != false）
+                    var valueChoices = new List<string> { "true", "false" };
+                    var valuePopup = new PopupField<string>("值", valueChoices,
+                        Mathf.Max(0, valueChoices.IndexOf(condValue.ToLowerInvariant())));
+                    valuePopup.AddToClassList("vn-insp-field");
+                    valuePopup.tooltip = "布尔比较值";
+                    valuePopup.RegisterValueChangedCallback(evt =>
+                    {
+                        MergeFlagCondition(view, info, flag, opKey, evt.newValue, keepQuotes);
+                    });
+                    condRow.Add(valuePopup);
+                }
+                else
+                {
+                    // 数值 / 字符串 / 未注册：自由文本（字符串类型序列化时自动加引号）
+                    var valueField = new TextField("值") { value = condValue };
+                    valueField.AddToClassList("vn-insp-field");
+                    valueField.tooltip = flagRegistered && flagType == FlagType.String
+                        ? "字符串值（写入时自动加双引号，值内含逗号也可正确解析）"
+                        : "比较值（数值或字符串）";
+                    valueField.RegisterCallback<FocusOutEvent>(_ =>
+                    {
+                        if (valueField.value == condValue) return;
+                        MergeFlagCondition(view, info, flag, opKey, valueField.value, keepQuotes);
+                    });
+                    condRow.Add(valueField);
+                }
+            }
+            else
+            {
+                var note = new Label(opKey == "!"
+                    ? "取反直判：flag 为 false 时条件成立。"
+                    : "直判：flag 为 true 时条件成立。");
+                note.AddToClassList("vn-insp-desc");
+                condRow.Add(note);
+            }
+
+            section.Add(condRow);
+
+            if (!string.IsNullOrEmpty(parseError))
+            {
+                var warn = new Label("条件表达式无法拆分（" + parseError + "），已按原文保留在 flag 字段。");
+                warn.AddToClassList("vn-insp-note");
+                warn.AddToClassList("vn-insp-note--warn");
+                section.Add(warn);
+            }
+
+            // ---- 后续参数（targetID / script / startId）：物理段 = 元数据位置 - 1 ----
+            for (int i = 2; i < info.Parameters.Count; i++)
+            {
+                var param = info.Parameters[i];
+                int physical = PhysicalIndex(info, i);
+                string value = physical < values.Count ? values[physical] : "";
+
+                if (param.ImplicitBinding && string.IsNullOrWhiteSpace(value))
+                {
+                    section.Add(BuildBoundField(view, info, param, physical));
+                    continue;
+                }
+
+                section.Add(BuildValueField(view, info, param, physical, value));
+            }
+
+            _root.Add(section);
+        }
+
+        /// <summary>
+        /// 合并 flag + 操作符 + 值为条件表达式并写回段 0：
+        /// 直判 → `flag`；取反 → `!flag`；比较 → `flag op value`（String 类型值自动加引号）。
+        /// </summary>
+        private void MergeFlagCondition(CommandNodeView view, VNCommandInfo info,
+            string flag, string opKey, string value, bool keepQuotes)
+        {
+            string expr;
+            if (string.IsNullOrEmpty(flag))
+            {
+                expr = ""; // 未选择标志 → 清空条件段
+            }
+            else if (string.IsNullOrEmpty(opKey))
+            {
+                expr = flag;
+            }
+            else if (opKey == "!")
+            {
+                expr = "!" + flag;
+            }
+            else
+            {
+                bool quote = keepQuotes; // 未注册 flag 保持拆出时的引号状态
+                FlagType t;
+                if (ParamCandidateProvider.TryGetFlagType(flag, out t) && t == FlagType.String)
+                    quote = true;
+
+                string v = value ?? "";
+                expr = flag + " " + opKey + (quote ? " \"" + v + "\"" : " " + v);
+            }
+
+            SetParamValue(view, info, 0, expr);
+        }
+
+        private static bool IsComparisonOp(string opKey)
+        {
+            return opKey == ">" || opKey == "<" || opKey == ">=" || opKey == "<="
+                || opKey == "==" || opKey == "!=";
+        }
+
+        /// <summary>操作符对 flag 类型是否合法（Bool 仅 ==/!=；String 仅 ==/!=）</summary>
+        private static bool IsOpAllowed(string opKey, FlagType type)
+        {
+            if (string.IsNullOrEmpty(opKey) || opKey == "!") return true; // 直判 / 取反
+            if (type == FlagType.Bool || type == FlagType.String)
+                return opKey == "==" || opKey == "!=";
+            return true; // Int / Float 支持全部比较符
+        }
+
+        private static List<string> BuildOpDisplayChoices(FlagType? type, string currentOp)
+        {
+            var keys = new List<string>();
+            if (type == null)
+                keys.AddRange(new[] { "", "!", ">", "<", ">=", "<=", "==", "!=" });
+            else if (type == FlagType.Bool)
+                keys.AddRange(new[] { "", "!", "==", "!=" });
+            else if (type == FlagType.String)
+                keys.AddRange(new[] { "==", "!=" });
+            else
+                keys.AddRange(new[] { ">", "<", ">=", "<=", "==", "!=" });
+
+            var choices = new List<string>();
+            foreach (string k in keys) choices.Add(OpDisplay(k));
+            if (!string.IsNullOrEmpty(currentOp) && !keys.Contains(currentOp))
+                choices.Add(OpDisplay(currentOp)); // 旧数据操作符不在合法列表 → 保留显示
+            return choices;
+        }
+
+        private static string OpDisplay(string opKey)
+        {
+            if (string.IsNullOrEmpty(opKey)) return "直判 (flag == true)";
+            if (opKey == "!") return "! (flag == false)";
+            return opKey;
+        }
+
+        private static string OpKeyFromDisplay(string display)
+        {
+            if (string.IsNullOrEmpty(display)) return "";
+            if (display.StartsWith("直判", StringComparison.Ordinal)) return "";
+            if (display.StartsWith("!", StringComparison.Ordinal)) return "!";
+            return display;
         }
 
         /// <summary>隐式绑定态：显示"📎 引用 XX 列"+ 断开按钮。</summary>
@@ -424,6 +704,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 popup.RegisterValueChangedCallback(evt =>
                 {
                     SetParamValue(view, info, index, evt.newValue);
+                    // 重建表单：联动参数（角色→分组→表情、剧本→起始行）候选随之更新
+                    Refresh();
                 });
                 field = popup;
             }
@@ -499,6 +781,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 return ParamCandidateProvider.GetEmotions(charId, group);
             }
 
+            // 跨剧本行 ID：依赖前置 ScriptName 参数的值（loadscript 族的 startId）
+            if (param.Type == VNParamType.ScriptLineId)
+            {
+                var values = SplitArgs(view.Data.Args, info.ArgSeparator);
+                string script = FindPrecedingValue(info, values, VNParamType.ScriptName);
+                return ParamCandidateProvider.GetScriptLineIds(script);
+            }
+
             return ParamCandidateProvider.GetCandidates(param, null);
         }
 
@@ -507,7 +797,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             for (int i = 0; i < info.Parameters.Count; i++)
                 if (info.Parameters[i].Type == type)
-                    return i < values.Count ? values[i].Trim() : "";
+                {
+                    int physical = PhysicalIndex(info, i);
+                    return physical < values.Count ? values[physical].Trim() : "";
+                }
             return "";
         }
 

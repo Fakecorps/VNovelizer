@@ -174,8 +174,21 @@ namespace VNovelizer.Core.Commands
             switch (type)
             {
                 case FlagType.Bool:
+                {
+                    // Bool 支持 == / != 与 true/false 字面量比较（等价直判 / 取反），
+                    // 便于编辑器表单以「操作符 + true/false 下拉」表达布尔条件。
+                    if (c.Op == "==" || c.Op == "!=")
+                    {
+                        bool rhs;
+                        if (!bool.TryParse(c.Value, out rhs))
+                            throw new ArgumentException(string.Format(
+                                "无法将 '{0}' 解析为布尔值（仅支持 true/false）", c.Value));
+                        bool lhs = flags.GetBool(c.Name);
+                        return c.Op == "==" ? lhs == rhs : lhs != rhs;
+                    }
                     throw new ArgumentException(string.Format(
-                        "flag '{0}' 类型为 Bool，不支持 operator '{1}'", c.Name, c.Op));
+                        "flag '{0}' 类型为 Bool，仅支持 == / != 或直判（!{0} 取反），不支持 operator '{1}'", c.Name, c.Op));
+                }
 
                 case FlagType.Int:
                 {

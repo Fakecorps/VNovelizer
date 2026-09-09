@@ -8,7 +8,7 @@ namespace VNovelizer.Core.Commands
         "停止并回收 playanim 播放的动画（按动画名）")]
     public class StopAnimCommand : VNCommand
     {
-        [VNParam(0, "anim", VNParamType.String,
+        [VNParam(0, "anim", VNParamType.AnimName,
             Description = "动画资源名（与 playanim 第一个参数一致）")]
         public override string CommandName { get { return "stopanim"; } }
 

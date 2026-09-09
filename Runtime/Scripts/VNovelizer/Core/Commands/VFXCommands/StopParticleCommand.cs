@@ -9,7 +9,7 @@ namespace VNovelizer.Core.Commands
         "停止粒子特效并延迟回收（停止发射，已发射粒子 5 秒飘完）")]
     public class StopParticleCommand : VNCommand
     {
-        [VNParam(0, "effect", VNParamType.String,
+        [VNParam(0, "effect", VNParamType.ParticleName,
             Description = "特效资源名（与 playparticle 参数一致）")]
         public override string CommandName { get { return "stopparticle"; } }
 

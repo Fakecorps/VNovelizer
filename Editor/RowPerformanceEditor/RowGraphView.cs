@@ -284,7 +284,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 与系统命令族规则一致：nextline 作为流程命令默认出现在链尾（OnConfirm Entry
             // 与 OnConfirm Exit 之间），标记为 vn-node--template（半透明、不可连线）。
             // 用户删除它 → 触发 OnRequestPromotion → 提升为定制行（写入 Command 列）。
-            if (isConfirm) EnsureTemplateNextLine(graph, isConfirm, startX, centerY);
+            if (isConfirm)
+            {
+                EnsureTemplateNextLine(graph, isConfirm, startX, centerY);
+                // 初始化时评估已有 nextline 节点的可见性（与模板判断条件一致）
+                RefreshNextLineVisibility(graph, isConfirm: true);
+            }
         }
 
         /// <summary>
@@ -429,6 +434,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 // 图结构已变（删节点/改连线），选中 Fork/Join 的影响范围可能变化，重算高亮
                 RefreshRangeHighlight();
+
+                // R11+：图数据变化时重新评估 nextline 节点的可见性——
+                // 主链尾已是 FlowCommand 时隐藏（不删数据，仅 UI）。
+                // 避免命令列里有 nextline 但执行永远到不了时仍显示节点误导作者。
+                RefreshNextLineVisibility(EntryGraph, isConfirm: false);
+                RefreshNextLineVisibility(ConfirmGraph, isConfirm: true);
             }
             else if (moved)
             {
@@ -711,6 +722,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                         StringComparison.OrdinalIgnoreCase))
                     return;
 
+            // R11 修订：主链尾已是 FlowCommand（jump / jumpif / loadscript / choice /
+            // loadscene 等）时，nextline 永远不会被执行——隐藏模板节点避免误导作者
+            // 「删 nextline 提升」结果写进 Command 列后实际用不上。
+            // 判定：主链 BFS 后的所有 sink（普通命令节点 + 主延续缺失的 choice）全部是 FlowCommand。
+            if (!MainChainTailHasNonFlowCommand(graph)) return;
+
             string startId = ChainGraphDumper.SentinelId(isConfirm, true);
             string endId = ChainGraphDumper.SentinelId(isConfirm, false);
             var startView = GetNodeView(isConfirm, startId);
@@ -744,6 +761,88 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var e2 = templateView.OutputPort.ConnectTo(endView.InputPort);
             e2.capabilities &= ~Capabilities.Deletable;
             AddElement(e2);
+        }
+
+        /// <summary>
+        /// R11+：根据当前主链尾 FlowCommand 状态，重新评估 nextline 节点的可见性。
+        /// 主链尾全是 FlowCommand（jump / choice / loadscript / ...）时，nextline 永远不会被执行——
+        /// 隐藏视图（不删数据，Command 列文本保留，Validator 规则 12 仍按数据判断）。
+        ///
+        /// <para>
+        /// 调用时机：<see cref="OnGraphViewChanged"/> structural 路径（图数据变化后）、
+        /// <see cref="BuildLane"/> 末尾（初始化时）。
+        /// </para>
+        /// </summary>
+        private void RefreshNextLineVisibility(ChainGraph graph, bool isConfirm)
+        {
+            if (graph == null) return;
+
+            bool hide = !MainChainTailHasNonFlowCommand(graph);
+
+            foreach (var view in _nodeViews.Values)
+            {
+                if (view == null) continue;
+                if (view.IsConfirmChain != isConfirm) continue;
+                if (!(view is CommandNodeView cmdView)) continue;
+                if (cmdView.Data == null) continue;
+                if (!string.Equals((cmdView.Data.CommandName ?? "").Trim(), "nextline",
+                    StringComparison.OrdinalIgnoreCase)) continue;
+                if (cmdView.ClassListContains("vn-node--template")) continue; // 模板节点由 EnsureTemplateNextLine 控制
+
+                // 隐藏：style.display = None（不触发重建）
+                cmdView.style.display = hide ? DisplayStyle.None : DisplayStyle.Flex;
+            }
+        }
+
+        /// <summary>
+        /// R11：判断出口段主链尾是否**还有非 FlowCommand 的可达节点**——
+        /// 若所有主链 sink（普通命令 + 主延续缺失的 choice）都是 FlowCommand
+        /// （jump / jumpif / loadscript / choice / loadscene 等），nextline 永远不会被执行。
+        ///
+        /// <para>
+        /// 主链 BFS 复用 <see cref="GraphToAst.CollectMainChainNodes"/>：
+        /// choice 节点只沿主延续边（Port=Main）扩展，选项链内节点不进入主链。
+        /// </para>
+        /// </summary>
+        private static bool MainChainTailHasNonFlowCommand(ChainGraph graph)
+        {
+            if (graph == null) return true; // 防御：空图 → 显示（提示用户）
+            var startSentinel = ChainGraphDumper.FindStartSentinel(graph);
+            if (startSentinel == null) return true;
+            var mainChain = GraphToAst.CollectMainChainNodes(graph, startSentinel.Id);
+            if (mainChain.Count == 0) return true; // 防御
+
+            // 空出口段（无任何业务命令）→ 显示 nextline 提示作者补 nextline
+            bool hasAnyCommand = false;
+            foreach (var n in graph.Nodes)
+            {
+                if (n.Kind == ChainGraphNodeKind.Command) { hasAnyCommand = true; break; }
+                if (n.Kind == ChainGraphNodeKind.Choice) { hasAnyCommand = true; break; }
+            }
+            if (!hasAnyCommand) return true;
+
+            foreach (var s in graph.FindSinks())
+            {
+                if (s.Kind == ChainGraphNodeKind.Choice) continue;
+                // 哨兵（Start/End）不是命令节点——End 的 CommandName 为 null 会被
+                // IsFlowCommand 误判为"非流程命令"从而错误显示 nextline
+                if (s.Kind == ChainGraphNodeKind.Start || s.Kind == ChainGraphNodeKind.End) continue;
+                if (!mainChain.Contains(s.Id)) continue;
+                if (!ChainParser.IsFlowCommand((s.CommandName ?? "").Trim()))
+                    return true;
+            }
+            foreach (var n in graph.Nodes)
+            {
+                if (n.Kind != ChainGraphNodeKind.Choice) continue;
+                if (!mainChain.Contains(n.Id)) continue;
+                bool hasMain = false;
+                foreach (var pair in graph.GetOrderedSuccessors(n.Id))
+                {
+                    if (pair.Key == ChoicePort.Main) { hasMain = true; break; }
+                }
+                if (!hasMain) return true; // 主链 choice（无主延续）也算 sink
+            }
+            return false;
         }
 
         // ---------------- R10 运行时执行状态可视化 ----------------

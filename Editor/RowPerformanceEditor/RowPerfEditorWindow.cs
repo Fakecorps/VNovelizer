@@ -1242,9 +1242,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (info == null || !info.HasMeta || info.Parameters.Count == 0) return "";
 
+            // 条件命令族（jumpif / loadscriptif 等）：flag + condition 共享序列化段 0，
+            // 不为其生成独立段——默认 args 段数 = 元数据参数数 - 1。
+            bool condFamily = info.Parameters.Count >= 2
+                && info.Parameters[0].Type == VNParamType.FlagName
+                && info.Parameters[1].Type == VNParamType.FlagCondition;
+
             var values = new List<string>();
             foreach (var p in info.Parameters)
             {
+                if (condFamily && p.Type == VNParamType.FlagCondition) continue;
                 if (p.ImplicitBinding) { values.Add(""); continue; }
                 values.Add(p.Default ?? "");
             }

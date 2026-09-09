@@ -317,8 +317,9 @@ namespace VNovelizer.Core.Commands.Chain
         /// <summary>
         /// R11：主链可达集合——从起点 BFS，choice 节点只沿主延续边（Port=Main）扩展，
         /// 普通节点沿全部出边扩展。选项链内节点（含嵌套 choice）不在集合中。
+        /// 公开（public）供编辑器 RowGraphView 复用做「nextline 模板节点可见性」判断。
         /// </summary>
-        private static HashSet<string> CollectMainChainNodes(ChainGraph graph, string startId)
+        public static HashSet<string> CollectMainChainNodes(ChainGraph graph, string startId)
         {
             var reachable = new HashSet<string>();
             if (string.IsNullOrEmpty(startId)) return reachable;

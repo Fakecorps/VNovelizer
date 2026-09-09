@@ -4,18 +4,22 @@ using VNovelizer.Core.Commands.Meta;
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
-    /// 条件跳转命令：jumpif(condition, targetId)
+    /// 条件跳转命令：jumpif(flag, condition, targetID)
+    /// 编辑器表单拆为三个字段：flag（标志名）+ condition（操作符/值）+ targetID（目标行），
+    /// 写入 CSV 仍合并为旧二段格式 jumpif(condition, targetId)（如 jumpif(intflag1>1, 1002)），
+    /// 运行时与存量剧本 100% 兼容。
     /// 条件为真时等价于 jump(targetId)；为假时无操作，继续执行同行后续命令与下一行。
-    /// 条件语法：Amy_Favor >= 50 / Met_Amy / !Met_Amy / PlayerName == "Alice"
     /// 行为与 jump 完全对齐（Execute 走 jump 逻辑；Simulate 写入 PendingJumpIndex）。
     /// </summary>
     [VNCommandMeta(VNCommandCategory.Flow,
         "条件跳转：条件为真时等价 jump，为假时继续下一行（仅可置于链尾）")]
     public class JumpIfCommand : VNCommand
     {
-        [VNParam(0, "condition", VNParamType.String,
-            Description = "条件表达式，如 Amy_Favor >= 50 / Met_Amy / !Met_Amy / PlayerName == \"Alice\"")]
-        [VNParam(1, "targetId", VNParamType.String,
+        [VNParam(0, "flag", VNParamType.FlagName,
+            Description = "被判断的标志名（候选来自 Flag 注册表；未注册时兼容模式）")]
+        [VNParam(1, "condition", VNParamType.FlagCondition,
+            Description = "条件：操作符（> < >= <= == != 或留空=直判、! 取反）+ 值")]
+        [VNParam(2, "targetID", VNParamType.LineId,
             Description = "目标行 ID（本剧本内）")]
         public override string CommandName { get { return "jumpif"; } }
 

@@ -12,7 +12,7 @@ namespace VNovelizer.Core.Commands
         "解锁音乐画廊条目（持久数据，读档快进也生效）")]
     public class UnlockMusicCommand : VNCommand
     {
-        [VNParam(0, "name", VNParamType.String,
+        [VNParam(0, "name", VNParamType.GalleryMusicName,
             Description = "音乐画廊条目名（画廊编辑器中登记的名称）")]
         public override string CommandName { get { return "unlockmusic"; } }
 

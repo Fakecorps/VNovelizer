@@ -12,7 +12,7 @@ namespace VNovelizer.Core.Commands
         "解锁场景回想条目（持久数据，读档快进也生效）")]
     public class UnlockSceneCommand : VNCommand
     {
-        [VNParam(0, "name", VNParamType.String,
+        [VNParam(0, "name", VNParamType.GallerySceneName,
             Description = "场景回想条目名（画廊编辑器中登记的名称）")]
         public override string CommandName { get { return "unlockscene"; } }
 
