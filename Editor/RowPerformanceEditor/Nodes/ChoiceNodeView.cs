@@ -63,16 +63,36 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 输入端口（标准左侧单入）
             InputPort = CreatePort(Direction.Input, Port.Capacity.Single);
 
-            // 主延续端口：节点右上角（mockup 原位置）。EdgeConnector 是 Port 自身的 manipulator，
-            // 在 titleContainer 内同样可以拖线（上一版"无法拖线"判断有误，回退）。
+            // 主延续端口：挂到 titleContainer 内，用 inline absolute 定位到 title 右上角。
+            //
+            // 关键决策（与之前三个方案对比后确定）：
+            //   ① 放 mainContainer + absolute top:-32px → port 跑出节点边界外（视觉消失）
+            //   ② 放 outputContainer + USS .vn-choice.vn-node 覆盖 → port 在节点右上角出现，
+            //      但与 option port（mainContainer 第一行右侧）y 位置接近，视觉上重叠
+            //   ③ 放 titleContainer + absolute top:6 right:8 → port 在 title 内，
+            //      y=6~20，option port 在 mainContainer 内 y≈32+，完全不重叠 ✓
+            //
+            // EdgeConnector 是 Port 自身的 manipulator（TrickleDown 阶段响应），无论 port 在
+            // 哪个容器内都能响应 mouse down 启动拖线。Node 标题拖动会冒泡响应 mouse down，
+            // 通过 RegisterCallback<MouseDownEvent>(TrickleDown) StopPropagation 阻止
+            // 事件冒泡到 Node（不影响 EdgeConnector——它在 manipulator 阶段已先处理）。
             MainOutputPort = InstantiateChoicePort(Direction.Output, Port.Capacity.Single,
                 "vn-port-choice-main");
             MainOutputPort.tooltip = "主链延续：通常连接 End 终端（执行完选项链后等待确认）；\n" +
                                      "连到另一个 choice 节点可实现「单行多选项合并展示」。";
-            var mainPortSlot = new VisualElement();
-            mainPortSlot.AddToClassList("vn-choice-mainport-slot");
-            mainPortSlot.Add(MainOutputPort);
-            titleContainer.Add(mainPortSlot);
+            // titleContainer 需要 position:relative 才能让内部 absolute 元素相对它定位
+            titleContainer.style.position = Position.Relative;
+            titleContainer.Add(MainOutputPort);
+            MainOutputPort.style.position = Position.Absolute;
+            MainOutputPort.style.top = 6;
+            MainOutputPort.style.right = 8;
+            MainOutputPort.style.left = StyleKeyword.Auto;
+            MainOutputPort.style.marginTop = 0;
+            // 阻止 Node 标题拖动手势截获 port 的 mouse down（TrickleDown 阶段，在 EdgeConnector 之后）
+            MainOutputPort.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button == 0) evt.StopPropagation();
+            }, TrickleDown.TrickleDown);
 
             _optionsContainer = new VisualElement();
             _optionsContainer.AddToClassList("vn-choice-options");

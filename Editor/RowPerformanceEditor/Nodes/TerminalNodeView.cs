@@ -16,7 +16,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>确认入口 OnConfirmEntry：出口链起点（橙色矩形）</summary>
         ConfirmStart,
 
-        /// <summary>确认出口 OnConfirmExit：出口链终点，无出端口（橙色矩形）</summary>
+        /// <summary>确认出口 OnConfirmExit：出口链终点，无出端口（橙色矩形）；多入端，可由多个 flow command 终结</summary>
         ChainEnd,
     }
 
@@ -94,8 +94,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     break;
 
                 case TerminalKind.ChainEnd:
-                    // OnConfirmExit：确认出口，引脚在左圆头（单输入）
-                    InputPort = CreatePort(Direction.Input, Port.Capacity.Single);
+                    // OnConfirmExit：确认出口，引脚在左圆头（多输入）
+                    // 出口段可由多个 flow command 终结（jump / jumpif / choice 等），
+                    // 自动布局直接 AddEdge 写多边没事，但手动连线时 Port.Capacity.Single
+                    // 会让 GraphView 清掉已有边，导致用户拖第二条线时第一条消失。
+                    // 改为 Multi：保持与自动布局一致的「多节点汇聚到 Exit」语义。
+                    InputPort = CreatePort(Direction.Input, Port.Capacity.Multi);
                     break;
             }
 

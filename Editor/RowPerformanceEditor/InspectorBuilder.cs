@@ -49,6 +49,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private readonly VisualElement _root;
         private VNNodeViewBase _current;
 
+        // -------- 条件族（jumpif / loadscriptif 等）pending UI 状态 --------
+        // 跨 Refresh 保持：用户切换 flag + 比较 op 但还没填 value 时，
+        // 不立即写回 args（避免 "flag op" 这种半成品表达式污染 cond 段并污染后续解析）。
+        // 仅当 value 填齐后 TryCommit 才真正写回；同时维护一份「期望的 cond 段表达」
+        // 用于与实际 args 比对，外部改动能正确同步回 pending。
+        private CommandNodeView _editingConditionNode;
+        private string _pendingFlag;
+        private string _pendingOp;
+        private string _pendingValue;
+        private bool _pendingKeepQuotes;
+
         public InspectorBuilder(VisualElement root)
         {
             _root = root;
@@ -58,6 +69,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>切换到指定节点（null 显示空状态）。</summary>
         public void Show(VNNodeViewBase node)
         {
+            // 切节点时丢弃上一个节点未提交的 condition pending 状态——pending 属于当前
+            // 节点的临时编辑上下文，跨节点携带会让 args 与 UI 不一致。Refresh() 不切节点，
+            // 因此保留 pending（确保 Refresh 时 UI 的最近编辑动作不被丢失）。
+            if (_current != node)
+            {
+                _editingConditionNode = null;
+                _pendingFlag = null;
+                _pendingOp = null;
+                _pendingValue = null;
+                _pendingKeepQuotes = false;
+            }
             _current = node;
             _root.Clear();
             BuildNodePane();
@@ -371,35 +393,104 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             string rawCond = values.Count > 0 ? values[0].Trim() : "";
 
             // ---- 从旧二段格式的段 0 拆出 flag / 操作符 / 值 ----
-            string flag = "";
-            string opKey = "";
-            string condValue = "";
-            bool keepQuotes = false;
-            string parseError = null;
+            string flag, opKey, condValue;
+            bool keepQuotes;
+            string parseError;
+            ParseConditionField(rawCond, out flag, out opKey, out condValue, out keepQuotes, out parseError);
 
-            if (!string.IsNullOrEmpty(rawCond))
+            // 入口清洗前的「最佳努力」 flag 提取：按第一个操作符/! 前缀截出 flag 名。
+            // 仅在 IsLikelyFlagIdentifier 时使用，作为 UI 的初值（不写回 args）。
+            // 修复前：args 损坏时整个原 flag 名连同操作符一起被吞，用户重输一遍浪费时间。
+            string entryParseError = null;
+            string bestEffortFlag = "";
+            if (parseError != null && !string.IsNullOrEmpty(rawCond))
             {
-                ConditionParser.Condition cond;
-                string error;
-                if (ConditionParser.TryParse(rawCond, out cond, out error))
+                bestEffortFlag = ExtractBestEffortFlag(rawCond);
+                if (!IsLikelyFlagIdentifier(bestEffortFlag)) bestEffortFlag = "";
+                entryParseError = parseError;
+                NormalizeBrokenConditionSegment(view, info, values);
+                values = SplitArgs(view.Data.Args, info.ArgSeparator);
+                rawCond = values.Count > 0 ? values[0].Trim() : "";
+                ParseConditionField(rawCond, out flag, out opKey, out condValue, out keepQuotes, out parseError);
+            }
+
+            // 清洗后如果 flag 是空但 bestEffortFlag 有值，沿用它作为 UI 初值（不写入 args）。
+            // 这样切走再回来，dropdown 仍能选回原 flag 名，仅 op/value 需要重设。
+            if (string.IsNullOrEmpty(flag) && !string.IsNullOrEmpty(bestEffortFlag))
+            {
+                flag = bestEffortFlag;
+            }
+
+            // ---- 跨 Refresh 保持的 pending 状态 ----
+            // 当用户切换 flag + 比较 op 但还没填 value 时，pending 暂时记录「半成品」，
+            // 不立即写回 args，避免 args 被写成不可解析的 "flag op" 段。
+            // 同时比较「如果按 pending 真正写回」的期望 cond 段与当前 args 段，
+            // 防止外部修 args 后 UI 不感知。
+            bool hasPending = _editingConditionNode == view
+                && _pendingFlag != null && _pendingOp != null
+                && entryParseError == null;
+            if (hasPending)
+            {
+                string expectedExpr = BuildExpectedConditionExpr(
+                    _pendingFlag, _pendingOp, _pendingValue, _pendingKeepQuotes);
+                if (!string.Equals(expectedExpr, rawCond, StringComparison.Ordinal))
+                    hasPending = false; // 不同步 → 重新走解析路径
+            }
+            if (hasPending)
+            {
+                flag = _pendingFlag;
+                opKey = _pendingOp;
+                condValue = _pendingValue ?? "";
+                keepQuotes = _pendingKeepQuotes;
+            }
+            else
+            {
+                // 首次进入 / 切换节点 / 与外部 args 不同步 → 用解析结果初始化 pending
+                _editingConditionNode = view;
+                _pendingFlag = flag;
+                _pendingOp = opKey;
+                _pendingValue = condValue;
+                _pendingKeepQuotes = keepQuotes;
+            }
+
+            // 半成品状态：比较 op + 空 value。供所有 UI 控件共用，避免重复判断
+            bool isHalfBaked = IsComparisonOp(opKey) && string.IsNullOrEmpty(condValue);
+
+            // ---- TryCommit：根据 pending 决定是否写回 args ----
+            // 触发场景：flag 切完 / op 切完 / value 填好 / 等任意 Refresh 收尾
+            // **关键**：half-baked 时拒绝写回，args 保持上次合法状态，UI 提示用户填值
+            void TryCommit()
+            {
+                string f = _pendingFlag ?? "";
+                string o = _pendingOp ?? "";
+                string v = _pendingValue ?? "";
+
+                if (string.IsNullOrEmpty(f))
                 {
-                    flag = cond.Name ?? "";
-                    keepQuotes = cond.ValueIsQuoted;
-                    opKey = cond.Negated ? "!" : (cond.Op ?? "");
-                    condValue = cond.Value ?? "";
+                    SetParamValue(view, info, 0, "");
+                    return;
                 }
-                else
+                if (IsComparisonOp(o) && string.IsNullOrEmpty(v))
                 {
-                    // 兜底：无法拆分的表达式整段作为 flag 自由文本展示
-                    flag = rawCond;
-                    parseError = error;
+                    // 半成品：不写回，保留 args 中上次合法表达式（多半是直判），
+                    // UI 控件用 pending 维持用户当前选择状态。详见 needsValue 提示。
+                    return;
                 }
+                MergeFlagCondition(view, info, f, o, v, _pendingKeepQuotes);
+            }
+
+            void TryCommitAndRefresh()
+            {
+                TryCommit();
+                Refresh();
             }
 
             FlagType flagType = FlagType.Bool;
             bool flagRegistered = ParamCandidateProvider.TryGetFlagType(flag, out flagType);
 
             // ---- flag 下拉 ----
+            // 防御性：未注册的 flag 仅在其「看起来像合法 flag 标识符」时才补进候选，
+            // 避免「NewFlag1 >=」这种半成品 rawText 再次混入下拉（这就是用户截图的问题）。
             var flagParam = info.Parameters[0];
             var flagChoices = ParamCandidateProvider.GetCandidates(flagParam, null);
             if (flagChoices == null) flagChoices = new List<string>();
@@ -411,7 +502,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
             else if (!flagChoices.Contains(flag))
             {
-                flagChoices.Add(flag); // 未注册 flag 也保留当前值可显示
+                if (IsLikelyFlagIdentifier(flag))
+                    flagChoices.Add(flag); // 未注册但合法的 flag 名 → 保留当前值可显示
             }
 
             if (flagChoices.Count > 0)
@@ -424,14 +516,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 flagPopup.RegisterValueChangedCallback(evt =>
                 {
                     string newFlag = evt.newValue == kNoFlag ? "" : (evt.newValue ?? "");
-                    string newOp = opKey;
+                    string newOp = _pendingOp ?? "";
                     FlagType t;
                     if (!string.IsNullOrEmpty(newFlag) &&
                         ParamCandidateProvider.TryGetFlagType(newFlag, out t) &&
                         !IsOpAllowed(newOp, t))
-                        newOp = ""; // 新 flag 类型不支持当前操作符 → 回退直判
-                    MergeFlagCondition(view, info, newFlag, newOp, condValue, keepQuotes);
-                    Refresh(); // flag 类型变了 → 重建操作符候选与值控件
+                    {
+                        newOp = ""; // 新 flag 类型不允许当前 op → 回退直判
+                        _pendingValue = ""; // 同时清 value 残留（Bool flag 上不会残留 Int 数字）
+                    }
+                    _pendingFlag = newFlag;
+                    _pendingOp = newOp;
+                    TryCommitAndRefresh();
                 });
                 section.Add(flagPopup);
             }
@@ -450,12 +546,21 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 Mathf.Max(0, opDisplayChoices.IndexOf(opDisplay)));
             opPopup.AddToClassList("vn-insp-field");
             opPopup.tooltip = BuildParamTooltip(condParam);
-            opPopup.SetEnabled(!string.IsNullOrEmpty(flag)); // flag 未选 → 操作符不可用
+            opPopup.SetEnabled(!string.IsNullOrEmpty(flag));
             opPopup.RegisterValueChangedCallback(evt =>
             {
-                MergeFlagCondition(view, info, flag, OpKeyFromDisplay(evt.newValue),
-                    condValue, keepQuotes);
-                Refresh(); // 操作符变了 → 值控件显示/隐藏、候选变化
+                string newOpKey = OpKeyFromDisplay(evt.newValue);
+                // 若新 op 对当前 flag 类型不合法 → 回退直判 + 清 value 残留
+                FlagType t;
+                if (!string.IsNullOrEmpty(_pendingFlag) &&
+                    ParamCandidateProvider.TryGetFlagType(_pendingFlag, out t) &&
+                    !IsOpAllowed(newOpKey, t))
+                {
+                    newOpKey = "";
+                    _pendingValue = "";
+                }
+                _pendingOp = newOpKey;
+                TryCommitAndRefresh();
             });
             condRow.Add(opPopup);
 
@@ -466,29 +571,53 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     // bool flag：值为 true/false 下拉（序列化为 flag == true / != false）
                     var valueChoices = new List<string> { "true", "false" };
                     var valuePopup = new PopupField<string>("值", valueChoices,
-                        Mathf.Max(0, valueChoices.IndexOf(condValue.ToLowerInvariant())));
+                        Mathf.Max(0, valueChoices.IndexOf((condValue ?? "").ToLowerInvariant())));
                     valuePopup.AddToClassList("vn-insp-field");
                     valuePopup.tooltip = "布尔比较值";
                     valuePopup.RegisterValueChangedCallback(evt =>
                     {
-                        MergeFlagCondition(view, info, flag, opKey, evt.newValue, keepQuotes);
+                        _pendingValue = evt.newValue ?? "";
+                        TryCommit();
                     });
                     condRow.Add(valuePopup);
                 }
                 else
                 {
                     // 数值 / 字符串 / 未注册：自由文本（字符串类型序列化时自动加引号）
-                    var valueField = new TextField("值") { value = condValue };
+                    var valueField = new TextField("值") { value = condValue ?? "" };
                     valueField.AddToClassList("vn-insp-field");
                     valueField.tooltip = flagRegistered && flagType == FlagType.String
                         ? "字符串值（写入时自动加双引号，值内含逗号也可正确解析）"
                         : "比较值（数值或字符串）";
+                    // 实时同步 pending：每次按键 ChangeEvent 都把 valueField.value 镜像到 _pendingValue，
+                    // 保证 op 切换 / 外部 Refresh 时拿到最新输入。
+                    valueField.RegisterCallback<ChangeEvent<string>>(evt =>
+                    {
+                        _pendingValue = evt.newValue ?? "";
+                    });
+                    // 失焦时统一提交 + 刷新 Inspector 预览：
+                    //   不能用 `valueField.value == _pendingValue` 作 early-return——
+                    //   ChangeEvent 已经把 _pendingValue 镜像成当前 value，两者必然相等，
+                    //   那样就永远不会 TryCommit，args 永远是旧值。SetParamValue 内部有相等性
+                    //   防护（args 没真变就不写不广播 OnValueChanged），这里直接提交是安全的。
+                    //   同时 Refresh 让 Inspector 自己「本节点序列化结果」label 与 args 同步显示。
                     valueField.RegisterCallback<FocusOutEvent>(_ =>
                     {
-                        if (valueField.value == condValue) return;
-                        MergeFlagCondition(view, info, flag, opKey, valueField.value, keepQuotes);
+                        _pendingValue = valueField.value ?? "";
+                        TryCommitAndRefresh();
                     });
                     condRow.Add(valueField);
+                }
+
+                // 半成品状态：选了比较 op 但 value 未填 → UI 提示用户补完
+                // 这是用户原 bug 截图位置：flag/op/value 任何一个控件选了却没填值，
+                // 以前会写入损坏 cond 段；现在保留 args 不动并明确提示。
+                if (isHalfBaked)
+                {
+                    var needNote = new Label("⚠ 选择了比较操作符，请在「值」字段填入值（留空时本节点仅保留 flag，不会写入损坏的 cond 段）。");
+                    needNote.AddToClassList("vn-insp-note");
+                    needNote.AddToClassList("vn-insp-note--warn");
+                    condRow.Add(needNote);
                 }
             }
             else
@@ -502,9 +631,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             section.Add(condRow);
 
-            if (!string.IsNullOrEmpty(parseError))
+            // 入口清洗的警告（只在「本次进入时 args 已损坏」才显示，重建后消失）
+            if (!string.IsNullOrEmpty(entryParseError))
             {
-                var warn = new Label("条件表达式无法拆分（" + parseError + "），已按原文保留在 flag 字段。");
+                var warn = new Label("原条件表达式无法解析（" + entryParseError +
+                    "），已清空 cond 段，请重新选择 flag 并设置条件。");
                 warn.AddToClassList("vn-insp-note");
                 warn.AddToClassList("vn-insp-note--warn");
                 section.Add(warn);
@@ -527,6 +658,125 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
 
             _root.Add(section);
+        }
+
+        /// <summary>
+        /// 把 cond 段单独拆解为 (flag/op/condValue/keepQuotes/parseError)。
+        /// 任何失败路径都把 parseError 留出来给调用方用于诊断 + 清洗。
+        /// </summary>
+        private static void ParseConditionField(string rawCond,
+            out string flag, out string opKey, out string condValue, out bool keepQuotes,
+            out string parseError)
+        {
+            flag = "";
+            opKey = "";
+            condValue = "";
+            keepQuotes = false;
+            parseError = null;
+
+            if (string.IsNullOrEmpty(rawCond)) return;
+
+            ConditionParser.Condition cond;
+            string error;
+            if (ConditionParser.TryParse(rawCond, out cond, out error))
+            {
+                flag = cond.Name ?? "";
+                keepQuotes = cond.ValueIsQuoted;
+                opKey = cond.Negated ? "!" : (cond.Op ?? "");
+                condValue = cond.Value ?? "";
+            }
+            else
+            {
+                parseError = error;
+            }
+        }
+
+        /// <summary>
+        /// cond 段无法解析时，把该段强制置空（保留后续段），让后续每次 Refresh 不再陷入污染路径。
+        /// 之前在 BuildFlagConditionParams 内部隐式触发（Parse 失败 fallback 显示 raw text），
+        /// 现在显式化为入口清洗 + 警告，更可控。
+        /// </summary>
+        private static void NormalizeBrokenConditionSegment(CommandNodeView view,
+            VNCommandInfo info, List<string> values)
+        {
+            var newValues = new List<string>(values);
+            newValues[0] = ""; // cond 段置空
+
+            // 尾空裁剪（与 SetParamValue 保持一致——避免出现 "jumpif(,,1002)" 这种污染）
+            while (newValues.Count > 0 && string.IsNullOrWhiteSpace(newValues[newValues.Count - 1]))
+                newValues.RemoveAt(newValues.Count - 1);
+
+            var sb = new StringBuilder();
+            for (int i = 0; i < newValues.Count; i++)
+            {
+                if (i > 0) sb.Append(info.ArgSeparator);
+                sb.Append(newValues[i].Trim());
+            }
+            string newArgs = sb.ToString();
+            if (view.Data.Args == newArgs) return;
+
+            view.Data.Args = newArgs;
+            view.RefreshParameters();
+            // 不主动触发 OnValueChanged：清洗是表单自我修复，避免脏文本广播给其他订阅者
+        }
+
+        /// <summary>
+        /// 按当前 pending「如果真要写回 args」预期会生成的 cond 段。
+        /// 用于检测 UI pending 状态与 args 是否同步——外部手动改 args 时，
+        /// 预期段与实际段不一致就会触发 pending 重置。
+        /// 半成品（比较 op + 空 value）按直判形态算：与 args 中此刻的实际存储一致。
+        /// </summary>
+        private static string BuildExpectedConditionExpr(string flag, string opKey,
+            string value, bool keepQuotes)
+        {
+            if (string.IsNullOrEmpty(flag)) return "";
+            if (string.IsNullOrEmpty(opKey)) return flag;
+            if (opKey == "!") return "!" + flag;
+            if (IsComparisonOp(opKey) && string.IsNullOrEmpty(value)) return flag;
+
+            bool quote = keepQuotes;
+            FlagType t;
+            if (ParamCandidateProvider.TryGetFlagType(flag, out t) && t == FlagType.String)
+                quote = true;
+            return flag + " " + opKey + (quote ? " \"" + (value ?? "") + "\"" : " " + (value ?? ""));
+        }
+
+        /// <summary>判断字符串看起来是否像合法 flag 标识符（仅字母/数字/_）。</summary>
+        private static bool IsLikelyFlagIdentifier(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (char.IsLetterOrDigit(c) || c == '_') continue;
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 从损坏的 cond 段「最佳努力」提取 flag 名：在第一个运算符或 ! 前缀处截断。
+        /// 用于入口清洗场景——让用户在重建条件时不必重输 flag。仅启发用，不写回 args。
+        /// 例：`"NewFlag1 >="` → `"NewFlag1"`，`"!OldFlag"` → `"OldFlag"`，`"a>=b"` → `"a"`。
+        /// </summary>
+        private static string ExtractBestEffortFlag(string rawCond)
+        {
+            if (string.IsNullOrEmpty(rawCond)) return "";
+
+            // 先匹配双字符比较符，再单字符（避免 ">=" 被截成 ">"）
+            string[] operators = { ">=", "<=", "==", "!=", ">", "<" };
+            foreach (string op in operators)
+            {
+                int idx = rawCond.IndexOf(op, StringComparison.Ordinal);
+                if (idx > 0) return rawCond.Substring(0, idx).Trim();
+            }
+
+            // 没匹配上比较符 → 可能是 "!flag" 取反直判
+            string s = rawCond.TrimStart();
+            if (s.StartsWith("!", StringComparison.Ordinal))
+                return s.Substring(1).TrimStart();
+
+            return rawCond.Trim();
         }
 
         /// <summary>

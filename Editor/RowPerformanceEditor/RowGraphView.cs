@@ -479,10 +479,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (ReferenceEquals(a, b)) return false;
             if (a.IsConfirmChain != b.IsConfirmChain) return false;
 
-            // 终端锚点 Single 容量：锚点边（Start→链头 / 链尾→End）只能有一条，
-            // 已占用时拒绝新连线（用户应先断开旧的）。
-            if (a is TerminalNodeView && a.OutputPort != null && a.OutputPort.connected) return false;
-            if (b is TerminalNodeView && b.InputPort != null && b.InputPort.connected) return false;
+            // Terminal 锚点：按 capacity 区分容量拦截。
+            //   - Single 容量端口（LineStart.出 / LineExit.入 / OnConfirmEntry.出）：已占用拒绝，
+            //     避免用户多次拖线产生多条入口/出口边（结构上只能一条）。
+            //   - Multi 容量端口（OnConfirmExit.入）：多条入边合法，是出口段的自然汇合点，
+            //     自动布局 AddEdge 直接写多边没事；之前用 Single 时手动连线只能连一条
+            //     （Port.connected = true 即拒绝），现在按 capacity 区分放行 Multi。
+            // 注意：Port.connected 反映"是否有任意边连到"，不能用作 Single/Multi 区分。
+            if (a is TerminalNodeView && a.OutputPort != null && a.OutputPort.connected
+                && a.OutputPort.capacity == Port.Capacity.Single) return false;
+            if (b is TerminalNodeView && b.InputPort != null && b.InputPort.connected
+                && b.InputPort.capacity == Port.Capacity.Single) return false;
 
             // R11：choice 节点连线。
             // 起点是 choice：每个选项端口/主延续端口只容一条边；choice 不参与插入改写。
@@ -507,6 +514,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (!aOutMulti && a.OutputPort != null && a.OutputPort.connected) return false;
 
             // B 输入侧：入边空闲 → 直连放行。
+            //   注意：Terminal 节点的 InputPort 已在上面 line 491-492 按 capacity 区分过
+            //   （Single 占用拒绝 / Multi 放行），这里再走 "入边已占拒绝" 会二次误拦
+            //   Multi 端口的第二条入边（OnConfirmExit 允许多 flow command 终结）——必须直接放行。
+            if (b is TerminalNodeView) return true;
             if (!(b is CommandNodeView)) return b.InputPort == null || !b.InputPort.connected;
             if (b.InputPort == null || !b.InputPort.connected) return true;
 
@@ -840,7 +851,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 {
                     if (pair.Key == ChoicePort.Main) { hasMain = true; break; }
                 }
-                if (!hasMain) return true; // 主链 choice（无主延续）也算 sink
+                // 主链 choice 节点本身就是 FlowCommand（弹出选项等待玩家点击）——
+                // 选项链内自带 jump/jumpif/loadscript/choice 等 flow command 时，
+                // 玩家点击任意选项都会跳转走，主链在 choice 处自然终止。
+                // 即使没有主延续边（Main 端口未连），nextline 也永远不会被执行——
+                // 视为 FlowCommand 终结，不算 sink。
+                // 修正前：无主延续 → 当作 sink → 错误显示 nextline 模板节点，
+                //   让作者误以为「执行完选项链后会推进下一行」。
+                if (!hasMain) continue; // 主链 choice 无主延续 = 主链自然终止
             }
             return false;
         }

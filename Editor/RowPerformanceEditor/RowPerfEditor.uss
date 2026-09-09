@@ -801,14 +801,10 @@
     background-color: #F0BA78;
 }
 
-/* 主延续端口（节点右上角） */
-.vn-choice-mainport-slot {
-    flex-shrink: 0;
-    margin-left: auto;
-    margin-right: 4px;
-    width: 14px;
-    height: 14px;
-}
+/* 主延续端口（choice 节点）：在 titleContainer 内 inline absolute 定位到 title 右上角。
+   位置由 ChoiceNodeView.Build() 直接用 inline style 设置（top:6 / right:8 / left:auto），
+   USS 只控制连接器颜色。不挂 outputContainer 是为了与 option port（mainContainer 内）
+   y 区域分开，避免视觉重叠。 */
 
 .vn-port-choice-main > #connector {
     border-color: #1A1A1A;

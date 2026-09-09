@@ -213,6 +213,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 && Info.Parameters[1].Type == VNParamType.FlagCondition;
 
             string condFlag = null, condOp = null, condValue = null;
+            // 仅在本方法内使用的临时变量；Parse 失败时把诊断信息塞进 flag chip 的 tooltip，
+            // 不污染 chip 的可视值（修复前会把 "NewFlag1 >=" 这种半成品直接渲染到 chip 上）。
+            string conditionParseError = null;
+            string conditionRawText = null;
             if (condFamily && values.Count > 0)
             {
                 ConditionParser.Condition cond;
@@ -225,9 +229,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 }
                 else
                 {
-                    condFlag = values[0].Trim(); // 无法拆分 → 原文兜底
+                    // 无法拆分 → flag/chip 都留空，仅在 tooltip 提示原文 + 错误原因。
+                    condFlag = null;
                     condOp = null;
                     condValue = null;
+                    conditionParseError = error;
+                    conditionRawText = values[0].Trim();
                 }
             }
 
@@ -260,6 +267,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 var row = new VisualElement();
                 row.AddToClassList("vn-param-row");
                 row.tooltip = BuildParamTooltip(p, value);
+
+                // 条件族 flag chip 在 cond 解析失败时，把原文 + 错误码附加到 tooltip，
+                // 让用户能定位 / 修复，但**不**污染可视化值（修复前的污染：chip 直接显示 "NewFlag1 >="）。
+                if (condFamily && i == 0 && conditionParseError != null)
+                {
+                    row.tooltip = (row.tooltip ?? "") +
+                        "\n—— 条件段无法解析 ——" +
+                        "\n原文: " + (conditionRawText ?? "") +
+                        "\n错误: " + conditionParseError;
+                }
 
                 var key = new Label(p.Name + ":");
                 key.AddToClassList("vn-param-key");
