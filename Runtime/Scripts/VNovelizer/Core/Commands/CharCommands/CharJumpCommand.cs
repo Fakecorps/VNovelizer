@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Compat;
 using VNovelizer.Core.Commands.Meta;
 using VNovelizer.Core.Theater;
 
@@ -8,8 +9,9 @@ namespace VNovelizer.Core.Commands
 {
     /// <summary>
     /// 角色跳跃命令（剧场层实现）
-    /// 格式：charjump(位置, [时长], [次数], [高度px])
+    /// 格式：charjump(位置, [时长], [次数], [高度px], [InEase], [OutEase])
     /// 高度为剧本像素语义。多实例并行：token 列表登记全部活动跳跃。
+    /// R13：InEase 调制跳跃高度包络（sin 抛物线与曲线逐帧相乘；缺省=纯 sin，行为不变）。
     /// </summary>
     [VNCommandMeta(VNCommandCategory.Performance,
         "角色跳跃动画（不继承：下一行自动归位；要求同行对应立绘列已填）")]
@@ -23,6 +25,10 @@ namespace VNovelizer.Core.Commands
             Optional = true, Description = "跳跃次数")]
         [VNParam(3, "height", VNParamType.Float, Min = 0f, Max = 500f, Default = "30",
             Optional = true, Description = "跳跃高度（剧本像素）")]
+        [VNParam(4, "inEase", VNParamType.Enum, Options = EaseArgParser.InEaseOptions,
+            Optional = true, Description = "高度包络曲线（可选；缺省=纯 sin 抛物线，只填一个=进出同曲线）")]
+        [VNParam(5, "outEase", VNParamType.Enum, Options = EaseArgParser.OutEaseOptions,
+            Optional = true, Description = "退出曲线（跳跃无进出阶段，保留对称写法，忽略）")]
         public override string CommandName { get { return "charjump"; } }
 
         private float defaultDuration = 0.4f;
@@ -65,6 +71,9 @@ namespace VNovelizer.Core.Commands
             if (parts.Length >= 3) int.TryParse(parts[2].Trim(), out times);
             if (parts.Length >= 4) float.TryParse(parts[3].Trim(), out height);
 
+            // R13：解析 [InEase, OutEase]；未指定 = 纯 sin 包络（与旧行为一致）
+            var easeArgs = EaseArgParser.ParseAt(parts, 4);
+
             var theater = TheaterManager.GetInstance();
             var actor = theater.GetActor(posCode);
             if (actor == null) yield break;
@@ -90,7 +99,11 @@ namespace VNovelizer.Core.Commands
                         if (theater.GetActor(posCode) == null) yield break; // 演员被移除
                         elapsed += Time.deltaTime;
                         float t = elapsed / duration;
-                        float yOffset = Mathf.Sin(t * Mathf.PI) * height;
+                        // R13：ease 调制高度包络（未指定时不参与，保持纯 sin 原行为）
+                        float envelope = easeArgs.HasIn || easeArgs.HasOut
+                            ? EaseEvaluator.Evaluate(easeArgs.In ?? easeArgs.Out ?? Ease.Linear, t)
+                            : 1f;
+                        float yOffset = Mathf.Sin(t * Mathf.PI) * height * envelope;
                         theater.SetPosition(posCode, new Vector2(startPos.x, startPos.y + yOffset));
                         yield return null;
                     }

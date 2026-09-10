@@ -87,16 +87,36 @@ namespace VNovelizer.Core.Commands.SystemCommands
         public override bool Execute(string args)
         {
             if (!ResolveArgs(args, out string slotId, out string charRef)) return false;
-
-            VNManager.GetInstance().SysShowCharacter(slotId, charRef);
-            return true;
+            return ExecuteResolved(slotId, charRef);
         }
 
         public override void Simulate(string args)
         {
             if (!ResolveArgs(args, out string slotId, out string charRef)) return;
 
+            // 自由角色：预演直接走剧场层（注册状态由 addChar.Simulate 先行建立）
+            if (TheaterManager.GetInstance().IsFreeChar(slotId))
+            {
+                TheaterManager.GetInstance().ShowFreeChar(slotId, charRef);
+                return;
+            }
+
             VNManager.GetInstance().SysSimulateCharacter(slotId, charRef);
+        }
+
+        /// <summary>
+        /// R14：自由角色分流。posID 由 addChar 注册后不进入 VNManager 五槽字典——
+        /// 走剧场层直接路径（ShowFreeChar），避免经事件路径时
+        /// OnShowCharacter 的 SlotBasePositions 按标准槽位取值抛 KeyNotFound。
+        /// charRef 为空 = 沿用注册时的立绘引用。
+        /// </summary>
+        private static bool ExecuteResolved(string slotId, string charRef)
+        {
+            if (TheaterManager.GetInstance().IsFreeChar(slotId))
+                return TheaterManager.GetInstance().ShowFreeChar(slotId, charRef);
+
+            VNManager.GetInstance().SysShowCharacter(slotId, charRef);
+            return true;
         }
     }
 }

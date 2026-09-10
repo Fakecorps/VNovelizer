@@ -2,6 +2,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using VNovelizer.Core.Commands;
+using VNovelizer.Core.Compat;
 using VNovelizer.Core.Diagnostics;
 using VNovelizer.Core.Localization;
 using System;
@@ -341,10 +342,14 @@ namespace VNovelizer.Core.API
                 _activeVideo = null;
             }
         }
-        public static void ShowPrompt(string text, float duration)
+        /// <summary>
+        /// 显示屏幕提示（浮入浮出）。<paramref name="inEase"/>/<paramref name="outEase"/>
+        /// 为 null 时由面板沿用现状曲线（浮入 OutQuad/OutBack、浮出 InQuad）。
+        /// </summary>
+        public static void ShowPrompt(string text, float duration, Ease? inEase = null, Ease? outEase = null)
         {
             var panel = GetPanel();
-            if (panel != null) panel.ShowPrompt(text, duration);
+            if (panel != null) panel.ShowPrompt(text, duration, inEase, outEase);
         }
         #region Game Flow Control
 

@@ -1145,7 +1145,12 @@ public class VNGameplayPanel : BasePanel
     }
 
 
-    public void ShowPrompt(string text, float duration)
+    /// <summary>
+    /// 显示屏幕提示（浮入浮出）。
+    /// R13：<paramref name="inEase"/> 指定时同时作用于淡入与位移（覆盖现状 OutQuad/OutBack 分工）；
+    /// <paramref name="outEase"/> 指定时同时作用于淡出与移出；两者为 null 时保持现状曲线。
+    /// </summary>
+    public void ShowPrompt(string text, float duration, Ease? inEase = null, Ease? outEase = null)
     {
         if (promptPrefab == null || promptContainer == null) return;
 
@@ -1168,13 +1173,18 @@ public class VNGameplayPanel : BasePanel
         float width = rect.sizeDelta.x;
         rect.anchoredPosition = new Vector2(-width, rect.anchoredPosition.y);
 
+        // R13：缺省沿用现状（透明度 OutQuad + 位移 OutBack 回弹）；显式指定则统一用该曲线
+        Ease inAlphaEase = inEase ?? Ease.OutQuad;
+        Ease inMoveEase = inEase ?? Ease.OutBack;
+        Ease outEaseResolved = outEase ?? Ease.InQuad;
+
         // 3. 进场动画 (移入 + 淡入)
         AnimationCompat.CreateSequence()
-            .Group(AnimationCompat.Alpha(cg, 1, 0.5f, Ease.OutQuad))
-            .Group(AnimationCompat.AnchoredPositionX(rect, 0, 0.5f, Ease.OutBack)) // 带点回弹
+            .Group(AnimationCompat.Alpha(cg, 1, 0.5f, inAlphaEase))
+            .Group(AnimationCompat.AnchoredPositionX(rect, 0, 0.5f, inMoveEase)) // 带点回弹
             .ChainDelay(duration) // 停留时间
-            .Chain(AnimationCompat.Alpha(cg, 0, 0.5f, Ease.InQuad)) // 淡出
-            .Group(AnimationCompat.AnchoredPositionX(rect, -width, 0.5f, Ease.InQuad)) // 移出
+            .Chain(AnimationCompat.Alpha(cg, 0, 0.5f, outEaseResolved)) // 淡出
+            .Group(AnimationCompat.AnchoredPositionX(rect, -width, 0.5f, outEaseResolved)) // 移出
             .OnComplete(() => Destroy(go)); // 销毁
     }
     #endregion

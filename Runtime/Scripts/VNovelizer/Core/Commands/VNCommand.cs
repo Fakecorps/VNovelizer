@@ -172,6 +172,8 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new SetIntFlagCommand());
             RegisterCommand(new SetStringFlagCommand());
             RegisterCommand(new CharJumpCommand());
+            RegisterCommand(new AddCharCommand());
+            RegisterCommand(new RemoveCharCommand());
             RegisterCommand(new ChoiceCommand());
             RegisterCommand(new BgFadeCommand());
             RegisterCommand(new SetTextSpeedCommand());

@@ -68,8 +68,10 @@ namespace VNovelizer.Core.Compat
     public static class AnimationCompat
     {
 #if PRIME_TWEEN_INSTALLED
-        // Ease → Easing：PrimeTween 1.4.11 提供 Ease → Easing 隐式转换
-        private static Easing E(Ease e) => (PrimeTween.Ease)(int)e;
+        // Ease → Easing：PrimeTween 1.4.11 提供 Ease → Easing 隐式转换。
+        // 数值映射：本项目 Ease 枚举对齐 DOTween（Default=-1, Linear=0 ... InOutBounce=30），
+        // PrimeTween 整体偏移 +1（Default=0, Linear=1 ... InOutBounce=31），统一 +1 即正确对应。
+        private static Easing E(Ease e) => (PrimeTween.Ease)((int)e + 1);
 #endif
 
         // ==== Alpha (CanvasGroup) ====

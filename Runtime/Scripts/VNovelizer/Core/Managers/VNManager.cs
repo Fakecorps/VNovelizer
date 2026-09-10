@@ -426,6 +426,9 @@ public class VNManager : BaseManager<VNManager>
         ResetState();
         VNAPI.ClearAllEffects(); // 物理清空
         activeEffects.Clear();
+        // R14：快进/读档/跳行/换剧本重放前清空自由角色——随后 addChar 行会被重新 Simulate 注册。
+        // 否则"跳行目标之前没有 addChar"时，上一段剧情注册的自由角色会残留污染状态。
+        TheaterManager.GetInstance().ClearFreeChars();
         if (targetIndex <= 0)
         {
             // 无预演内容：按"重建结果为空"处理 BGM（等价于旧版 ResetState 内 StopBGM 的语义，

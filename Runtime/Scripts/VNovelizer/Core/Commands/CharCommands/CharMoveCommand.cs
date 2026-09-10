@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Compat;
 using VNovelizer.Core.Commands.Meta;
 using VNovelizer.Core.Theater;
 
@@ -8,11 +9,12 @@ namespace VNovelizer.Core.Commands
 {
     /// <summary>
     /// 角色移动命令（剧场层实现）
-    /// 格式：charmove(位置, 目标位置X, 目标位置Y, [移动时间])
+    /// 格式：charmove(位置, 目标位置X, 目标位置Y, [移动时间], [InEase], [OutEase])
     /// 坐标为剧本像素语义（1920x1080 参考，原点=画面中心）——与旧 anchoredPosition 语义一致。
     /// 注意：此命令不继承，执行下一行时会自动恢复到默认位置（OnShowCharacter 重置槽位基准）。
     ///
     /// 并发安全：token 列表登记活动动画（命令链 [charmove(L,...) & charmove(M,...)] 并行场景）。
+    /// R13：InEase=移动曲线（默认 Linear）；OutEase 保留对称写法（无离场阶段，忽略）。
     /// </summary>
     [VNCommandMeta(VNCommandCategory.Performance,
         "移动角色到指定坐标（不继承：下一行自动归位；要求同行对应立绘列已填）")]
@@ -26,6 +28,10 @@ namespace VNovelizer.Core.Commands
             Description = "目标 Y（剧本像素，原点=画面中心）")]
         [VNParam(3, "duration", VNParamType.Float, Min = 0f, Max = 10f, Default = "0.5",
             Optional = true, Description = "移动秒数")]
+        [VNParam(4, "inEase", VNParamType.Enum, Options = EaseArgParser.InEaseOptions,
+            Optional = true, Description = "移动曲线（可选，默认 Linear；只填一个=进出同曲线）")]
+        [VNParam(5, "outEase", VNParamType.Enum, Options = EaseArgParser.OutEaseOptions,
+            Optional = true, Description = "退出曲线（本命令无离场阶段，仅保留对称写法，忽略）")]
         public override string CommandName { get { return "charmove"; } }
 
         private float defaultDuration = 0.5f;
@@ -67,6 +73,10 @@ namespace VNovelizer.Core.Commands
             float duration = defaultDuration;
             if (parts.Length >= 4) float.TryParse(parts[3].Trim(), out duration);
 
+            // R13：解析 [InEase, OutEase]（只填一个 = 进出同曲线）；移动是进场动画，In 槽生效
+            var easeArgs = EaseArgParser.ParseAt(parts, 4);
+            Ease ease = easeArgs.In ?? easeArgs.Out ?? Ease.Linear;
+
             var theater = TheaterManager.GetInstance();
             var actor = theater.GetActor(posCode);
             if (actor == null)
@@ -80,7 +90,7 @@ namespace VNovelizer.Core.Commands
             _activeMoves.Add(posCode);
             try
             {
-                yield return actor.MoveAsync(target, duration);
+                yield return actor.MoveAsync(target, duration, ease);
             }
             finally
             {
@@ -113,9 +123,13 @@ namespace VNovelizer.Core.Commands
             string[] parts = args.Split(',');
             if (parts.Length < 3) return;
 
-            string posCode = parts[0].Trim();
+            string posCode = TheaterManager.NormalizePosCode(parts[0]);
+            if (posCode == null) return;
+
+            // R14：自由角色（addChar）豁免五槽立绘列检查——其数据源是剧场注册表
+            bool isFreeChar = TheaterManager.GetInstance().IsFreeChar(posCode);
             string charData = VNManager.GetInstance().GetCharacterData(posCode);
-            if (string.IsNullOrEmpty(charData) || charData == "hide")
+            if (!isFreeChar && (string.IsNullOrEmpty(charData) || charData == "hide"))
             {
                 Debug.LogWarning($"[CharMove.Simulate] 位置 {posCode} 没有角色，跳过移动");
                 return;

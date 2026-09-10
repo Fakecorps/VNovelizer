@@ -37,8 +37,13 @@ namespace VNovelizer.Core.Commands
             var vnManager = VNManager.GetInstance();
             var theater = TheaterManager.GetInstance();
 
+            // R14：自由角色（addChar）的翻转状态源是剧场 ActorState.scaleX（不进 VNManager 字典）
+            bool isFreeChar = theater.IsFreeChar(posCode);
+
             // 1. 确定翻转方向（基于当前状态符号，与旧实现语义一致）
-            float currentScaleX = vnManager.GetCharacterScaleX(posCode);
+            float currentScaleX = isFreeChar
+                ? (theater.GetState(posCode)?.scaleX ?? 1f)
+                : vnManager.GetCharacterScaleX(posCode);
             float targetScaleX;
 
             if (parts.Length > 1)
@@ -59,7 +64,8 @@ namespace VNovelizer.Core.Commands
             }
 
             // 2. 更新数据状态（Simulate 与 Execute 共享的唯一事实源）
-            vnManager.SetCharacterScaleX(posCode, targetScaleX);
+            if (!isFreeChar)
+                vnManager.SetCharacterScaleX(posCode, targetScaleX);
 
             // 3. 应用到剧场（演员不在台时只更新数据，登台时 OnShowCharacter 会读取）
             var state = theater.GetState(posCode);
@@ -82,14 +88,21 @@ namespace VNovelizer.Core.Commands
             string posCode = TheaterManager.NormalizePosCode(parts[0]);
             if (posCode == null) return;
 
+            // R14：自由角色（addChar）豁免五槽立绘列检查——其数据源是剧场注册表
+            bool isFreeChar = TheaterManager.GetInstance().IsFreeChar(posCode);
             string charData = VNManager.GetInstance().GetCharacterData(posCode);
-            if (string.IsNullOrEmpty(charData) || charData == "hide")
+            if (!isFreeChar && (string.IsNullOrEmpty(charData) || charData == "hide"))
             {
                 Debug.LogWarning($"[CharFlip.Simulate] 位置 {posCode} 没有角色，跳过翻转");
                 return;
             }
 
-            float currentScaleX = VNManager.GetInstance().GetCharacterScaleX(posCode);
+            // R14：自由角色的翻转状态源是剧场 ActorState.scaleX
+            var theater = TheaterManager.GetInstance();
+
+            float currentScaleX = isFreeChar
+                ? (theater.GetState(posCode)?.scaleX ?? 1f)
+                : VNManager.GetInstance().GetCharacterScaleX(posCode);
             float targetScaleX;
             if (parts.Length > 1)
             {
@@ -103,7 +116,10 @@ namespace VNovelizer.Core.Commands
                 targetScaleX = currentScaleX * -1f;
             }
 
-            VNManager.GetInstance().SetCharacterScaleX(posCode, targetScaleX);
+            if (isFreeChar)
+                theater.SetFlip(posCode, targetScaleX < 0f);
+            else
+                VNManager.GetInstance().SetCharacterScaleX(posCode, targetScaleX);
             Debug.Log($"[CharFlip.Simulate] 位置 {posCode} 翻转状态更新为: {targetScaleX}");
         }
     }

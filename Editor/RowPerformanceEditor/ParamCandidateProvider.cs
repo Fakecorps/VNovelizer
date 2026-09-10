@@ -30,9 +30,21 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             switch (param.Type)
             {
                 case VNParamType.Enum:
-                    return param.Options != null && param.Options.Length > 0
-                        ? param.Options.ToList()
-                        : null;
+                    {
+                        var opts = param.Options != null && param.Options.Length > 0
+                            ? param.Options.ToList()
+                            : null;
+                        // 约定：Options 切分后首项为空串时，首项渲染为「（无）」占位。
+                        // 用户选"无"→ 写入空字符串→ 命令解析器 TryParse("") 返回 false → 视作未指定
+                        // （与「不写该参数」等价）。SetParamValue 的尾空裁剪会把 args 收缩。
+                        if (opts != null && opts.Count > 0 && string.IsNullOrEmpty(opts[0]))
+                        {
+                            opts.RemoveAt(0);
+                            const string kNoneLabel = "（无）";
+                            if (!opts.Contains(kNoneLabel)) opts.Insert(0, kNoneLabel);
+                        }
+                        return opts;
+                    }
 
                 case VNParamType.Bool:
                     return new List<string> { "true", "false" };

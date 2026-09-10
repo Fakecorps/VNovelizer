@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using VNovelizer.Core.Compat;
 
 namespace VNovelizer.Core.Theater
 {
@@ -33,8 +34,9 @@ namespace VNovelizer.Core.Theater
                         float duration, float[] parameters);
 
         // ---- 异步动画（命令系统驱动，协程风格与 VNCommand 一致）----
-        IEnumerator FadeAsync(float targetAlpha, float duration);
-        IEnumerator MoveAsync(Vector2 targetPx, float duration);
+        // ease 缺省 Linear（与既有实现的线性插值行为一致，旧剧本 100% 不变）
+        IEnumerator FadeAsync(float targetAlpha, float duration, Ease ease = Ease.Linear);
+        IEnumerator MoveAsync(Vector2 targetPx, float duration, Ease ease = Ease.Linear);
         void Interrupt();                    // 跳过/中断时瞬间到终态
     }
 }

@@ -1,6 +1,8 @@
 /// <summary>
 /// 独立 Ease 枚举 — 始终可用，不依赖 PrimeTween。
-/// 整数值对齐常见 tween 库（DOTween/PrimeTween），确保跨包序列化兼容。
+/// 整数值对齐 DOTween（Default=-1, Linear=0 ... InOutBounce=30），确保跨包序列化兼容。
+/// 注意：PrimeTween 1.4.11 的 Ease 枚举整体偏移 +1（Default=0 ... InOutBounce=31），
+/// 转换至 PrimeTween 时需 +1，见 AnimationCompat.E()。
 /// </summary>
 namespace VNovelizer.Core.Compat
 {

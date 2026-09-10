@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Compat;
 using VNovelizer.Core.Diagnostics;
 
 namespace VNovelizer.Core.Theater
@@ -39,6 +40,9 @@ namespace VNovelizer.Core.Theater
         /// <summary>参考分辨率高</summary>
         public const float ReferenceHeight = 1080f;
 
+        /// <summary>自由角色（addChar 注册）默认深度：叠在全部标准槽位（1-5）之上</summary>
+        public const int FreeCharZOrder = 6;
+
         /// <summary>五槽位默认基准位置（剧本像素语义，原点=画面中心）</summary>
         private static readonly Dictionary<string, Vector2> SlotBasePositions = new Dictionary<string, Vector2>
         {
@@ -60,6 +64,12 @@ namespace VNovelizer.Core.Theater
 
         private readonly Dictionary<string, ActorState> _states = new Dictionary<string, ActorState>();
         private readonly Dictionary<string, IActor> _actors = new Dictionary<string, IActor>();
+
+        // --- 自由角色注册表（addChar 命令）---
+        // key = posID 小写（查找大小写不敏感），value = 原始 posID（演员 actorId）。
+        // 自由角色直接以 posID 作为 actorId 进入 _states/_actors——状态、动画、
+        // 存档导出（ExportStates）与标准槽位完全同构。
+        private readonly Dictionary<string, string> _freeChars = new Dictionary<string, string>();
 
         /// <summary>相机状态（剧场唯一事实源的一部分，随存档持久化）</summary>
         public readonly CameraState Camera = new CameraState();
@@ -323,8 +333,16 @@ namespace VNovelizer.Core.Theater
         /// 当前背景演员保持旧图；临时演员（不进状态字典）承载新图淡入；
         /// 完成后旧演员瞬间换新图、临时演员销毁。状态始终反映终态。
         /// 重入保护：新的 bgfade 会先强制完成上一次。
+        ///
+        /// <para>
+        /// <b>R13 ease 参数</b>：<paramref name="inEase"/> 控制新背景淡入曲线
+        /// （缺省 Linear，与旧实现一致）；<paramref name="outEase"/> 为 null 时
+        /// 旧背景保持不动（旧实现行为），指定时旧背景按该曲线同步淡出——
+        /// 不透明背景下两者视觉等价，透明背景可做真正的交叉淡化。
+        /// </para>
         /// </summary>
-        public IEnumerator FadeBackgroundCoroutine(string bgName, float duration)
+        public IEnumerator FadeBackgroundCoroutine(string bgName, float duration,
+            Ease inEase = Ease.Linear, Ease? outEase = null)
         {
             if (string.IsNullOrEmpty(bgName)) yield break;
 
@@ -378,7 +396,8 @@ namespace VNovelizer.Core.Theater
             _bgFadeTemp.SetVisible(true);
 
             bool finished = false;
-            _bgFadeRoutine = MonoManager.GetInstance().StartCoroutine(RunBgFade(duration, () => finished = true));
+            _bgFadeRoutine = MonoManager.GetInstance().StartCoroutine(
+                RunBgFade(duration, inEase, outEase, mainActor, () => finished = true));
             while (!finished && _bgFadeTemp != null) yield return null;
 
             // 已被更新的切换或强制取消接管：本协程不再触碰任何共享字段
@@ -402,7 +421,15 @@ namespace VNovelizer.Core.Theater
             _bgFadeRoutine = null;
         }
 
-        private IEnumerator RunBgFade(float duration, System.Action onDone)
+        /// <summary>
+        /// 背景交叉淡化驱动：
+        /// - 新图（临时演员）按 <paramref name="inEase"/> 淡入；
+        /// - <paramref name="outEase"/> 非 null 时旧图（主演员）按该曲线同步淡出，
+        ///   为 null 时旧图保持不动（与旧实现完全一致）。
+        /// 旧图 alpha 归位由完成/取消两条路径统一负责（SetAlpha 1f）。
+        /// </summary>
+        private IEnumerator RunBgFade(float duration, Ease inEase, Ease? outEase,
+            IActor oldActor, System.Action onDone)
         {
             if (duration <= 0f || _bgFadeTemp == null)
             {
@@ -414,7 +441,10 @@ namespace VNovelizer.Core.Theater
             while (elapsed < duration && _bgFadeTemp != null)
             {
                 elapsed += Time.deltaTime;
-                _bgFadeTemp.SetAlpha(Mathf.Clamp01(elapsed / duration));
+                float t = Mathf.Clamp01(elapsed / duration);
+                _bgFadeTemp.SetAlpha(EaseEvaluator.Evaluate(inEase, t));
+                if (outEase.HasValue && oldActor != null)
+                    oldActor.SetAlpha(1f - EaseEvaluator.Evaluate(outEase.Value, t));
                 yield return null;
             }
             onDone?.Invoke();
@@ -574,9 +604,134 @@ namespace VNovelizer.Core.Theater
             }
             _actors.Clear();
             _states.Clear();
+            _freeChars.Clear(); // 自由角色注册表随清场一并作废
 
             Camera.Reset();
             SceneCameraManager.GetInstance().ResetCamera();
+        }
+
+        #endregion
+
+        #region 自由角色（addChar / removeChar 命令）
+
+        /// <summary>
+        /// 注册自由角色（addChar）：仅登记（visible=false，不登台），
+        /// 由 showchar(posID) 展示。同名 posID（大小写不敏感）覆盖更新。
+        /// posID 直接作为演员 actorId 进入状态字典——动画、存档与标准槽位同构。
+        /// </summary>
+        public bool RegisterFreeChar(string posID, string charRef, Vector2 posPx, float scale)
+        {
+            if (string.IsNullOrWhiteSpace(posID))
+            {
+                Debug.LogError("[TheaterManager] addChar 的 posID 不能为空");
+                return false;
+            }
+
+            string key = posID.Trim();
+            string lower = key.ToLower();
+
+            // 保留名冲突：标准五槽位 / 背景演员 ID
+            if (NormalizeStandardPosCode(key) != null)
+            {
+                Debug.LogError($"[TheaterManager] addChar 的 posID \"{key}\" 与标准槽位冲突（L/ML/M/MR/R 为保留名）");
+                return false;
+            }
+            if (lower == MainBackgroundId.ToLower() || lower == BgFadeTempId.ToLower())
+            {
+                Debug.LogError($"[TheaterManager] addChar 的 posID \"{key}\" 是引擎保留名");
+                return false;
+            }
+            // 标识符安全：不含命令解析保留字符（逗号/括号/引号/管道/与号/空格）
+            if (key.IndexOfAny(new[] { ',', '(', ')', '"', '\'', '|', '&', ' ' }) >= 0)
+            {
+                Debug.LogError($"[TheaterManager] addChar 的 posID \"{key}\" 含非法字符（不允许 , ( ) 引号 | & 空格）");
+                return false;
+            }
+
+            if (_freeChars.TryGetValue(lower, out string existing) && existing != key)
+            {
+                Debug.LogWarning($"[TheaterManager] 自由角色 \"{existing}\" 被大小写变体 \"{key}\" 覆盖");
+                RemoveActor(existing);
+            }
+            _freeChars[lower] = key;
+
+            // 状态 + 渲染对象（隐藏登记）
+            EnsureActor(key, ActorKind.Character);
+            var state = GetState(key);
+            state.appearance = charRef ?? "";
+            state.position = posPx;
+            state.scale = Mathf.Max(scale, 0.0001f);
+            state.scaleX = 1f;
+            state.zOrder = FreeCharZOrder;
+            state.alpha = 1f;
+            state.visible = false;
+            ApplyState(key);
+
+            Debug.Log($"[TheaterManager] 注册自由角色 {key}: {charRef} @ ({posPx.x}, {posPx.y}) scale={state.scale}（隐藏，showchar({key}) 展示）");
+            return true;
+        }
+
+        /// <summary>注销并移除自由角色（removeChar）。未注册返回 false（打警告）。</summary>
+        public bool UnregisterFreeChar(string posID)
+        {
+            string key = posID?.Trim();
+            if (string.IsNullOrEmpty(key) || !_freeChars.Remove(key.ToLower()))
+            {
+                Debug.LogWarning($"[TheaterManager] removeChar: 未注册的自由角色 \"{posID}\"");
+                return false;
+            }
+            RemoveActor(key);
+            Debug.Log($"[TheaterManager] 移除自由角色 {key}");
+            return true;
+        }
+
+        /// <summary>
+        /// 清空全部自由角色（快进重放 / 换剧本 / 清场调用）。
+        /// 快进语义：FastForwardToLine 从头 Simulate，addChar 行会重新注册——
+        /// 此处先清是为了防止"跳行目标之前没有 addChar"的残留角色污染状态。
+        /// </summary>
+        public void ClearFreeChars()
+        {
+            if (_freeChars.Count == 0) return;
+            foreach (var key in new List<string>(_freeChars.Values))
+                RemoveActor(key);
+            _freeChars.Clear();
+        }
+
+        /// <summary>是否为已注册的自由角色（大小写不敏感）</summary>
+        public bool IsFreeChar(string posIdOrActorId)
+        {
+            if (string.IsNullOrWhiteSpace(posIdOrActorId)) return false;
+            return _freeChars.ContainsKey(posIdOrActorId.Trim().ToLower());
+        }
+
+        /// <summary>
+        /// 展示自由角色（showchar 的自由角色路径）：
+        /// <paramref name="charRef"/> 非空时先更新立绘引用（换表情/换装），
+        /// 为空沿用注册立绘；随后解析 Sprite 并登台（visible=true）。
+        /// </summary>
+        public bool ShowFreeChar(string posID, string charRef)
+        {
+            var state = GetState(posID);
+            if (state == null)
+            {
+                Debug.LogError($"[TheaterManager] showchar: 未注册的自由角色 \"{posID}\"（请先 addChar）");
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(charRef)) state.appearance = charRef;
+
+            var resolved = ResolveAppearance(state);
+            if (resolved == null)
+            {
+                Debug.LogError($"[TheaterManager] showchar: 自由角色 {posID} 立绘解析失败: {state.appearance}");
+                return false;
+            }
+
+            SetAppearance(posID, resolved);
+            SetVisible(posID, true);
+            Debug.Log($"[TheaterManager] 展示自由角色 {posID}: {state.appearance}");
+            return true;
         }
 
         #endregion
@@ -762,8 +917,8 @@ namespace VNovelizer.Core.Theater
 
         #region 工具
 
-        /// <summary>槽位全名/别名 → 标准 posCode（L/ML/M/MR/R），未知返回 null</summary>
-        public static string NormalizePosCode(string posCode)
+        /// <summary>标准五槽位全名/别名 → posCode（L/ML/M/MR/R），非标准槽位返回 null</summary>
+        public static string NormalizeStandardPosCode(string posCode)
         {
             if (string.IsNullOrEmpty(posCode)) return null;
             switch (posCode.Trim().ToLower())
@@ -787,6 +942,25 @@ namespace VNovelizer.Core.Theater
                 case "right": return "R";
                 default: return null;
             }
+        }
+
+        /// <summary>
+        /// 槽位解析（扩展版）：标准五槽位优先，其次查自由角色注册表（addChar 的 posID）。
+        /// 自由角色返回其原始 posID（即演员 actorId）；均不匹配返回 null。
+        /// 大小写不敏感。
+        /// </summary>
+        public static string NormalizePosCode(string posCode)
+        {
+            string standard = NormalizeStandardPosCode(posCode);
+            if (standard != null) return standard;
+
+            string raw = posCode?.Trim();
+            if (string.IsNullOrEmpty(raw)) return null;
+
+            var freeChars = GetInstance()._freeChars;
+            if (freeChars != null && freeChars.TryGetValue(raw.ToLower(), out string original))
+                return original;
+            return null;
         }
 
         #endregion

@@ -726,6 +726,9 @@
     min-height: 26px;
     border-top-left-radius: 5px;
     border-top-right-radius: 5px;
+    /* 左上角 total 输入端口（inline absolute left:6 宽约 16px）占位——
+       标题文字与角标右移避让，避免文字压在端口上导致点不中 */
+    padding-left: 26px;
 }
 
 .vn-choice .vn-node-title {
@@ -801,27 +804,43 @@
     background-color: #F0BA78;
 }
 
-/* 主延续端口（choice 节点）：在 titleContainer 内 inline absolute 定位到 title 右上角。
-   位置由 ChoiceNodeView.Build() 直接用 inline style 设置（top:6 / right:8 / left:auto），
-   USS 只控制连接器颜色。不挂 outputContainer 是为了与 option port（mainContainer 内）
-   y 区域分开，避免视觉重叠。 */
+/* 主延续端口（choice 节点）：放节点右下角「+」按钮左侧的独立区域，
+   位置由 ChoiceNodeView.Build() 直接用 inline style 设置（right:36 / bottom:8）。
+   用亮蓝色 + 加大尺寸与白/橙端口三色分明：白色=输入，橙色=选项输出，
+   亮蓝=主延续——一眼能区分三种端口的语义。 */
+
+.vn-port-choice-main {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    min-height: 18px;
+    max-width: 18px;
+    max-height: 18px;
+}
 
 .vn-port-choice-main > #connector {
+    width: 16px;
+    height: 16px;
+    border-width: 2px;
     border-color: #1A1A1A;
-    background-color: #8A8A8A;
+    background-color: #4A90D9;
 }
 
 .vn-port-choice-main > #connector > #cap {
-    background-color: #8A8A8A;
+    left: 4px;
+    top: 4px;
+    width: 6px;
+    height: 6px;
+    background-color: #4A90D9;
 }
 
 .vn-port-choice-main:hover > #connector {
-    background-color: #B0B0B0;
+    background-color: #6AB0F0;
     border-color: #FFFFFF;
 }
 
 .vn-port-choice-main:hover > #connector > #cap {
-    background-color: #B0B0B0;
+    background-color: #6AB0F0;
 }
 
 /* + 号按钮行 */

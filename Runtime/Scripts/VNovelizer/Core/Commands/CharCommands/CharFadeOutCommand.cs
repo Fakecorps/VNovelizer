@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Compat;
 using VNovelizer.Core.Theater;
 using VNovelizer.Core.Commands.Meta;
 
@@ -8,8 +9,9 @@ namespace VNovelizer.Core.Commands
 {
     /// <summary>
     /// 角色淡出命令（剧场层实现）
-    /// 格式：charfadeout(位置, [时长])
+    /// 格式：charfadeout(位置, [时长], [InEase], [OutEase])
     /// 淡出到 0 后隐藏并将透明度复位为 1（与旧行为一致：隐藏时归位 alpha）。
+    /// R13：OutEase=淡出曲线（默认 Linear）；InEase 保留对称写法（无进入阶段，忽略）。
     /// </summary>
     [VNCommandMeta(VNCommandCategory.Performance,
         "角色立绘淡出并隐藏（要求同行对应立绘列已填；多个淡出自动并行播放）")]
@@ -19,6 +21,10 @@ namespace VNovelizer.Core.Commands
             Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
         [VNParam(1, "duration", VNParamType.Float, Min = 0.05f, Max = 10f, Default = "0.5",
             Optional = true, Description = "淡出秒数（默认 0.5）")]
+        [VNParam(2, "inEase", VNParamType.Enum, Options = EaseArgParser.InEaseOptions,
+            Optional = true, Description = "进入曲线（本命令无进入阶段，仅保留对称写法，忽略）")]
+        [VNParam(3, "outEase", VNParamType.Enum, Options = EaseArgParser.OutEaseOptions,
+            Optional = true, Description = "淡出曲线（可选，默认 Linear；只填一个=进出同曲线）")]
         public override string CommandName { get { return "charfadeout"; } }
 
         private float defaultDuration = 0.5f;
@@ -45,6 +51,10 @@ namespace VNovelizer.Core.Commands
             float duration = defaultDuration;
             if (parts.Length > 1) float.TryParse(parts[1].Trim(), out duration);
 
+            // R13：解析 [InEase, OutEase]（只填一个 = 进出同曲线）；纯淡出只有 Out 阶段生效
+            var easeArgs = EaseArgParser.ParseAt(parts, 2);
+            Ease ease = easeArgs.Out ?? easeArgs.In ?? Ease.Linear;
+
             var theater = TheaterManager.GetInstance();
             var actor = theater.GetActor(posCode);
             if (actor == null) yield break;
@@ -55,7 +65,7 @@ namespace VNovelizer.Core.Commands
             _activeFades.Add(posCode);
             try
             {
-                yield return actor.FadeAsync(0f, duration);
+                yield return actor.FadeAsync(0f, duration, ease);
             }
             finally
             {

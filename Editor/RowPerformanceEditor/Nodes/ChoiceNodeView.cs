@@ -9,10 +9,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
     /// R11：choice 节点视图。
     ///
     /// <para>
-    /// 结构：左侧单入端口（主链）；节点体内垂直列出全部选项——
+    /// 结构：标题栏左上角是总输入端口（主链上游连入，白色）、节点右下角
+    /// 「+」按钮左侧是主延续端口（连 End 终端或另一个 choice 节点实现合并展示，
+    /// 亮蓝高对比——与选项端口的橙色三色分明）；节点体内垂直列出全部选项——
     /// 每行「序号 + 描述 + 右侧出端口」，出端口连出该选项的命令链；
     /// 未连线的端口 = 空链（点击后直接进入下一行）。
-    /// 标题栏右侧是主延续端口（连 End 终端或另一个 choice 节点实现合并展示）；
     /// 右下角 + 按钮即时新增选项（描述为空、端口未连），Inspector 亦可增删。
     /// </para>
     /// </summary>
@@ -60,36 +61,60 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 "choice 是流程命令：弹出选项后由玩家选择推进。\n" +
                 "主链上应位于末尾（其后只可接 End 终端或另一个 choice 节点合并展示）。");
 
-            // 输入端口（标准左侧单入）
-            InputPort = CreatePort(Direction.Input, Port.Capacity.Single);
-
-            // 主延续端口：挂到 titleContainer 内，用 inline absolute 定位到 title 右上角。
+            // 主延续端口：放节点右下角、「+」按钮左侧的独立区域。
             //
-            // 关键决策（与之前三个方案对比后确定）：
-            //   ① 放 mainContainer + absolute top:-32px → port 跑出节点边界外（视觉消失）
-            //   ② 放 outputContainer + USS .vn-choice.vn-node 覆盖 → port 在节点右上角出现，
-            //      但与 option port（mainContainer 第一行右侧）y 位置接近，视觉上重叠
-            //   ③ 放 titleContainer + absolute top:6 right:8 → port 在 title 内，
-            //      y=6~20，option port 在 mainContainer 内 y≈32+，完全不重叠 ✓
-            //
-            // EdgeConnector 是 Port 自身的 manipulator（TrickleDown 阶段响应），无论 port 在
-            // 哪个容器内都能响应 mouse down 启动拖线。Node 标题拖动会冒泡响应 mouse down，
-            // 通过 RegisterCallback<MouseDownEvent>(TrickleDown) StopPropagation 阻止
-            // 事件冒泡到 Node（不影响 EdgeConnector——它在 manipulator 阶段已先处理）。
+            // 之前在 titleContainer right:8（与「链尾」角标同侧、x 紧贴），
+            // 鼠标按下易命中角标 Label 而非端口，且 outputContainer 为空导致
+            // #top 高度塌陷（旧问题同 InputPort，但此处还有 badge 视觉挤压与
+            // z-order 干扰），表现为「主延续端口拖不出线」。
+            // 移到 mainContainer 右下后：
+            //   · y 落在选项行之下、「+」按钮左侧，x 不与任何已有元素重叠
+            //   · 与 InputPort（标题栏左上）形成「左上入 → 右下出」对角 flow，
+            //     符合 GraphView 阅读直觉
+            //   · 用 .vn-port-choice-main 的亮蓝色（与白/橙端口三色分明）突出
+            //     「主链延续」语义，避免与选项端口（橙）或输入端口（白）混淆
+            //   · Build 末尾 BringToFront 把它提到 mainContainer z-order 最上层，
+            //     防止被后加的 optionsContainer/addRow 覆盖
             MainOutputPort = InstantiateChoicePort(Direction.Output, Port.Capacity.Single,
                 "vn-port-choice-main");
             MainOutputPort.tooltip = "主链延续：通常连接 End 终端（执行完选项链后等待确认）；\n" +
                                      "连到另一个 choice 节点可实现「单行多选项合并展示」。";
-            // titleContainer 需要 position:relative 才能让内部 absolute 元素相对它定位
-            titleContainer.style.position = Position.Relative;
-            titleContainer.Add(MainOutputPort);
+            mainContainer.Add(MainOutputPort);
             MainOutputPort.style.position = Position.Absolute;
-            MainOutputPort.style.top = 6;
-            MainOutputPort.style.right = 8;
+            MainOutputPort.style.right = 36;   // 「+」按钮在 right:4 宽 20，端口 right:36 + 宽 14 → x 与 + 间隔 4px
+            MainOutputPort.style.bottom = 8;   // 与「+」按钮 bottom:3 大致对齐，独立于选项行
             MainOutputPort.style.left = StyleKeyword.Auto;
+            MainOutputPort.style.top = StyleKeyword.Auto;
             MainOutputPort.style.marginTop = 0;
+            // BringToFront 必须等 RebuildOptions/BuildAddButton 把 optionsContainer 与
+            // addRow 都加入 mainContainer 之后再调（见 Build 末尾），否则 addRow 后加
+            // 会反超 z-order 把端口盖住。
             // 阻止 Node 标题拖动手势截获 port 的 mouse down（TrickleDown 阶段，在 EdgeConnector 之后）
             MainOutputPort.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button == 0) evt.StopPropagation();
+            }, TrickleDown.TrickleDown);
+
+            // 输入端口（总入线）：与主延续端口对称，absolute 定位到标题栏左上角。
+            //
+            // 不能走标准 inputContainer：#top 高度由 input/output 容器内容决定，
+            // choice 的 outputContainer 为空（Node.RefreshPorts 会把它移出层级）、
+            // inputContainer 又是 absolute 不占流——#top 高度塌陷为 0。端口 top:50%
+            // 相对 0 高的 #top 被推到标题栏底缘，下半截伸进 mainContainer 的选项行区
+            // （选项行在 node-border 中 z-order 更高）被盖住，鼠标点不中端口、
+            // EdgeConnector 无法启动——表现为「总输入引脚拖不出线」。
+            // titleContainer 内 absolute 是 MainOutputPort 已验证的模式
+            // （EdgeConnector 是 port 自身 manipulator，与所在容器无关）。
+            InputPort = InstantiateChoicePort(Direction.Input, Port.Capacity.Single, null);
+            InputPort.tooltip = "总输入：主链上游连入（Line Entry / 前序命令 / 上游 choice）。";
+            InputPort.style.position = Position.Absolute;
+            InputPort.style.top = 6;
+            InputPort.style.left = 6;
+            InputPort.style.right = StyleKeyword.Auto;
+            InputPort.style.marginTop = 0;
+            titleContainer.Add(InputPort);
+            // 阻止 Node 标题拖动手势截获 port 的 mouse down（与 MainOutputPort 一致）
+            InputPort.RegisterCallback<MouseDownEvent>(evt =>
             {
                 if (evt.button == 0) evt.StopPropagation();
             }, TrickleDown.TrickleDown);
@@ -100,6 +125,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             RebuildOptions();
             BuildAddButton();
+
+            // Build 末尾再 BringToFront——之前在 Add 之后立刻 BringToFront，但此时
+            // optionsContainer / addRow 还没加，等它们加入 mainContainer 后 z-order
+            // 会反超 MainOutputPort。.vn-choice-addrow 是个 flex 占满底部宽的容器，
+            // 会把 right:36 bottom:8 的 MainOutputPort 整个压在下面，hit-test 命中
+            // 透明的 addRow 而非端口，EdgeConnector 不启动。必须等所有 sibling
+            // 落位后再提升到 mainContainer z-order 最上层。
+            MainOutputPort.BringToFront();
 
             RefreshExpandedState();
             RefreshPorts();

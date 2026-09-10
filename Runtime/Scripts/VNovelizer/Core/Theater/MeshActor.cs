@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using VNovelizer.Core.Compat;
 
 namespace VNovelizer.Core.Theater
 {
@@ -198,7 +199,7 @@ namespace VNovelizer.Core.Theater
             SetAppearance(next);
         }
 
-        public IEnumerator FadeAsync(float targetAlpha, float duration)
+        public IEnumerator FadeAsync(float targetAlpha, float duration, Ease ease = Ease.Linear)
         {
             if (!IsValid) yield break;
             InterruptFade();
@@ -213,19 +214,20 @@ namespace VNovelizer.Core.Theater
             }
 
             float start = _alpha;
-            _fadeRoutine = MonoManager.GetInstance().StartCoroutine(RunFade(start, targetAlpha, duration));
+            _fadeRoutine = MonoManager.GetInstance().StartCoroutine(RunFade(start, targetAlpha, duration, ease));
             // RunFade 由句柄驱动，这里返回一个等待句柄结束的迭代器
             yield return new WaitUntil(() => _fadeRoutine == null);
         }
 
-        private IEnumerator RunFade(float start, float target, float duration)
+        private IEnumerator RunFade(float start, float target, float duration, Ease ease)
         {
             float elapsed = 0f;
             while (elapsed < duration)
             {
                 if (!IsValid) yield break;
                 elapsed += Time.deltaTime;
-                _alpha = Mathf.Lerp(start, target, Mathf.Clamp01(elapsed / duration));
+                float t = EaseEvaluator.Evaluate(ease, Mathf.Clamp01(elapsed / duration));
+                _alpha = Mathf.Lerp(start, target, t);
                 ApplyColor();
                 yield return null;
             }
@@ -234,7 +236,7 @@ namespace VNovelizer.Core.Theater
             _fadeRoutine = null;
         }
 
-        public IEnumerator MoveAsync(Vector2 targetPx, float duration)
+        public IEnumerator MoveAsync(Vector2 targetPx, float duration, Ease ease = Ease.Linear)
         {
             if (!IsValid) yield break;
             InterruptMove();
@@ -249,18 +251,19 @@ namespace VNovelizer.Core.Theater
 
             Vector2 startWorld = new Vector2(_go.transform.localPosition.x, _go.transform.localPosition.y);
             Vector2 targetWorld = targetPx * PixelsToWorld;
-            _moveRoutine = MonoManager.GetInstance().StartCoroutine(RunMove(startWorld, targetWorld, duration));
+            _moveRoutine = MonoManager.GetInstance().StartCoroutine(RunMove(startWorld, targetWorld, duration, ease));
             yield return new WaitUntil(() => _moveRoutine == null);
         }
 
-        private IEnumerator RunMove(Vector2 startWorld, Vector2 targetWorld, float duration)
+        private IEnumerator RunMove(Vector2 startWorld, Vector2 targetWorld, float duration, Ease ease)
         {
             float elapsed = 0f;
             while (elapsed < duration)
             {
                 if (!IsValid) yield break;
                 elapsed += Time.deltaTime;
-                Vector2 p = Vector2.Lerp(startWorld, targetWorld, Mathf.Clamp01(elapsed / duration));
+                float t = EaseEvaluator.Evaluate(ease, Mathf.Clamp01(elapsed / duration));
+                Vector2 p = Vector2.Lerp(startWorld, targetWorld, t);
                 SetLocalXY(p.x, p.y);
                 yield return null;
             }

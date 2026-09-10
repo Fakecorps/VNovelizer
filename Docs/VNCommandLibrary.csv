@@ -1,0 +1,108 @@
+﻿命令名称,语法格式,参数说明,功能描述,示例,,,,,,,,,,,,,,,
+showbg,showbg(background),background: 背景资源名；留空则引用本行 Background 列（继承已应用）。特殊值：black=纯黑、hide=隐藏背景层,显示/切换背景（瞬时，无过渡；需过渡请用 bgfade）,showbg(Sitting) 或 showbg(),,,,,,,,,,,,,,,
+showchar,"showchar(pos, charRef)","pos: 槽位 L/ML/M/MR/R（或全名）
+charRef: 立绘引用 角色#分组#表情；留空则引用本行对应立绘列；空=隐藏该槽（立绘列不继承）",按槽位显示/隐藏立绘,"showchar(M) 或 showchar(M, Amy#JK#Happy)",,,,,,,,,,,,,,,
+showspeaker,showspeaker(),无参数（说话人不可内联，永远引用本行 Speaker / HeadProfile 列）,刷新说话人姓名框与头像,showspeaker(),,,,,,,,,,,,,,,
+showdialogue,showdialogue(mode),mode: direct=瞬间全显且不阻塞；typewriter=逐字打字并阻塞至打完（默认 typewriter）,显示本行对话（正文引用 Text 列，不可内联）,showdialogue(typewriter) 或 showdialogue(direct),,,,,,,,,,,,,,,
+playbgm,playbgm(bgm),bgm: BGM 资源名；留空则引用本行 BGM 列（空列=继续当前 BGM）。特殊值：stop=停止 / pause=暂停 / resume=恢复,播放 BGM（同名不重播）,playbgm() 或 playbgm(BGM_01),,,,,,,,,,,,,,,
+playvoice,playvoice(voice),voice: 语音资源路径；留空则引用本行 Voice 列解析后取值（含按行 ID 自动生成路径）,播放语音,playvoice() 或 playvoice(voice/1003.mp3),,,,,,,,,,,,,,,
+config,config(key:value),key:value 冒号格式。可用项：voice:true|false、textspeed:秒/字、autospeed:秒/字,运行时修改游戏配置项,config(voice:false),,,,,,,,,,,,,,,
+hide,hide(),无参数,手动隐藏对话框（等同玩家按隐藏键）,hide(),,,,,,,,,,,,,,,
+settextspeed,settextspeed(speed),speed: 秒/字（0.001-1，越小越快）,设置打字机速度（持久保存到全局设置）,settextspeed(0.03),,,,,,,,,,,,,,,
+setautospeed,setautospeed(speed),speed: 秒/字（0.01-2，越小换行越快）,设置自动播放换行间隔（持久保存到全局设置）,setautospeed(1.0),,,,,,,,,,,,,,,
+bgfade,"bgfade(bgname, duration, inEase, outEase)","bgname: 目标背景资源名
+duration: 淡化秒数（可选，默认 1.0）
+inEase: 新背景淡入曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
+outEase: 旧背景淡出曲线（可选；缺省旧背景保持不动。候选：Linear/Out*，含「无」空选）",交叉淡化切换背景（同时更新继承状态）,"bgfade(Sitting, 0.8) 或 bgfade(Sitting, 0.8, InSine, OutSine)",,,,,,,,,,,,,,,
+addchar,"addchar(charRef, x, y, scale, posID)","charRef: 立绘引用 角色#分组#表情
+x: X 坐标（剧本像素，原点=画面中心）
+y: Y 坐标（剧本像素，原点=画面中心）
+scale: 缩放（正值大小）
+posID: 自定义槽位 ID（供 showchar/charjump 等引用；保留名 L/ML/M/MR/R 不可用；大小写不敏感唯一；不允许逗号/括号/引号/|/&/空格）",注册自由角色（仅登记不显示，需 showchar(posID) 展示；会话级跨行存活，removeChar 注销；posID 可供全部角色槽位命令引用）,"addchar(Amy#JK#Happy, 300, 0, 1, Amy) 后接 showchar(Amy) 展示、charjump(Amy, 0.5, 3, 50) 调用",,,,,,,,,,,,,,,
+charfadein,"charfadein(pos, duration, inEase, outEase)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
+duration: 淡入秒数（可选，默认 0.5）
+inEase: 淡入曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
+outEase: 对称写法保留（无退出阶段，忽略。候选：Linear/Out*，含「无」空选）",角色立绘淡入（多个淡入自动并行播放）,"charfadein(R, 1.0) 或 charfadein(R, 1.0, InSine, OutSine)",,,,,,,,,,,,,,,
+charfadeout,"charfadeout(pos, duration, inEase, outEase)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
+duration: 淡出秒数（可选，默认 0.5）
+inEase: 对称写法保留（无进入阶段，忽略。候选：Linear/In*/InOut*，含「无」空选）
+outEase: 淡出曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/Out*，含「无」空选）",角色立绘淡出并隐藏（多个淡出自动并行播放）,"charfadeout(L, 0.5) 或 charfadeout(L, 0.5, , OutSine)",,,,,,,,,,,,,,,
+charflip,"charflip(pos, direction)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
+direction: 可选。缺省=切换翻转；-1/left=强制朝左；1/right=强制朝右",角色立绘水平翻转（翻转状态随存档持久化）,"charflip(M) 或 charflip(M, left)",,,,,,,,,,,,,,,
+charjump,"charjump(pos, duration, times, height, inEase, outEase)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
+duration: 单次跳跃秒数（可选，默认 0.4）
+times: 跳跃次数（可选，默认 1）
+height: 跳跃高度，剧本像素（可选，默认 30）
+inEase: 高度包络曲线（可选；缺省=纯 sin 抛物线；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
+outEase: 对称写法保留（忽略。候选：Linear/Out*，含「无」空选）",角色跳跃动画（不继承：下一行自动归位）,"charjump(M, 0.5, 3, 50) 或 charjump(M, 0.5, 3, 50, InOutSine)",,,,,,,,,,,,,,,
+charmove,"charmove(pos, x, y, duration, inEase, outEase)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
+x: 目标 X（剧本像素，原点=画面中心）
+y: 目标 Y（剧本像素，原点=画面中心）
+duration: 移动秒数（可选，默认 0.5）
+inEase: 移动曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
+outEase: 对称写法保留（无离场阶段，忽略。候选：Linear/Out*，含「无」空选）",移动角色到指定坐标（不继承：下一行自动归位）,"charmove(R, 200, 0, 2.0) 或 charmove(R, 200, 0, 2.0, OutBack)",,,,,,,,,,,,,,,
+removechar,removechar(posID),posID: addChar 注册的自定义槽位 ID,移除并注销自由角色（立即中断该角色活动动画并移除演员；未注册的 posID 打警告容错）,removechar(Amy),,,,,,,,,,,,,,,
+setchartrans,"setchartrans(pos, x, y, scale)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
+x: 水平偏移（剧本像素，0=默认槽位）
+y: 垂直偏移（剧本像素，0=默认槽位）
+scale: 缩放（正值大小；翻转符号独立保持）",设置立绘位置/缩放（不继承：下一行自动恢复默认 Transform）,"setchartrans(M, 0, 30, 1.2)",,,,,,,,,,,,,,,
+wait,wait(seconds),seconds: 等待秒数（0-30，默认 0.5）,等待指定秒数（阻塞所在链分支）,wait(0.5),,,,,,,,,,,,,,,
+shake,"shake(target, duration, intensity)","target: 震动目标 screen=相机（UI 不动）/ dialogue=对话框 / L/ML/M/MR/R=角色
+duration: 持续秒数（可选，默认 0.5）
+intensity: 强度，剧本像素（可选，默认 10）",屏幕 / 角色 / 对话框震动,"shake(screen, 1.0, 10)",,,,,,,,,,,,,,,
+showprompt,"showprompt(text, duration, inEase, outEase)","text: 提示文字内容
+duration: 停留秒数（可选，默认 2）
+inEase: 浮入曲线（可选；缺省=OutQuad 淡入+OutBack 回弹位移；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
+outEase: 浮出曲线（可选；缺省 InQuad。候选：Linear/Out*，含「无」空选）",屏幕提示文字（浮动显示后自动消失）,"showprompt(获得钥匙, 2.0) 或 showprompt(获得钥匙, 2.0, OutBack, InQuad)",,,,,,,,,,,,,,,
+playparticle,playparticle(effect),effect: 特效资源名（Particle 特效目录下的预制体）,播放常驻粒子特效（雪/雨/花瓣等；同名特效自动去重不叠加）,playparticle(RainEffect),,,,,,,,,,,,,,,
+stopparticle,stopparticle(effect),effect: 特效资源名（与 playparticle 参数一致）,停止粒子特效并延迟回收（停止发射，已发射粒子 5 秒飘完）,stopparticle(SnowEffect),,,,,,,,,,,,,,,
+playanim,"playanim(anim, pos, loop)","anim: 动画资源名（Animation 目录下的预制体）
+pos: 显示位置（可选，默认 M）：L/ML/M/MR/R 槽位跟随、M(x,y) 槽位偏移、(x,y) 绝对坐标
+loop: 填 loop 则循环播放（用 stopanim 回收）",播放 Animator 动画特效（挂在特效层；loop 结尾缀名表循环播放）,"playanim(sparkle, M(10,-20), loop)",,,,,,,,,,,,,,,
+stopanim,stopanim(anim),anim: 动画资源名（与 playanim 第一个参数一致）,停止并回收 playanim 播放的动画,stopanim(sparkle),,,,,,,,,,,,,,,
+fadeBlackIn,fadeBlackIn(duration),duration: 淡入秒数（0.05-10）,黑幕淡入（阻塞至淡入完成；配合 fadeBlackOut 使用）,fadeBlackIn(0.5),,,,,,,,,,,,,,,
+fadeBlackOut,fadeBlackOut(duration),duration: 淡出秒数（0.05-10）,黑幕淡出（阻塞至淡出完成；配合 fadeBlackIn 使用）,fadeBlackOut(0.5),,,,,,,,,,,,,,,
+t_color,"t_color(r, g, b)","r: 红（0-255）
+g: 绿（0-255）
+b: 蓝（0-255）",临时修改对话文字颜色（仅本行生效，不保存到下一行）,"t_color(255, 0, 0)",,,,,,,,,,,,,,,
+t_size,t_size(size),size: 字号（10-200，超出自动钳制）,临时修改对话字号（仅本行生效，不保存到下一行）,t_size(40),,,,,,,,,,,,,,,
+playsfx,"playsfx(name, times)","name: 音效资源名（SFX 资源目录下，不含扩展名）
+times: 播放次数（可选，默认 1）",播放音效（按次数顺序播放，等全部播完才推进下一行）,"playsfx(door_open, 1)",,,,,,,,,,,,,,,
+playvideo,"playvideo(video, nextCommand)","video: 视频资源名（视频目录下，含扩展名如 op.mp4）
+nextCommand: 视频结束后执行的命令链（可选）",全屏播放视频（播放期间阻断交互；结束后可接命令链）,"playvideo(opening, jump(100))",,,,,,,,,,,,,,,
+jump,jump(targetID),targetID: 目标行 ID（本剧本内）,跳转到指定行 ID（流程命令，必须位于链尾）,jump(205),,,,,,,,,,,,,,,
+jumpif,"jumpif(flag, condition, targetID)","flag: 被判断的标志名
+condition: 条件：操作符（> < >= <= == != 或留空=直判、! 取反）+ 值
+targetID: 目标行 ID（本剧本内）
+写入 CSV 时 flag 与 condition 合并为一段：jumpif(条件, 目标行)",条件跳转：条件为真时等价 jump，为假时继续下一行（仅可置于链尾）,"jumpif(Favor>30, 1009) 或 jumpif(!isDead, 1009)",,,,,,,,,,,,,,,
+jumpifnot,"jumpifnot(flag, condition, targetID)","flag: 被判断的标志名
+condition: 条件：操作符（> < >= <= == != 或留空=直判、! 取反）+ 值
+targetID: 目标行 ID（本剧本内）
+写入 CSV 时 flag 与 condition 合并为一段：jumpifnot(条件, 目标行)",条件跳转（取反）：条件为假时等价 jump（仅可置于链尾）,"jumpifnot(Favor>30, 1009)",,,,,,,,,,,,,,,
+loadscript,"loadscript(script, startId)","script: 剧本名（CSV 文件名，不含扩展名）
+startId: 起始行 ID（可选，缺省从头开始）",切换剧本（跨剧本自动存档；仅可置于链尾）,"loadscript(chapter2, 101)",,,,,,,,,,,,,,,
+loadscriptif,"loadscriptif(flag, condition, script, startId)","flag: 被判断的标志名
+condition: 条件：操作符（> < >= <= == != 或留空=直判、! 取反）+ 值
+script: 剧本名（CSV 文件名，不含扩展名）
+startId: 起始行 ID（可选）
+写入 CSV 时 flag 与 condition 合并为一段：loadscriptif(条件, 剧本[, 起始行])",条件加载剧本：条件为真时等价 loadscript（仅可置于链尾）,"loadscriptif(Amy_Favor>=80, Chapter2A, Scene_000)",,,,,,,,,,,,,,,
+loadscriptifnot,"loadscriptifnot(flag, condition, script, startId)","flag: 被判断的标志名
+condition: 条件：操作符（> < >= <= == != 或留空=直判、! 取反）+ 值
+script: 剧本名（CSV 文件名，不含扩展名）
+startId: 起始行 ID（可选）
+写入 CSV 时 flag 与 condition 合并为一段：loadscriptifnot(条件, 剧本[, 起始行])",条件加载剧本（取反）：条件为假时等价 loadscript（仅可置于链尾）,"loadscriptifnot(Amy_Favor>=50, Chapter2B, Scene_000)",,,,,,,,,,,,,,,
+loadscene,loadscene(scene),scene: 场景名（Build Settings 中的名称）,加载 Unity 场景（场景须加入 Build Settings；仅可置于链尾）,loadscene(room101),,,,,,,,,,,,,,,
+nextline,nextline(),无参数,推进到下一行（流程命令，必须位于链尾）,nextline(),,,,,,,,,,,,,,,
+choice,"choice{desc1, chain1, desc2, chain2, ...} 或 choice(desc|cmd)","desc: 选项描述文字（含逗号用引号包裹；本地化写 @loc:表名.键）
+chain: 点击后执行的命令链（支持 & / [] / -> 完整链语法与嵌套 choice）
+旧语法 choice(desc|cmd)：竖线分隔的单选项（完全兼容）",显示分支选项面板（同一行多个 choice 汇集成同一面板；仅可置于链尾）,"choice{去山里, jump(1005), 去海里, jump(1006)} 或 choice(去山上|jump(1005))",,,,,,,,,,,,,,,
+exit,exit(),无参数,返回主菜单（面板切换不加载场景；仅可置于链尾）,exit(),,,,,,,,,,,,,,,
+setboolflag,"setboolflag(flag, value)","flag: 标志名（区分大小写）
+value: true/false（可选，缺省 true）",设置布尔标志（缺省为 true）,"setboolflag(hasKey, true)",,,,,,,,,,,,,,,
+setintflag,"setintflag(flag, value)","flag: 标志名（区分大小写）
+value: 整数值或相对运算：100（绝对）/ +10 / -10 / *2 / /2（整数除法）",设置整数标志（支持相对运算）,"setintflag(money, 100) 或 setintflag(money, +100)",,,,,,,,,,,,,,,
+setstringflag,"setstringflag(flag, value)","flag: 标志名（区分大小写）
+value: 字符串值；含逗号时用双引号包裹",设置字符串标志,"setstringflag(playerName, ""艾琳"")",,,,,,,,,,,,,,,
+unlockcg,unlockcg(name),name: CG 画廊条目名（画廊编辑器中登记的名称）,解锁 CG 画廊条目（持久数据，读档快进也生效）,unlockcg(cg_001),,,,,,,,,,,,,,,
+unlockmusic,unlockmusic(name),name: 音乐画廊条目名（画廊编辑器中登记的名称）,解锁音乐画廊条目（持久数据，读档快进也生效）,unlockmusic(bgm_01),,,,,,,,,,,,,,,
+unlockscene,unlockscene(name),name: 场景回想条目名（画廊编辑器中登记的名称）,解锁场景回想条目（持久数据，读档快进也生效）,unlockscene(scene_01),,,,,,,,,,,,,,,

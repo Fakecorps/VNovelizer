@@ -359,11 +359,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (startView == null) return compatible;
 
             // R11：choice 的选项端口不在 input/outputContainer 中（跟随选项行定位），
-            // 需并入枚举。
+            // 且输入端口在 titleContainer 内（#top 高度塌陷问题的修复，见 ChoiceNodeView）——
+            // 两者都不依赖 GraphView.ports 的收集范围，全部显式并入枚举。
             ports.ForEach(port => CheckPort(startPort, startView, port, compatible));
             foreach (var n in nodes.ToList())
             {
                 if (!(n is ChoiceNodeView cv)) continue;
+                if (cv.InputPort != null)
+                    CheckPort(startPort, startView, cv.InputPort, compatible);
                 foreach (var p in cv.AllOutputPorts)
                     CheckPort(startPort, startView, p, compatible);
             }
@@ -492,10 +495,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 && b.InputPort.capacity == Port.Capacity.Single) return false;
 
             // R11：choice 节点连线。
-            // 起点是 choice：每个选项端口/主延续端口只容一条边；choice 不参与插入改写。
-            if (a is ChoiceNodeView)
+            // 起点是 choice：
+            //   · 选项端口（Single 容量）已连则拒绝——防误多连，与主链容量约束一致；
+            //   · 主延续端口允许重新连线（断旧连→连新目标，如从 End 改连到另一个
+            //     choice 节点做「单行多选项合并展示」）——GraphView 的 EdgeConnector
+            //     会把旧边放到 elementsToRemove，新边 output.connected 在回调时仍为
+            //     true（旧边未应用移除），旧版一刀切拒绝会让用户拖不出重连线。
+            // choice 不参与插入改写（不允许夹到命令节点链中间）。
+            if (a is ChoiceNodeView choiceA)
             {
-                if (newEdge.output != null && newEdge.output.connected) return false;
+                if (newEdge.output != null && newEdge.output.connected
+                    && newEdge.output != choiceA.MainOutputPort) return false;
                 if (b is CommandNodeView && b.InputPort != null && b.InputPort.connected) return false;
                 return true;
             }

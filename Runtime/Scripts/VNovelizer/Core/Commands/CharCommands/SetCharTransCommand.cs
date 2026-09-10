@@ -83,9 +83,13 @@ namespace VNovelizer.Core.Commands
             string[] parts = args.Split(',');
             if (parts.Length < 4) return;
 
-            string posCode = parts[0].Trim();
+            string posCode = TheaterManager.NormalizePosCode(parts[0]);
+            if (posCode == null) return;
+
+            // R14：自由角色（addChar）豁免五槽立绘列检查——其数据源是剧场注册表
+            bool isFreeChar = TheaterManager.GetInstance().IsFreeChar(posCode);
             string charData = VNManager.GetInstance().GetCharacterData(posCode);
-            if (string.IsNullOrEmpty(charData) || charData == "hide")
+            if (!isFreeChar && (string.IsNullOrEmpty(charData) || charData == "hide"))
             {
                 Debug.LogWarning($"[SetCharTrans.Simulate] 位置 {posCode} 没有角色，跳过设置");
                 return;
