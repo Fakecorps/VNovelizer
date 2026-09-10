@@ -33,7 +33,7 @@ namespace VNovelizer.Core.Theater
         public const string MainBackgroundId = "MainBackground";
 
         /// <summary>背景过渡的临时演员 ID（不进入状态字典；bgtrans 过渡期承载新图）</summary>
-        private const string BgTransitionTempId = "BgFadeTemp";
+        private const string BgTransitionTempId = "BgTransTemp";
 
         /// <summary>参考分辨率宽（与 CanvasScaler 基准一致）</summary>
         public const float ReferenceWidth = 1920f;

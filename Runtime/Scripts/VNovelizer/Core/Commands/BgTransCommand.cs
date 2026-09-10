@@ -68,10 +68,10 @@ namespace VNovelizer.Core.Commands
             if (parts.Length > 2) float.TryParse(parts[2].Trim(), out duration);
             if (duration < 0f) duration = 0f;
 
-            // 更新剧本层背景数据状态（继承语义的数据源），与 bgfade 一致
+            // 更新剧本层背景数据状态（继承语义的数据源）
             VNManager.GetInstance().UpdateCurrentBG_OnlyData(bgName);
 
-            // 剧场层着色器过渡（内部含重入保护、与 bgfade 互斥、异步加载）
+            // 剧场层着色器过渡（内部含重入保护与异步加载）
             yield return TheaterManager.GetInstance().TransitionBackgroundCoroutine(bgName, type, duration);
         }
 
@@ -91,7 +91,7 @@ namespace VNovelizer.Core.Commands
             string bgName = parts[0].Trim();
             if (string.IsNullOrEmpty(bgName)) return;
 
-            // 预演时直接更新数据状态，不播放动画（与 bgfade 一致）
+            // 预演时直接更新数据状态，不播放动画
             VNAPI.UpdateBGData(bgName);
         }
     }
