@@ -15,6 +15,26 @@ namespace VNovelizer.Core.Theater
     }
 
     /// <summary>
+    /// 背景切换过渡类型（bgtrans 命令的 type 参数）。
+    /// 数值与 VNovelizer/BGTransition 着色器的 _Mode 严格一致，禁止重排。
+    /// </summary>
+    public enum BgTransitionType
+    {
+        /// <summary>交叉淡化（新图 alpha 渐变）</summary>
+        Fade = 0,
+        /// <summary>竖向百叶窗（条带内从上到下、条带间左→右相位）</summary>
+        Blinds = 1,
+        /// <summary>从左到右擦除</summary>
+        Wipe = 2,
+        /// <summary>圆心扩散（新图从画面中心的圆逐渐扩大）</summary>
+        Iris = 3,
+        /// <summary>从下往上卷开</summary>
+        Scroll = 4,
+        /// <summary>噪点阈值溶解</summary>
+        Dissolve = 5,
+    }
+
+    /// <summary>
     /// 演员外观：一次"换装/换图/换背景"的完整描述。
     /// id 使用剧本语义（如 "Amy#uniform#Smile"、BG 资源名）；
     /// sprite/texture 二选一，texture 供视频、外部纹理等后续能力使用。

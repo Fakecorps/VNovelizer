@@ -34,6 +34,20 @@ public static class AutoExcelConverter
     static AutoExcelConverter()
     {
         EditorApplication.update += Update;
+
+        // 【修复 2026-09-10】进 Play 前同步转换：自动转换是 2 秒轮询且 Play 模式挂起，
+        // "保存 Excel 后立刻试玩/运行"的窗口期内轮询尚未触发，运行时只会读到旧 CSV
+        // （表现：剧本已把 happy 改成 shy，运行仍报 happy 不存在 / 仍按旧值演出）。
+        EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+    }
+
+    private static void OnPlayModeStateChanged(PlayModeStateChange state)
+    {
+        if (state != PlayModeStateChange.ExitingEditMode) return;
+        if (!VNProjectConfig.TryGetInstance(out VNProjectConfig config)) return;
+        if (!config.AutoConvertExcel) return;
+
+        TryConvertModifiedExcelFiles();
     }
 
     private static void Update()
@@ -179,6 +193,45 @@ public static class AutoExcelConverter
     public static void RefreshAllFileTimestamps()
     {
         ScanAndRecordTimestamps();
+    }
+
+    /// <summary>
+    /// 强制把单个 Excel 立即转换为 CSV（试玩按钮调用）。
+    /// 无视轮询节流与 AutoConvertExcel 开关——调用方语义是「立刻玩到最新剧本」。
+    /// 同步执行（含 AssetDatabase.Refresh），大文件可能耗时数秒。
+    /// 转换内部的三方合并会保护图编辑器（CSV）侧的 Command 修改，
+    /// 镜像写回后刷新时间戳防轮询循环。
+    /// </summary>
+    public static bool ForceConvertFile(string excelFilePath)
+    {
+        if (string.IsNullOrEmpty(excelFilePath) || !File.Exists(excelFilePath)) return false;
+
+        string ext = Path.GetExtension(excelFilePath).ToLower();
+        if (ext != ".xlsx" && ext != ".xls") return false;
+
+        if (!VNProjectConfig.TryGetInstance(out VNProjectConfig config)) return false;
+        string csvOutputPath = config.GetCsvOutputPath();
+        if (string.IsNullOrEmpty(csvOutputPath)) return false;
+
+        try
+        {
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+            ExcelToCsvConverter.ConvertFile(excelFilePath, csvOutputPath);
+
+            // 防循环：转换（含镜像写回 xlsx）会更新 xlsx 修改时间，立即刷新记录
+            RefreshTimestampForFile(excelFilePath);
+
+            AssetDatabase.Refresh();
+            EditorApplication.delayCall += VNAddressablesRegistrar.SyncWorkspace;
+
+            Debug.Log($"[AutoConvert] 试玩前已同步转换: {Path.GetFileNameWithoutExtension(excelFilePath)}.csv");
+            return true;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[AutoConvert] 试玩前转换失败: {Path.GetFileName(excelFilePath)} — {e.Message}");
+            return false;
+        }
     }
 
     /// <summary>

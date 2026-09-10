@@ -89,7 +89,7 @@ Additionally, character-targeting commands (`charmove`, `setchartrans`, `charfli
 Commands are the core extensibility mechanism. Each command inherits from the abstract `VNCommand` class:
 
 ```csharp
-abstract string CommandName { get; }           // e.g., "bgfade", "shake"
+abstract string CommandName { get; }           // e.g., "bgtrans", "shake"
 abstract bool Execute(string args);            // Synchronous execution
 virtual IEnumerator ExecuteAsync(string args); // Async (coroutine-based), default calls sync
 virtual void Interrupt();                      // Skip/abort current animation
@@ -98,7 +98,7 @@ virtual void Simulate(string args);            // Update internal state only, no
 
 **Registration**: `CommandManager.Init()` first hardcodes ~30 built-in commands, then uses **reflection** to scan all non-Unity/non-System assemblies for `VNCommand` subclasses and registers them by `CommandName` (case-insensitive).
 
-**Parsing**: Commands in the Excel `Command` column use the format `cmd(args)` and are separated by `&`. Example: `bgfade(Beach,1.5)&charfadein(L,Amy_Normal,1)&wait(0.5)`.
+**Parsing**: Commands in the Excel `Command` column use the format `cmd(args)` and are separated by `&`. Example: `bgtrans(Beach,fade,1.5)&charfadein(L,Amy_Normal,1)&wait(0.5)`.
 
 **Execution flow**: `ExecuteCommandsAsync` iterates commands sequentially, but `CharFadeIn`/`CharFadeOut` commands are **batched and executed in parallel** (so left/mid/right characters fade in simultaneously). A reference counter tracks running async commands; the system waits for all to complete before advancing to the next line.
 

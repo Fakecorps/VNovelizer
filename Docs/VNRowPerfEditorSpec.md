@@ -424,7 +424,7 @@ public class ShakeCommand : VNCommand
 | `shake` | Performance | `target(Enum: screen\|dialogue\|L\|ML\|M\|MR\|R)`, `duration(0~10, 默认0.5, 可选)`, `intensity(0~100, 默认10, 可选)` |
 | `wait` | Performance | `seconds(0~30, 默认0.5)` |
 | `charmove` | Performance | `pos(SlotCode)`, `x(±960)`, `y(±540)`, `duration(默认0.5, 可选)` |
-| `bgfade` | Performance | `background(BackgroundName)`, `duration(默认1.0, 可选)` |
+| `bgtrans` | Performance | `background(BackgroundName)`, `type(Enum: fade\|blinds\|wipe\|iris\|scroll\|dissolve, 默认fade)`, `duration(默认1.0, 可选)`, `ease(预留, 可选)` |
 | `jump` | Flow | `targetLineId(LineId)` |
 
 > 标注时**必须读实现核实签名**，不可凭命令名猜测。例如 `shake` 的 target 实际含 `dialogue`（对话框震动，UI 层独立实现），初稿若按"screen/char/ui"猜会错。

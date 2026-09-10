@@ -32,8 +32,8 @@ namespace VNovelizer.Core.Theater
         /// <summary>主背景演员 ID</summary>
         public const string MainBackgroundId = "MainBackground";
 
-        /// <summary>背景交叉淡化的临时演员 ID（不进入状态字典）</summary>
-        private const string BgFadeTempId = "BgFadeTemp";
+        /// <summary>背景过渡的临时演员 ID（不进入状态字典；bgtrans 过渡期承载新图）</summary>
+        private const string BgTransitionTempId = "BgFadeTemp";
 
         /// <summary>参考分辨率宽（与 CanvasScaler 基准一致）</summary>
         public const float ReferenceWidth = 1920f;
@@ -74,17 +74,20 @@ namespace VNovelizer.Core.Theater
         /// <summary>相机状态（剧场唯一事实源的一部分，随存档持久化）</summary>
         public readonly CameraState Camera = new CameraState();
 
-        // --- 背景异步加载与交叉淡化状态 ---
-        // _bgRequestToken 由"瞬时切换"与"交叉淡化"两条路径共享：任一路径开始时自增，
+        // --- 背景异步加载与着色器过渡状态 ---
+        // _bgRequestToken 由"瞬时切换"与"着色器过渡"两条路径共享：任一路径开始时自增，
         // 使上一条路径已在飞行中的异步加载结果作废。
         // 必须共享——否则同一行内 "背景列继承触发 ChangeBackground(旧图)" 与
-        // "bgfade(新图)" 会互相覆盖，出现"画面是新图、状态是旧图"的存档错位。
+        // "bgtrans(新图)" 会互相覆盖，出现"画面是新图、状态是旧图"的存档错位。
         private Coroutine _bgLoadRoutine;
         private int _bgRequestToken;
-        private Coroutine _bgFadeRoutine;
-        private int _bgFadeToken;
-        private MeshActor _bgFadeTemp;
-        private Sprite _bgFadeTargetSprite;
+
+        // --- 背景着色器过渡状态（bgtrans 命令） ---
+        // 过渡临时演员承载新图并挂 BGTransition 遮罩 Shader，主背景演员保持旧图不动。
+        private Coroutine _bgTransitionRoutine;
+        private int _bgTransitionToken;
+        private MeshActor _bgTransTemp;
+        private Sprite _bgTransTargetSprite;
 
         // --- 演员震动状态 ---
         private readonly Dictionary<string, Coroutine> _activeShakes = new Dictionary<string, Coroutine>();
@@ -205,9 +208,10 @@ namespace VNovelizer.Core.Theater
                 return;
             }
 
-            // 交叉淡化正在进行且目标就是本图：淡化协程自己会写入终态，此处不得插手
-            // （否则瞬时应用会在淡化中途把主演员换成同一张图，破坏渐变观感）
-            if (_bgFadeRoutine != null && GetState(MainBackgroundId)?.appearance == backgroundPath)
+            // 着色器过渡正在进行且目标就是本图：过渡协程自己会写入终态，此处不得插手
+            // （否则瞬时应用会在过渡中途把主演员换成同一张图，破坏渐变观感）
+            if (_bgTransitionRoutine != null &&
+                GetState(MainBackgroundId)?.appearance == backgroundPath)
                 return;
 
             // 异步加载后即时应用（与旧 OnChangeBackground 行为一致）
@@ -225,7 +229,7 @@ namespace VNovelizer.Core.Theater
                 MonoManager.GetInstance().StopCoroutine(_bgLoadRoutine);
                 _bgLoadRoutine = null;
             }
-            CancelBackgroundFade();
+            CancelBackgroundTransition();
             RemoveActor(MainBackgroundId);
         }
 
@@ -234,7 +238,7 @@ namespace VNovelizer.Core.Theater
             var holder = new SpriteHolder();
             yield return LoadBackgroundSprite(bgName, holder);
             _bgLoadRoutine = null;
-            if (token != _bgRequestToken) yield break; // 已有更新的背景请求（含 bgfade），丢弃本次结果
+            if (token != _bgRequestToken) yield break; // 已有更新的背景请求（含 bgtrans），丢弃本次结果
             if (holder.value == null) yield break;  // 加载失败已打印日志
 
             ApplyBackground(holder.value, bgName);
@@ -327,30 +331,54 @@ namespace VNovelizer.Core.Theater
             SetVisible(MainBackgroundId, true);
         }
 
+        #endregion
+
+        #region 背景着色器过渡（bgtrans 命令）
+
+        /// <summary>默认百叶窗条带数（Blinds 过渡）</summary>
+        public const float DefaultBlindsCount = 8f;
+
         /// <summary>
-        /// 背景交叉淡化（bgfade 命令实现）。
-        /// 结构与旧 BgFadeCommand 的 Front/Back 双图一致：
-        /// 当前背景演员保持旧图；临时演员（不进状态字典）承载新图淡入；
-        /// 完成后旧演员瞬间换新图、临时演员销毁。状态始终反映终态。
-        /// 重入保护：新的 bgfade 会先强制完成上一次。
-        ///
-        /// <para>
-        /// <b>R13 ease 参数</b>：<paramref name="inEase"/> 控制新背景淡入曲线
-        /// （缺省 Linear，与旧实现一致）；<paramref name="outEase"/> 为 null 时
-        /// 旧背景保持不动（旧实现行为），指定时旧背景按该曲线同步淡出——
-        /// 不透明背景下两者视觉等价，透明背景可做真正的交叉淡化。
-        /// </para>
+        /// 解析过渡类型名（大小写不敏感，支持少量别名）。
+        /// 主名：fade / blinds / iris / wipe / scroll / dissolve；
+        /// 别名：shutter→blinds、circle→iris、slide→wipe、roll→scroll、noise→dissolve。
         /// </summary>
-        public IEnumerator FadeBackgroundCoroutine(string bgName, float duration,
-            Ease inEase = Ease.Linear, Ease? outEase = null)
+        public static bool TryParseBgTransitionType(string token, out BgTransitionType type)
+        {
+            type = BgTransitionType.Fade;
+            if (string.IsNullOrWhiteSpace(token)) return false;
+
+            switch (token.Trim().ToLower())
+            {
+                case "fade":    type = BgTransitionType.Fade;    return true;
+                case "blinds":
+                case "shutter": type = BgTransitionType.Blinds;  return true;
+                case "wipe":
+                case "slide":   type = BgTransitionType.Wipe;    return true;
+                case "iris":
+                case "circle":  type = BgTransitionType.Iris;    return true;
+                case "scroll":
+                case "roll":    type = BgTransitionType.Scroll;  return true;
+                case "dissolve":
+                case "noise":   type = BgTransitionType.Dissolve; return true;
+                default:        return false;
+            }
+        }
+
+        /// <summary>
+        /// 背景着色器过渡（bgtrans 命令实现）。
+        /// 主背景演员保持旧图不动；临时演员承载新图并挂 BGTransition 遮罩 Shader，
+        /// 每帧驱动 _Progress 0→1；完成后主演员换新图、临时演员销毁。状态始终反映终态。
+        /// 重入保护：新过渡先强制完成上一次。
+        /// </summary>
+        public IEnumerator TransitionBackgroundCoroutine(string bgName, BgTransitionType type, float duration)
         {
             if (string.IsNullOrEmpty(bgName)) yield break;
 
             // 令牌：防止被取消/取代的旧协程在清理时误伤新协程的字段
-            int token = ++_bgFadeToken;
+            int token = ++_bgTransitionToken;
 
-            // 同时作废"瞬时切换"路径在飞行中的加载结果（共享请求令牌）：
-            // 否则同一行内的 ChangeBackground(旧图) 会在淡化开始后落地，把状态改回旧图
+            // 同时作废"瞬时切换"路径在飞行中的加载结果（共享请求令牌）
             _bgRequestToken++;
             if (_bgLoadRoutine != null)
             {
@@ -358,11 +386,11 @@ namespace VNovelizer.Core.Theater
                 _bgLoadRoutine = null;
             }
 
-            // 重入保护（与旧 BgFadeCommand 语义一致）
-            if (_bgFadeRoutine != null)
+            // 重入保护
+            if (_bgTransitionRoutine != null)
             {
-                Debug.LogWarning("[TheaterManager] 上一次背景切换尚未完成，已强制瞬间完成");
-                CancelBackgroundFade();
+                Debug.LogWarning("[TheaterManager] 上一次背景过渡尚未完成，已强制瞬间完成");
+                CancelBackgroundTransition();
             }
 
             // 异步加载新图
@@ -383,28 +411,30 @@ namespace VNovelizer.Core.Theater
 
             // 状态立即写入终态（演出是表达，状态是事实）
             GetState(MainBackgroundId).appearance = bgName;
-            _bgFadeTargetSprite = newSprite;
+            _bgTransTargetSprite = newSprite;
 
-            // 临时演员承载新图，置于旧背景之前
-            _bgFadeTemp = new MeshActor(BgFadeTempId, ActorKind.Background, _actorsRoot);
-            _bgFadeTemp.SetAppearance(new ActorAppearance(bgName, newSprite));
-            _bgFadeTemp.SetPosition(Vector2.zero);
-            _bgFadeTemp.SetDepth(1);
+            // 临时演员承载新图，置于旧背景之前，挂遮罩型过渡 Shader
+            _bgTransTemp = new MeshActor(BgTransitionTempId, ActorKind.Background, _actorsRoot);
+            _bgTransTemp.SetAppearance(new ActorAppearance(bgName, newSprite));
+            _bgTransTemp.SetPosition(Vector2.zero);
+            _bgTransTemp.SetDepth(1);
             float coverScale = Mathf.Max(ReferenceWidth / newSprite.rect.width, ReferenceHeight / newSprite.rect.height);
-            _bgFadeTemp.SetScale(coverScale);
-            _bgFadeTemp.SetAlpha(0f);
-            _bgFadeTemp.SetVisible(true);
+            _bgTransTemp.SetScale(coverScale);
+            _bgTransTemp.SetAlpha(1f);
+            _bgTransTemp.SetVisible(true);
+            _bgTransTemp.UseBgTransitionShader();
+            _bgTransTemp.SetBgTransitionProgress(0f, (int)type, DefaultBlindsCount);
 
             bool finished = false;
-            _bgFadeRoutine = MonoManager.GetInstance().StartCoroutine(
-                RunBgFade(duration, inEase, outEase, mainActor, () => finished = true));
-            while (!finished && _bgFadeTemp != null) yield return null;
+            _bgTransitionRoutine = MonoManager.GetInstance().StartCoroutine(
+                RunBgTransition(duration, (int)type, () => finished = true));
+            while (!finished && _bgTransTemp != null) yield return null;
 
             // 已被更新的切换或强制取消接管：本协程不再触碰任何共享字段
-            if (token != _bgFadeToken) yield break;
+            if (token != _bgTransitionToken) yield break;
 
             // 自然完成：主演员换新图（若未被强制取消）
-            if (_bgFadeTemp != null)
+            if (_bgTransTemp != null)
             {
                 mainActor = GetActor(MainBackgroundId);
                 if (mainActor != null)
@@ -414,71 +444,61 @@ namespace VNovelizer.Core.Theater
                     SetAlpha(MainBackgroundId, 1f);
                     SetVisible(MainBackgroundId, true);
                 }
-                _bgFadeTemp.Dispose();
-                _bgFadeTemp = null;
+                _bgTransTemp.Dispose();
+                _bgTransTemp = null;
             }
-            _bgFadeTargetSprite = null;
-            _bgFadeRoutine = null;
+            _bgTransTargetSprite = null;
+            _bgTransitionRoutine = null;
         }
 
-        /// <summary>
-        /// 背景交叉淡化驱动：
-        /// - 新图（临时演员）按 <paramref name="inEase"/> 淡入；
-        /// - <paramref name="outEase"/> 非 null 时旧图（主演员）按该曲线同步淡出，
-        ///   为 null 时旧图保持不动（与旧实现完全一致）。
-        /// 旧图 alpha 归位由完成/取消两条路径统一负责（SetAlpha 1f）。
-        /// </summary>
-        private IEnumerator RunBgFade(float duration, Ease inEase, Ease? outEase,
-            IActor oldActor, System.Action onDone)
+        /// <summary>背景着色器过渡驱动：每帧推进 _Progress 0→1（Linear）</summary>
+        private IEnumerator RunBgTransition(float duration, int mode, System.Action onDone)
         {
-            if (duration <= 0f || _bgFadeTemp == null)
+            if (duration <= 0f || _bgTransTemp == null)
             {
                 onDone?.Invoke();
                 yield break;
             }
 
             float elapsed = 0f;
-            while (elapsed < duration && _bgFadeTemp != null)
+            while (elapsed < duration && _bgTransTemp != null)
             {
                 elapsed += Time.deltaTime;
-                float t = Mathf.Clamp01(elapsed / duration);
-                _bgFadeTemp.SetAlpha(EaseEvaluator.Evaluate(inEase, t));
-                if (outEase.HasValue && oldActor != null)
-                    oldActor.SetAlpha(1f - EaseEvaluator.Evaluate(outEase.Value, t));
+                _bgTransTemp.SetBgTransitionProgress(elapsed / duration, mode, DefaultBlindsCount);
                 yield return null;
             }
             onDone?.Invoke();
         }
 
-        /// <summary>强制完成背景切换（bgfade 被中断/重入时调用）：瞬间呈现终态</summary>
-        public void CancelBackgroundFade()
+        /// <summary>强制完成背景着色器过渡（bgtrans 被中断/重入/互斥时调用）：瞬间呈现终态</summary>
+        public void CancelBackgroundTransition()
         {
-            if (_bgFadeRoutine != null)
+            if (_bgTransitionRoutine != null)
             {
-                MonoManager.GetInstance().StopCoroutine(_bgFadeRoutine);
-                _bgFadeRoutine = null;
+                MonoManager.GetInstance().StopCoroutine(_bgTransitionRoutine);
+                _bgTransitionRoutine = null;
             }
 
-            if (_bgFadeTemp != null)
+            if (_bgTransTemp != null)
             {
-                if (_bgFadeTargetSprite != null)
+                if (_bgTransTargetSprite != null)
                 {
                     var mainActor = GetActor(MainBackgroundId);
                     if (mainActor != null && mainActor.IsValid)
                     {
                         var state = GetState(MainBackgroundId);
-                        mainActor.SetAppearance(new ActorAppearance(state.appearance, _bgFadeTargetSprite));
-                        float coverScale = Mathf.Max(ReferenceWidth / _bgFadeTargetSprite.rect.width,
-                                                      ReferenceHeight / _bgFadeTargetSprite.rect.height);
+                        mainActor.SetAppearance(new ActorAppearance(state.appearance, _bgTransTargetSprite));
+                        float coverScale = Mathf.Max(ReferenceWidth / _bgTransTargetSprite.rect.width,
+                                                      ReferenceHeight / _bgTransTargetSprite.rect.height);
                         SetScale(MainBackgroundId, coverScale);
                         SetAlpha(MainBackgroundId, 1f);
                         SetVisible(MainBackgroundId, true);
                     }
                 }
-                _bgFadeTemp.Dispose();
-                _bgFadeTemp = null;
+                _bgTransTemp.Dispose();
+                _bgTransTemp = null;
             }
-            _bgFadeTargetSprite = null;
+            _bgTransTargetSprite = null;
         }
 
         #endregion
@@ -592,7 +612,7 @@ namespace VNovelizer.Core.Theater
                 MonoManager.GetInstance().StopCoroutine(_bgLoadRoutine);
                 _bgLoadRoutine = null;
             }
-            CancelBackgroundFade();
+            CancelBackgroundTransition();
 
             foreach (var posCode in new List<string>(_activeShakes.Keys))
                 CancelActorShake(posCode);
@@ -636,7 +656,7 @@ namespace VNovelizer.Core.Theater
                 Debug.LogError($"[TheaterManager] addChar 的 posID \"{key}\" 与标准槽位冲突（L/ML/M/MR/R 为保留名）");
                 return false;
             }
-            if (lower == MainBackgroundId.ToLower() || lower == BgFadeTempId.ToLower())
+            if (lower == MainBackgroundId.ToLower() || lower == BgTransitionTempId.ToLower())
             {
                 Debug.LogError($"[TheaterManager] addChar 的 posID \"{key}\" 是引擎保留名");
                 return false;

@@ -638,7 +638,7 @@ DSL 底层复用 VNovelizer 现有的 39 个命令（`CommandManager` 注册）�
 | 命令 | 语法 | 说明 |
 |------|------|------|
 | `showbg` | `showbg(bg);` | 显示背景（DSL 层语义） |
-| `bgfade` | `bgfade(imageName[, duration]);` | 背景淡入切换（duration 缺省 1.0） |
+| `bgtrans` | `bgtrans(bg, type[, duration]);` | 着色器驱动的背景切换过渡。type：`fade`/`blinds`/`wipe`/`iris`/`scroll`/`dissolve`（duration 缺省 1.0；非法 type 降级 fade） |
 | `shake` | `shake(target[, duration, strength]);` | 震动效果。target：`screen` / `dialogue` / `L`/`ML`/`M`/`MR`/`R` 立绘槽 |
 | `wait` | `wait(seconds);` | 等待指定秒数 |
 | `playvideo` | `playvideo(filename[, nextCmd]);` | 播放视频，结束后可执行一条命令 |

@@ -235,10 +235,17 @@ public class CameraState
 - `camerafx(组件名, on/off)` 按**组件类型名**开关，状态随存档持久化。
 - 特效分级：**相机级**（camerafx，作用于整个剧场画面）、**演员级**（blur 等实现 `IBlurable` 类接口，作用于单个演员）、**UI 级**（现有 UGUI 特效不动）。
 
-### 4.5 转场系统（阶段 6）
+### 4.5 转场系统（阶段 6 → 已部分落地：bgtrans）
 
-- 语法升级：`bgfade(资源名.过渡名, 时长)`，如 `bgfade(Beach.Dissolve,1.5)`；不带 `.过渡名` 时保持交叉淡化语义。
-- 实现机制：转场是**演员材质的着色器变体**（`multi_compile_local` + `THEATER_TRANSITION_XXX` 关键字），在片元函数中实现（Crossfade / Dissolve / Pixelate / Ripple / Blinds / Wave…）。
+**已实施（2026-09）：`bgtrans` 命令**——独立命令 `bgtrans(bgID, type, duration[, ease])`（取代原设想的 `bgfade(资源名.过渡名)` 语法扩展；**旧命令 `bgfade` 已删除**，交叉淡化由 `bgtrans(..., fade, ...)` 承担）：
+
+- 实现机制：临时 `MeshActor` 承载新图并挂 `VNovelizer/BGTransition` 着色器，主背景演员保持旧图不动，每帧驱动 `_Progress`（0→1）按遮罩（`discard`）露出新图——双演员 + 单纹理遮罩结构，沿袭旧 `bgfade` 交叉淡化路径的成熟机制（token 重入保护 / 中断瞬间到终态 / 状态先写终态语义全部一致）。
+- 首批 6 种类型：`fade` / `blinds`（百叶窗）/ `wipe`（擦除）/ `iris`（圆形扩散）/ `scroll`（卷轴）/ `dissolve`（噪点溶解）；非法 type 警告并降级 `fade`；第 4 参 `ease` 预留未实现（进度恒 Linear）。
+- Shader 放 `Runtime/Resources/`（包内 Resources 保证进构建），加载 `Shader.Find` + `Resources.Load` 双兜底；唯一 SubShader 为**无 `RenderPipeline` tag 的 Built-in 兼容版**——URP 项目走 Built-in 兼容编译路径（官方支持）。**切勿加 URP tag**：带 URP tag 的 HLSL 块若不 include URP `Core.hlsl`，矩阵宏未声明会编译失败（实测教训）。
+
+**后续（阶段 6 剩余）**：
+
+- 更多转场变体（Pixelate / Ripple / Wave…）与扩展参数（百叶窗条数、擦除方向、溶解噪点密度等）。
 - 溶解遮罩：灰度纹理，黑像素先过渡、白像素最后，用户可自定义遮罩图。
 - 转场只作用于剧场层——UI 层不在场景相机里，天然不受影响。
 

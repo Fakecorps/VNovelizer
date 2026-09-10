@@ -139,46 +139,37 @@ public class VNProjectConfig : ScriptableObject
     [Order(310), BoxGroup("三、UI 默认资源"), LabelText("默认头像框")]
     public Sprite DefaultHeadFrameSprite;
 
-    // ==================== 四、游戏启动设置 ====================
-    [Order(400), BoxGroup("四、游戏启动设置"), LabelText("默认剧本")]
-    [Tooltip("主界面点击新游戏时加载的默认剧本名称（不含扩展名）")]
-    public string DefaultScriptName = "Test101";
-
-    [Order(410), BoxGroup("四、游戏启动设置"), LabelText("默认行 ID")]
-    [Tooltip("留空则从剧本开头开始，填写则从指定行 ID 开始")]
-    public string DefaultLineID = "";
-
-    // ==================== 五、本地化 ====================
-    [Order(500), BoxGroup("五、剧情本地化"), LabelText("启用剧情本地化")]
+    // ==================== 四、本地化 ====================
+    [Order(500), BoxGroup("四、剧情本地化"), LabelText("启用剧情本地化")]
     [Tooltip("启用剧情 Text/Speaker 的多语言本地化。关闭时保持旧版 CSV 行为")]
     public bool EnableLocalization = false;
 
-    [Order(510), BoxGroup("五、剧情本地化"), ShowIf("EnableLocalization"), LabelText("Collection 名称")]
+    [Order(510), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("Collection 名称")]
     [Tooltip("兼容旧方案：共享 StringTableCollection 名称")]
     public string LocalizationCollectionName = "VN_Scripts";
 
-    [Order(520), BoxGroup("五、剧情本地化"), ShowIf("EnableLocalization"), LabelText("表名前缀")]
+    [Order(520), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("表名前缀")]
     [Tooltip("一剧本一表方案使用的 Collection 前缀")]
     public string ScriptTablePrefix = "VNScript_";
 
-    [Order(530), BoxGroup("五、剧情本地化"), ShowIf("EnableLocalization"), LabelText("缺失时回退 CSV")]
+    [Order(530), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("缺失时回退 CSV")]
     [Tooltip("当前语言缺失翻译时，是否回退显示本行 CSV 的 Speaker/Text")]
     public bool FallbackToCsvWhenMissing = true;
 
-    // ==================== 六、AES 加密 ====================
-    [Order(600), BoxGroup("六、AES 存档加密"), LabelText("启用加密")]
+    // ==================== 五、AES 加密 ====================
+    [Order(600), BoxGroup("五、AES 存档加密"), LabelText("启用加密")]
     [Tooltip("开发时建议关闭，发布时开启")]
     public bool UseAES = false;
 
-    [Order(610), BoxGroup("六、AES 存档加密"), ShowIf("UseAES"), LabelText("加密秘钥")]
+    [Order(610), BoxGroup("五、AES 存档加密"), ShowIf("UseAES"), LabelText("加密秘钥")]
     [ValidateInput("ValidateKey", "Key 必须正好是 32 个字符！")]
     public string Key = "12345678901234567890123456789012";
 
-    [Order(620), BoxGroup("六、AES 存档加密"), ShowIf("UseAES"), LabelText("偏移向量")]
+    [Order(620), BoxGroup("五、AES 存档加密"), ShowIf("UseAES"), LabelText("偏移向量")]
     [ValidateInput("ValidateIV", "IV 必须正好是 16 个字符！")]
     public string IV = "1234567890123456";
 
-    [Order(630), BoxGroup("六、AES 存档加密"), ShowIf("UseAES"), Button, LabelText("")]
+    [Order(630), BoxGroup("五、AES 存档加密"), ShowIf("UseAES"), Button, LabelText("")]
     public void GenerateRandomKey()
     {
         const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -190,85 +181,85 @@ public class VNProjectConfig : ScriptableObject
     private bool ValidateKey(string value) => value != null && value.Length == 32;
     private bool ValidateIV(string value) => value != null && value.Length == 16;
 
-    // ==================== 七、剧场 ====================
-    [Order(700), BoxGroup("七、剧场"), LabelText("自定义场景相机")]
+    // ==================== 六、剧场 ====================
+    [Order(700), BoxGroup("六、剧场"), LabelText("自定义场景相机")]
     [Tooltip("剧场专用场景相机预制体（可预挂后处理组件，如 Bloom/DoF，默认禁用）。留空使用引擎默认相机")]
     public GameObject CustomSceneCameraPrefab;
 
-    // ==================== 八、UI 模板覆写 ====================
+    // ==================== 七、UI 模板覆写 ====================
     // 指派自定义模板（Inspector 拖拽引用，位置无关）后优先生效；
     // 全部留空 = 使用包内默认模板（经资源服务链加载，无需任何配置）。
     // 推荐工作流：本分组顶部的"从模板创建…"按钮复制包内模板到自选位置后编辑。
-    [Order(800), BoxGroup("八、UI 模板覆写"), LabelText("游戏主面板")]
+    [Order(800), BoxGroup("七、UI 模板覆写"), LabelText("游戏主面板")]
     [Tooltip("留空使用包内默认模板")]
     public GameObject Override_VNGameplayPanel;
 
-    [Order(810), BoxGroup("八、UI 模板覆写"), LabelText("主菜单面板")]
+    [Order(810), BoxGroup("七、UI 模板覆写"), LabelText("主菜单面板")]
     public GameObject Override_MainMenuPanel;
 
-    [Order(820), BoxGroup("八、UI 模板覆写"), LabelText("画廊面板")]
+    [Order(820), BoxGroup("七、UI 模板覆写"), LabelText("画廊面板")]
     public GameObject Override_GalleryPanel;
 
-    [Order(830), BoxGroup("八、UI 模板覆写"), LabelText("暂停面板")]
+    [Order(830), BoxGroup("七、UI 模板覆写"), LabelText("暂停面板")]
     public GameObject Override_PausePanel;
 
-    [Order(840), BoxGroup("八、UI 模板覆写"), LabelText("历史记录面板")]
+    [Order(840), BoxGroup("七、UI 模板覆写"), LabelText("历史记录面板")]
     public GameObject Override_HistoryPanel;
 
-    [Order(850), BoxGroup("八、UI 模板覆写"), LabelText("存读档面板")]
+    [Order(850), BoxGroup("七、UI 模板覆写"), LabelText("存读档面板")]
     public GameObject Override_SaveLoadPanel;
 
-    [Order(860), BoxGroup("八、UI 模板覆写"), LabelText("设置面板")]
+    [Order(860), BoxGroup("七、UI 模板覆写"), LabelText("设置面板")]
     public GameObject Override_SettingsPanel;
 
-    [Order(870), BoxGroup("八、UI 模板覆写"), LabelText("分支选择面板")]
+    [Order(870), BoxGroup("七、UI 模板覆写"), LabelText("分支选择面板")]
     public GameObject Override_ChoicePanel;
 
-    [Order(880), BoxGroup("八、UI 模板覆写"), LabelText("确认弹窗面板")]
+    [Order(880), BoxGroup("七、UI 模板覆写"), LabelText("确认弹窗面板")]
     public GameObject Override_ConfirmPanel;
 
-    [Order(890), BoxGroup("八、UI 模板覆写"), LabelText("加载进度面板")]
+    [Order(890), BoxGroup("七、UI 模板覆写"), LabelText("加载进度面板")]
     public GameObject Override_LoadingProgressPanel;
 
-    [Order(900), BoxGroup("八、UI 模板覆写"), LabelText("对话提示项 (PromptItem)")]
+    [Order(900), BoxGroup("七、UI 模板覆写"), LabelText("对话提示项 (PromptItem)")]
     public GameObject Override_PromptItem;
 
-    [Order(910), BoxGroup("八、UI 模板覆写"), LabelText("分支选项项 (ChoiceItem)")]
+    [Order(910), BoxGroup("七、UI 模板覆写"), LabelText("分支选项项 (ChoiceItem)")]
     public GameObject Override_ChoiceItem;
 
-    [Order(920), BoxGroup("八、UI 模板覆写"), LabelText("存档槽 (SaveSlot)")]
+    [Order(920), BoxGroup("七、UI 模板覆写"), LabelText("存档槽 (SaveSlot)")]
     public GameObject Override_SaveSlot;
 
-    [Order(930), BoxGroup("八、UI 模板覆写"), LabelText("历史记录条目 (HistoryItem)")]
+    [Order(930), BoxGroup("七、UI 模板覆写"), LabelText("历史记录条目 (HistoryItem)")]
     public GameObject Override_HistoryItem;
 
-    [Order(940), BoxGroup("八、UI 模板覆写"), LabelText("画廊 CG 槽位 (CGSlot)")]
+    [Order(940), BoxGroup("七、UI 模板覆写"), LabelText("画廊 CG 槽位 (CGSlot)")]
     public GameObject Override_CGSlot;
 
-    [Order(950), BoxGroup("八、UI 模板覆写"), LabelText("画廊音乐条目 (MusicSlot)")]
+    [Order(950), BoxGroup("七、UI 模板覆写"), LabelText("画廊音乐条目 (MusicSlot)")]
     public GameObject Override_MusicSlot;
 
-    [Order(960), BoxGroup("八、UI 模板覆写"), LabelText("画廊场景槽位 (SceneSlot)")]
+    [Order(960), BoxGroup("七、UI 模板覆写"), LabelText("画廊场景槽位 (SceneSlot)")]
     public GameObject Override_SceneSlot;
 
-    [Order(970), BoxGroup("八、UI 模板覆写"), LabelText("EventSystem")]
+    [Order(970), BoxGroup("七、UI 模板覆写"), LabelText("EventSystem")]
     public GameObject Override_EventSystem;
 
-    [Order(980), BoxGroup("八、UI 模板覆写"), LabelText("音效对象 (SoundObj)")]
+    [Order(980), BoxGroup("七、UI 模板覆写"), LabelText("音效对象 (SoundObj)")]
     public GameObject Override_SoundObj;
 
-    [Order(990), BoxGroup("八、UI 模板覆写"), LabelText("视频对象 (VideoObj)")]
+    [Order(990), BoxGroup("七、UI 模板覆写"), LabelText("视频对象 (VideoObj)")]
     public GameObject Override_VideoObj;
 
     // —— 画廊数据容器（ScriptableObject，指派后优先生效；留空用包内默认） ——
-    [Order(1000), BoxGroup("八、UI 模板覆写"), LabelText("CG 数据容器")]
+    [Order(1000), BoxGroup("七、UI 模板覆写"), LabelText("CG 数据容器")]
     [Tooltip("留空使用包内默认数据容器（随画廊内容编辑器自动创建/管理）")]
     public CGDataContainer Override_CGDataContainer;
 
-    [Order(1010), BoxGroup("八、UI 模板覆写"), LabelText("音乐数据容器")]
+    [Order(1010), BoxGroup("七、UI 模板覆写"), LabelText("音乐数据容器")]
     public MusicDataContainer Override_MusicDataContainer;
 
-    [Order(1020), BoxGroup("八、UI 模板覆写"), LabelText("场景数据容器")]
+    [Order(1020), BoxGroup("七、UI 模板覆写"), LabelText("场景数据容器")]
     public SceneDataContainer Override_SceneDataContainer;
 
     // ==================== 辅助方法 ====================

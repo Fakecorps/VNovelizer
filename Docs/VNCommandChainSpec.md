@@ -364,7 +364,7 @@ shake(screen, 0.3) -> wait(0.5) -> showprompt("注意！")
 
 ```
 // 角色全部就位后，背景切换，再显示对话
-[charfadein(L, 1) & charfadein(M, 1)] -> bgfade(School, 1.5) -> showDialogueTypewriter
+[charfadein(L, 1) & charfadein(M, 1)] -> bgtrans(School, fade, 1.5) -> showDialogueTypewriter
 ```
 
 ### 8.4 串行链并行推进（两线并进）
@@ -388,7 +388,7 @@ shake(screen, 0.3) -> wait(0.5) -> showprompt("注意！")
 ```
 // Excel Command 列内容：
 [
-  bgfade(Beach, 1.5) &
+  bgtrans(Beach, fade, 1.5) &
   charfadein(L, 1) &
   charfadein(ML, 1)
 ] -> wait(0.5) -> playBGM(BGM01) -> shake(screen, 0.3, 5)

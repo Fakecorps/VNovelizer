@@ -398,6 +398,59 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             foreach (var s in scored) nodes.Add(s.id);
         }
 
+        /// <summary>
+        /// R13（2026-09-10）：为单个未匹配节点插位——锚定前驱位置，放在其右下方
+        /// （X = 前驱右边界 + <see cref="HorizontalGap"/>；同一前驱的多个新后继按
+        /// Y 垂直错开，间距 <see cref="NodeHeight"/> + <see cref="VerticalGap"/>）。
+        /// 绝不推动任何已有节点（空间不足时允许与后继轻微重叠，由用户自行调整）。
+        ///
+        /// <para>
+        /// 前驱是 Start 哨兵时用链起点站位锚定（链首的新节点落在起点右侧）。
+        /// 返回 false = 无可用锚点（调用方走瀑布兜底）。
+        /// </para>
+        /// </summary>
+        public static bool PlaceAfterPredecessor(ChainGraph graph, string nodeId,
+            Dictionary<string, Vector2> resolved, Dictionary<string, int> anchorUsage,
+            float startX, float centerY, out Vector2 position)
+        {
+            position = Vector2.zero;
+            if (graph == null || nodeId == null || resolved == null) return false;
+
+            // 找第一个有位置的前驱（Start 哨兵用链起点站位锚定）
+            ChainGraphNode anchorNode = null;
+            Vector2 anchor = Vector2.zero;
+            foreach (var pred in graph.GetPredecessors(nodeId))
+            {
+                var predNode = graph.GetNode(pred);
+                if (predNode == null) continue;
+
+                if (predNode.Kind == ChainGraphNodeKind.Start)
+                {
+                    anchorNode = predNode;
+                    anchor = new Vector2(startX, centerY - NodeHeight / 2f);
+                    break;
+                }
+                if (resolved.TryGetValue(pred, out var ppos))
+                {
+                    anchorNode = predNode;
+                    anchor = ppos;
+                    break;
+                }
+            }
+            if (anchorNode == null) return false;
+
+            // 同一锚点已放多个新后继 → 垂直错开
+            if (anchorUsage == null) anchorUsage = new Dictionary<string, int>();
+            anchorUsage.TryGetValue(anchorNode.Id, out int used);
+
+            float w = NodeWidthEst(anchorNode);
+            position = new Vector2(
+                anchor.x + w + HorizontalGap,
+                anchor.y + used * (NodeHeight + VerticalGap));
+            anchorUsage[anchorNode.Id] = used + 1;
+            return true;
+        }
+
         /// <summary>估算节点宽度（无实测宽度时使用）。</summary>
         public static float NodeWidthEst(ChainGraphNode node)
         {

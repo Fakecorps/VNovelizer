@@ -1,5 +1,5 @@
 ﻿命令名称,语法格式,参数说明,功能描述,示例,,,,,,,,,,,,,,,
-showbg,showbg(background),background: 背景资源名；留空则引用本行 Background 列（继承已应用）。特殊值：black=纯黑、hide=隐藏背景层,显示/切换背景（瞬时，无过渡；需过渡请用 bgfade）,showbg(Sitting) 或 showbg(),,,,,,,,,,,,,,,
+showbg,showbg(background),background: 背景资源名；留空则引用本行 Background 列（继承已应用）。特殊值：black=纯黑、hide=隐藏背景层,显示/切换背景（瞬时，无过渡；需过渡请用 bgtrans）,showbg(Sitting) 或 showbg(),,,,,,,,,,,,,,,
 showchar,"showchar(pos, charRef)","pos: 槽位 L/ML/M/MR/R（或全名）
 charRef: 立绘引用 角色#分组#表情；留空则引用本行对应立绘列；空=隐藏该槽（立绘列不继承）",按槽位显示/隐藏立绘,"showchar(M) 或 showchar(M, Amy#JK#Happy)",,,,,,,,,,,,,,,
 showspeaker,showspeaker(),无参数（说话人不可内联，永远引用本行 Speaker / HeadProfile 列）,刷新说话人姓名框与头像,showspeaker(),,,,,,,,,,,,,,,
@@ -10,10 +10,10 @@ config,config(key:value),key:value 冒号格式。可用项：voice:true|false�
 hide,hide(),无参数,手动隐藏对话框（等同玩家按隐藏键）,hide(),,,,,,,,,,,,,,,
 settextspeed,settextspeed(speed),speed: 秒/字（0.001-1，越小越快）,设置打字机速度（持久保存到全局设置）,settextspeed(0.03),,,,,,,,,,,,,,,
 setautospeed,setautospeed(speed),speed: 秒/字（0.01-2，越小换行越快）,设置自动播放换行间隔（持久保存到全局设置）,setautospeed(1.0),,,,,,,,,,,,,,,
-bgfade,"bgfade(bgname, duration, inEase, outEase)","bgname: 目标背景资源名
-duration: 淡化秒数（可选，默认 1.0）
-inEase: 新背景淡入曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
-outEase: 旧背景淡出曲线（可选；缺省旧背景保持不动。候选：Linear/Out*，含「无」空选）",交叉淡化切换背景（同时更新继承状态）,"bgfade(Sitting, 0.8) 或 bgfade(Sitting, 0.8, InSine, OutSine)",,,,,,,,,,,,,,,
+bgtrans,"bgtrans(bgname, type, duration, ease)","bgname: 目标背景资源名
+type: 过渡动画类型 fade=交叉淡化 / blinds=百叶窗 / wipe=擦除 / iris=圆形扩散 / scroll=卷轴 / dissolve=溶解（大小写不敏感，非法值警告并降级 fade；别名 shutter/circle/slide/roll/noise）
+duration: 过渡持续秒数（可选，默认 1.0；<=0 瞬间切换）
+ease: 缓动曲线（可选，预留位，首批不生效——进度恒为 Linear。候选：Linear/In*/InOut*，含「无」空选）",着色器驱动的背景切换过渡动画（已取代 bgfade）,"bgtrans(Beach, blinds, 1.5) 或 bgtrans(Beach, iris, 1.2)",,,,,,,,,,,,,,,
 addchar,"addchar(charRef, x, y, scale, posID)","charRef: 立绘引用 角色#分组#表情
 x: X 坐标（剧本像素，原点=画面中心）
 y: Y 坐标（剧本像素，原点=画面中心）

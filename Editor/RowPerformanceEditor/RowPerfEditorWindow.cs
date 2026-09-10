@@ -69,6 +69,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// </summary>
         private GraphUndoStack.Snapshot _pendingDragSnapshot;
 
+        /// <summary>
+        /// R13：拖动结束后的位置落盘防抖（约 1 秒）——布局是用户核心资产，
+        /// 即使直接关窗口也不丢。切行/保存等既有时机不受影响。
+        /// </summary>
+        private IVisualElementScheduledItem _posSaveDebounce;
+
         /// <summary>连续粘贴的落点递进计数（每次粘贴偏移一点，避免叠在同一位置）。</summary>
         private int _pasteCount;
 
@@ -1530,6 +1536,30 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
 
             UpdateHeaderAndStatus();
+
+            // R13：拖动结束后约 1 秒防抖把位置写盘（布局是用户资产，关窗口也不丢）
+            SchedulePositionSaveDebounced();
+        }
+
+        /// <summary>
+        /// R13：拖动结束后的位置落盘防抖。捕获拖动的行引用，触发时校验仍是
+        /// 当前行才写——切行已由 <see cref="SelectRow"/> 立即保存旧行位置，
+        /// 防抖到期时若已切走则不再重复写（避免用新行视图污染旧行缓存）。
+        /// </summary>
+        private void SchedulePositionSaveDebounced()
+        {
+            if (_graphView == null || string.IsNullOrEmpty(_csvPath)) return;
+            var row = CurrentRow;
+            if (row == null) return;
+
+            if (_posSaveDebounce != null && _posSaveDebounce.isActive)
+                _posSaveDebounce.Pause();
+
+            _posSaveDebounce = _graphView.schedule.Execute(() =>
+            {
+                if (ReferenceEquals(CurrentRow, row))
+                    GraphPosStore.Save(_csvPath, row.Id, _graphView.CollectPositions(), true);
+            }).StartingIn(1000);
         }
 
         private void PerformUndo()
@@ -1607,8 +1637,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // （与 RefreshAll 的视图合成、SaveCurrentRow 的保存兜底一致）。
             if (string.IsNullOrWhiteSpace(confirm)) confirm = "nextline()";
 
+            // R13：粘贴传当前视图位置（而非 null）——能匹配上的旧节点保持原位，
+            // 粘贴引入的新节点由分层匹配插位摆放，不再触发全量重排。
             _graphView.Rebuild(BuildGraph(entry, isConfirm: false),
-                BuildGraph(confirm, isConfirm: true), null, true,
+                BuildGraph(confirm, isConfirm: true), _graphView.CollectPositions(), true,
                 RowPromotion.DetermineForm(CurrentRow.Command) != RowForm.Custom,
                 frameAll: false);
 

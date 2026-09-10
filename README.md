@@ -234,7 +234,9 @@ Command 列支持用 `@Confirm:` 把指令切分为两段：**进入本行时执
 
 <br>
 
-*   `bgfade(imageName[, duration])`: 背景图淡入切换（duration 缺省 1.0 秒）。
+*   `bgtrans(imageName, type[, duration])`: 背景切换过渡动画（着色器驱动，duration 缺省 1.0 秒）。
+    *   *type*: `fade`（交叉淡化）/ `blinds`（百叶窗）/ `wipe`（左右擦除）/ `iris`（圆形扩散）/ `scroll`（卷轴）/ `dissolve`（噪点溶解）；大小写不敏感，非法值警告并降级为 `fade`。
+    *   *示例*: `bgtrans(Beach, blinds, 1.5)`。
 *   `shake(target[, duration, strength])`: 震动效果（duration 缺省 0.5，strength 缺省 10 像素）。
     *   *target*: `screen` (全屏)、`dialogue` (对话框) 或 `L`/`ML`/`M`/`MR`/`R`（对应槽位立绘）。
 *   `wait(seconds)`: 等待指定秒数（只能异步执行，用于命令链中控制节奏）。

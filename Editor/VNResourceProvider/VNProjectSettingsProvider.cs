@@ -18,13 +18,12 @@ internal class VNProjectSettingsProvider : SettingsProvider
     private Editor _editor;
     private VNProjectConfig _config;
 
-    private enum SubPage { Resources, Startup, Localization, Security, Theater, UIPrefabs }
+    private enum SubPage { Resources, Localization, Security, Theater, UIPrefabs }
     private SubPage _currentPage = SubPage.Resources;
 
     private static readonly string[] PageLabels =
     {
         "资源 / Resources",
-        "启动 / Startup",
         "本地化 / Localization",
         "加密 / Security",
         "剧场 / Theater",
@@ -125,7 +124,6 @@ internal class VNProjectSettingsProvider : SettingsProvider
         switch (_currentPage)
         {
             case SubPage.Resources:    DrawResourcesPage();    break;
-            case SubPage.Startup:      DrawStartupPage();      break;
             case SubPage.Localization: DrawLocalizationPage(); break;
             case SubPage.Security:     DrawSecurityPage();     break;
             case SubPage.Theater:      DrawTheaterPage();      break;
@@ -161,13 +159,6 @@ internal class VNProjectSettingsProvider : SettingsProvider
             "VNScriptResPath", "BackgroundResPath", "VideoResPath", "CharacterResPath",
             "ParticalEffectPath", "AnimationPath",
             "BgmResPath", "SFXResPath", "VoiceResPath");
-    }
-
-    /// <summary>启动页：默认剧本与行 ID</summary>
-    private void DrawStartupPage()
-    {
-        EditorGUILayout.LabelField("游戏启动", EditorStyles.boldLabel);
-        DrawFields("DefaultScriptName", "DefaultLineID");
     }
 
     /// <summary>本地化页</summary>

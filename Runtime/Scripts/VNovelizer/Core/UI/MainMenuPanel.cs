@@ -10,7 +10,17 @@ public class MainMenuPanel : BasePanel
 {
     #region 私有变量
     private bool _isStartingGame = false;
-    
+
+    #endregion
+
+    #region Inspector 配置
+
+    [Header("开始游戏设置")]
+    [SerializeField, Tooltip("主界面点击新游戏时加载的默认剧本名称（不含扩展名）")]
+    private string defaultScriptName = "Test101";
+
+    [SerializeField, Tooltip("留空则从剧本开头开始，填写则从指定行 ID 开始")]
+    private string defaultLineID = "";
 
     #endregion
     
@@ -158,23 +168,11 @@ public class MainMenuPanel : BasePanel
             return;
         }
 
-        // 从配置中读取默认剧本名称和行ID
-        string defaultScriptName = "Test101";
-        string defaultLineID = "";
+        // 使用 Inspector 中配置的默认剧本名称和行 ID（未配置时回退内置默认值）
+        string scriptName = string.IsNullOrEmpty(defaultScriptName) ? "Test101" : defaultScriptName;
+        string lineID = defaultLineID ?? "";
 
-        if (VNProjectConfig.Instance != null)
-        {
-            defaultScriptName = string.IsNullOrEmpty(VNProjectConfig.Instance.DefaultScriptName)
-                ? "Test101"
-                : VNProjectConfig.Instance.DefaultScriptName;
-            defaultLineID = VNProjectConfig.Instance.DefaultLineID ?? "";
-        }
-        else
-        {
-            Debug.LogWarning("[MainMenuPanel] VNProjectConfig 未找到，使用默认值");
-        }
-
-        StartCoroutine(StartNewGameFlow(defaultScriptName, defaultLineID));
+        StartCoroutine(StartNewGameFlow(scriptName, lineID));
     }
     /// <summary>
     /// 协程方法，按照顺序执行事件流，私有方法

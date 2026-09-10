@@ -5,7 +5,7 @@ using VNovelizer.Core.Commands.Meta;
 namespace VNovelizer.Core.Commands.SystemCommands
 {
     /// <summary>
-    /// 【系统命令】显示/切换背景（瞬时，无过渡效果——需过渡请用 <c>bgfade</c>）。
+    /// 【系统命令】显示/切换背景（瞬时，无过渡效果——需过渡请用 <c>bgtrans</c>）。
     ///
     /// <para><b>格式</b>：<c>showbg([name])</c></para>
     ///

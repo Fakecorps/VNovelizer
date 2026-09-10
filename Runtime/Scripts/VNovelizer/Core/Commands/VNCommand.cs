@@ -175,7 +175,7 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new AddCharCommand());
             RegisterCommand(new RemoveCharCommand());
             RegisterCommand(new ChoiceCommand());
-            RegisterCommand(new BgFadeCommand());
+            RegisterCommand(new BgTransCommand());
             RegisterCommand(new SetTextSpeedCommand());
             RegisterCommand(new SetAutoSpeedCommand());
             RegisterCommand(new TColorCommand());

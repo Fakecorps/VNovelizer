@@ -182,19 +182,26 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void BuildLane(ChainGraph graph, bool isConfirm, float centerY,
             Dictionary<string, Vector2> savedPositions, float startX)
         {
-            // 2026-08-28 R8：savedPositions 参数当前不被读取——所有节点统一走 Layout。
-            // 参数保留：Undo 快照（Positions 字段）可能仍需向后兼容；将来若加
-            // "用户主动保存布局" 快捷键，可在此处恢复读取逻辑。
+            // R13（2026-09-10）：推翻 R8 的"普通节点总是 Layout"，恢复原始设计 s2a
+            // 的"用户布局持久化"——savedPositions 有缓存时普通节点恢复用户位置
+            // （新增/删减节点经分层匹配增量摆放），无缓存时全量 Layout 一次作为
+            // 初始排布。哨兵仍永远由 Layout 固定（R8 端点固定保留：Entry 最左、
+            // Exit 最右的结构不变量）。
             bool hasContent = ChainGraphDumper.HasContent(graph);
 
             // 端点 ID（RowGraphView 视图层与图数据通过固定 ID 约定）
             string startId = ChainGraphDumper.SentinelId(isConfirm, true);
             string endId = ChainGraphDumper.SentinelId(isConfirm, false);
 
-            // 空链（仅哨兵、无连接）时 Layout 无从展开——哨兵用固定站位
+            // 哨兵位置永远由 Layout 决定（结构不变量）；空链（仅哨兵、无连接）时
+            // Layout 无从展开——哨兵用固定站位。
             var layout = hasContent ? ChainAutoLayout.Layout(graph, centerY) : null;
 
-            // 位置双重缺失（快照/保存位置都没有 + 自动布局也没覆盖到——如断链孤儿节点）时，
+            // 普通节点的用户布局恢复：null = 无缓存/零命中 → 走全量 Layout 首布局。
+            var resolved = ChainPositionMatcher.Resolve(
+                graph, isConfirm, savedPositions, startX, centerY);
+
+            // 位置双重缺失（无缓存 + 自动布局也没覆盖到——如断链孤儿节点）时，
             // 按索引错开散布，至少可读可拖。
             int unplacedIndex = 0;
 
@@ -210,9 +217,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 if (isStartSentinel || isEndSentinel)
                 {
-                    // 2026-08-28 端点固定：哨兵永远由 Layout 算（保证 LineEntry/Exit 总在
-                    // 最左/最右）。savedPositions 即使有哨兵键也忽略——用户拖动过的位置不
-                    // 应破坏结构约束。
+                    // 端点固定（R8 保留，R13 不变）：哨兵永远由 Layout 算（保证
+                    // LineEntry/Exit 总在最左/最右）。savedPositions 即使有哨兵键也忽略。
                     if (layout != null && layout.TryGetValue(node.Id, out var sentinelPos))
                         pos = sentinelPos;
                     else
@@ -223,29 +229,26 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                             : new Vector2(startX + 460f, centerY - 15f);
                     }
                 }
+                else if (resolved != null && resolved.TryGetValue(node.Id, out var userPos))
+                {
+                    // R13：用户保存的位置（ID 精确匹配 / 签名对齐 / 前驱插位摆放）
+                    pos = userPos;
+                }
+                else if (layout != null && layout.TryGetValue(node.Id, out var layoutPos))
+                {
+                    // R13：首布局——无缓存/零命中时全量 Layout 一次作为初始排布
+                    pos = layoutPos;
+                    pos.x += (startX - ChainAutoLayout.StartX);
+                }
                 else
                 {
-                    // 2026-08-28 R8：所有非端点节点统一走 Layout，savedPositions 不再覆盖。
-                    // 旧实现让用户上次拖动（或旧算法）保存的位置直接套用——既不保证
-                    // "每次打开都整齐"（R8 核心需求），又会出现"Line Entry 不在最左"、
-                    // "Fork 跑到了 LineEntry 左边"等结构错位（用户 2026-08-28 14:32 截图）。
-                    // 用户拖动仍然立即生效（OnNodesMoved 实时更新位置），只是切行/重开
-                    // 会被 Layout 重排——R8 优先级高于 R5 的"自由拖动保留"。
-                    if (layout != null && layout.TryGetValue(node.Id, out var layoutPos))
-                    {
-                        pos = layoutPos;
-                        pos.x += (startX - ChainAutoLayout.StartX);
-                    }
-                    else
-                    {
-                        // 双重缺失：错开散布防重叠（2 列瀑布）
-                        int row = unplacedIndex / 2;
-                        int col = unplacedIndex % 2;
-                        pos = new Vector2(
-                            startX + col * 240f,
-                            centerY + 180f + row * 90f);
-                        unplacedIndex++;
-                    }
+                    // 双重缺失：错开散布防重叠（2 列瀑布）
+                    int row = unplacedIndex / 2;
+                    int col = unplacedIndex % 2;
+                    pos = new Vector2(
+                        startX + col * 240f,
+                        centerY + 180f + row * 90f);
+                    unplacedIndex++;
                 }
 
                 view.SetPosition(new Rect(pos, new Vector2(0f, 0f)));
@@ -1320,11 +1323,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         /// <summary>
         /// 整理布局：按执行顺序重新排布全部节点（含端点约束、实测宽度）。
-        /// **唯一**触发全图自动布局的入口（工具栏按钮 / 右键菜单）。
+        /// **唯一**触发全图自动布局的主动入口（工具栏按钮 / 右键菜单）。
         ///
         /// <para>
-        /// 2026-08-28：RelayoutAll 现在会通知 Window 清空对应行的位置缓存——
-        /// 否则下次 Rebuild 仍会读回用户拖过的旧位置，"整理布局"只生效一次。
+        /// R13（2026-09-10）：重排结果经 OnPositionsRelayouted 立即覆盖写盘——
+        /// 下次 Rebuild 读回的就是整理后的位置，"整理布局"持久生效。
         /// </para>
         /// </summary>
         public void RelayoutAll()

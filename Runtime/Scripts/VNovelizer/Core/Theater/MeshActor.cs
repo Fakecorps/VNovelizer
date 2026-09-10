@@ -52,6 +52,10 @@ namespace VNovelizer.Core.Theater
 
         private static Shader _cachedShader;
 
+        /// <summary>背景过渡着色器缓存（Shader.Find 结果，避免每次切换重复查找）</summary>
+        private static Shader _cachedBgTransitionShader;
+        private static bool _bgTransitionShaderResolved;
+
         public MeshActor(string actorId, ActorKind kind, Transform parent)
         {
             ActorId = actorId;
@@ -197,6 +201,57 @@ namespace VNovelizer.Core.Theater
         {
             // TODO(Theater 阶段6): transitionName → 材质着色器变体（Crossfade/Dissolve/...）
             SetAppearance(next);
+        }
+
+        #endregion
+
+        #region 背景过渡着色器（bgtrans 命令）
+
+        /// <summary>
+        /// 切换到背景过渡着色器（VNovelizer/BGTransition），保留当前主纹理与颜色。
+        /// 供 TheaterManager 的过渡临时演员使用：先 SetAppearance(新图) 再调用本方法，
+        /// 材质即换为遮罩型过渡 Shader，此后由 SetBgTransitionProgress 每帧驱动。
+        /// 找不到 Shader 时保持原材质（Sprites/Default），过渡会退化为无遮罩的直显。
+        /// </summary>
+        public void UseBgTransitionShader()
+        {
+            if (!IsValid || _material == null) return;
+
+            if (!_bgTransitionShaderResolved)
+            {
+                // Shader.Find 优先（编辑器/已加载场景最快）；失败走 Resources.Load 兜底
+                // （包内 Runtime/Resources 会被打进 Player 构建，Shader.Find 对自定义
+                // shader 在构建中不可靠——不在 Always Included 列表里会被 strip）。
+                _cachedBgTransitionShader = Shader.Find("VNovelizer/BGTransition");
+                if (_cachedBgTransitionShader == null)
+                    _cachedBgTransitionShader = Resources.Load<Shader>("VNovelizerBGTransition");
+                _bgTransitionShaderResolved = true;
+            }
+
+            if (_cachedBgTransitionShader == null)
+            {
+                Debug.LogWarning("[MeshActor] 找不到 VNovelizer/BGTransition 着色器，过渡退化为直接显示");
+                return;
+            }
+
+            Texture tex = _material.mainTexture;
+            Color color = _material.color;
+            _material.shader = _cachedBgTransitionShader;
+            _material.mainTexture = tex;   // 换 Shader 后属性集不同，显式恢复通用属性
+            _material.color = color;
+        }
+
+        /// <summary>
+        /// 设置背景过渡着色器的驱动参数。
+        /// <paramref name="mode"/> 取值与 Shader _Mode 一致：
+        /// 0=Fade 1=Blinds 2=Wipe 3=Iris 4=Scroll 5=Dissolve。
+        /// </summary>
+        public void SetBgTransitionProgress(float progress, int mode, float blindsCount = 8f)
+        {
+            if (!IsValid || _material == null) return;
+            _material.SetFloat("_Progress", Mathf.Clamp01(progress));
+            _material.SetInt("_Mode", mode);
+            _material.SetFloat("_BlindsCount", Mathf.Max(blindsCount, 1f));
         }
 
         public IEnumerator FadeAsync(float targetAlpha, float duration, Ease ease = Ease.Linear)

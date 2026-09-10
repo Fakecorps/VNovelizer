@@ -6,7 +6,7 @@ namespace VNovelizer.Core.Compat
     /// <summary>
     /// Ease 枚举的单点求值器（Penner 标准 30 曲线）。
     ///
-    /// 剧场层 / UI 层自驱动协程动画（MeshActor.FadeAsync/MoveAsync、bgfade、charjump 等）
+    /// 剧场层 / UI 层自驱动协程动画（MeshActor.FadeAsync/MoveAsync、bgtrans、charjump 等）
     /// 用它替代 PrimeTween——PrimeTween 不暴露"给定 t 求值"的公开 API。
     /// 与 PrimeTween 语义对齐：Ease.Default 按 PrimeTween 缺省缓动（OutQuad）求值。
     /// </summary>

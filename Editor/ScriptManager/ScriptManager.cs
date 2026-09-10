@@ -475,6 +475,11 @@ public class ScriptManagerWindow : EditorWindow
     {
         string scriptName = Path.GetFileNameWithoutExtension(file.Name);
 
+        // 【修复 2026-09-10】试玩前强制把该剧本 Excel 同步为 CSV。
+        // 自动转换是 2 秒轮询且 Play 模式下挂起——保存 Excel 后立刻点试玩时轮询尚未触发，
+        // 运行时只会读到旧 CSV（表现：剧本已把 happy 改成 shy，运行仍报 happy 不存在）。
+        AutoExcelConverter.ForceConvertFile(file.FullName);
+
         // 写入试玩标记（VNRuntimeInitializer.AutoPlayOnPlayMode 在任意场景进入 Play 时检测）
         PlayerPrefs.SetString("Debug_LastScriptName", scriptName);
         PlayerPrefs.SetString("Debug_LastLineID", "");
