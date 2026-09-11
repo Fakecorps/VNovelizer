@@ -17,6 +17,12 @@ namespace VNovelizer.Core.Theater
         bool IsValid { get; }                // 渲染对象是否存活
 
         // ---- 外观 ----
+        /// <summary>
+        /// 本实现能否承载该外观（能力探测）。
+        /// MeshActor 只接 sprite/texture；动态演员（L2DActor）只接携带 profile 的外观。
+        /// TheaterManager 发现不匹配时销毁重建演员（同槽位立绘 ↔ Live2D 无缝切换）。
+        /// </summary>
+        bool Accepts(ActorAppearance appearance);
         void SetAppearance(ActorAppearance appearance);
 
         // ---- 变换 ----
@@ -38,5 +44,8 @@ namespace VNovelizer.Core.Theater
         IEnumerator FadeAsync(float targetAlpha, float duration, Ease ease = Ease.Linear);
         IEnumerator MoveAsync(Vector2 targetPx, float duration, Ease ease = Ease.Linear);
         void Interrupt();                    // 跳过/中断时瞬间到终态
+
+        /// <summary>释放渲染对象（演员退场/换装重建时调用；MeshActor 销毁自建网格，L2DActor 销毁模型实例）</summary>
+        void Dispose();
     }
 }

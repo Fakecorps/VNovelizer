@@ -50,7 +50,7 @@ public class CharacterEditorWindow : EditorWindow
         splitView.style.minWidth = 0;
         splitView.style.minHeight = 0;
 
-        listPanel = new CharacterListPanelView(presenter);
+        listPanel = new CharacterListPanelView(presenter, root);
         detailPanel = new CharacterDetailPanelView(presenter, () => previewOverlay);
 
         splitView.Add(listPanel);
@@ -129,7 +129,7 @@ public class CharacterEditorWindow : EditorWindow
         refreshBtn.style.marginRight = 8;
         titleBar.Add(refreshBtn);
 
-        var createBtn = new Button(presenter.CreateNewCharacter) { text = "+ 新建角色" };
+        var createBtn = new Button(() => CharacterCreateTypeDialog.Show(presenter, root)) { text = "+ 新建角色" };
         GalleryStyles.ApplyButton(createBtn, GalleryTheme.Accent, true);
         createBtn.style.height = 30;
         titleBar.Add(createBtn);

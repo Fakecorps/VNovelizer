@@ -374,7 +374,7 @@ Config 现结构（用户可见路径字段 = 0）：
 
 ## 附录：验证清单（升级 Unity 后手动执行）
 
-1. 打开 Dev 项目（`D:\Unity\Unity项目\Vnovelizer_Dev`）→ Package Manager 自动安装 Addressables → 无编译错误；
+1. 打开 Dev 项目（`D:\Unity\Unity项目\VNovelizer_Dev1`）→ Package Manager 自动安装 Addressables → 无编译错误；
 2. 新建空工程走向导 → 确认：Assets 内仅出现 `VNovelizer/`（空目录）、`Resources/VNProjectConfig.asset`、`AddressableAssetsData/`；Build Settings 场景为 Packages 路径；
 3. Play：VNDebugScene 加载剧本 → 背景/BGM/立绘/语音经 Addressables 命中（Console 应有 `[VNResourceService] 资源提供者链就绪: Addressables → Resources`）；
 4. 存量工程（含 `Assets/Resources/VNovelizerRes`）→ 向导显示兼容模式 → Play 一切照旧（链描述应为 `Addressables(不可用) → Resources`）；

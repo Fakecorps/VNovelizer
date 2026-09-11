@@ -1,0 +1,23 @@
+{
+    "name": "VNovelizer.L2D.Editor",
+    "rootNamespace": "VNovelizer.L2D.EditorTools",
+    "references": [
+        "VNovelizer.Runtime",
+        "VNovelizer.Editor",
+        "VNovelizer.L2D.Runtime",
+        "Live2D.Cubism"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "VN_L2D"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

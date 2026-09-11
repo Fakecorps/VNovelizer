@@ -76,6 +76,13 @@ namespace VNovelizer.Core.Theater
 
         #region 外观
 
+        /// <summary>静态 quad 演员只承载 Sprite/Texture 外观（动态立绘 profile 外观返回 false）</summary>
+        public bool Accepts(ActorAppearance appearance)
+        {
+            return appearance != null &&
+                   (appearance.sprite != null || appearance.texture != null);
+        }
+
         public void SetAppearance(ActorAppearance appearance)
         {
             if (!IsValid)

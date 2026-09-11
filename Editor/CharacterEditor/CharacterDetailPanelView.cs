@@ -116,9 +116,11 @@ public class CharacterDetailPanelView : VisualElement
     // =========================================================
     private void DrawDetailView(CharacterProfile profile)
     {
+        // 角色类型扩展（Live2D 等）：控制预览占位、立绘 Tab 隐藏与专属区块渲染
+        var extension = CharacterTypeExtensionRegistry.Find(profile);
         DrawHeader(profile);
-        DrawMiddleSection(profile);
-        DrawTabSection(profile);
+        DrawMiddleSection(profile, extension);
+        DrawTabSection(profile, extension);
     }
 
     // =========================================================
@@ -169,7 +171,7 @@ public class CharacterDetailPanelView : VisualElement
     // =========================================================
     //                      中部：配置 + 预览
     // =========================================================
-    private void DrawMiddleSection(CharacterProfile profile)
+    private void DrawMiddleSection(CharacterProfile profile, ICharacterTypeExtension extension)
     {
         var middleContainer = new VisualElement();
         middleContainer.style.flexDirection = FlexDirection.Row;
@@ -268,37 +270,57 @@ public class CharacterDetailPanelView : VisualElement
         previewPane.style.justifyContent = Justify.Center;
         previewPane.style.alignItems = Align.Center;
 
-        previewImage = new Image();
-        previewImage.scaleMode = ScaleMode.ScaleToFit;
-        previewImage.style.flexGrow = 1;
-        previewImage.style.width = Length.Percent(90);
-        previewImage.style.height = Length.Percent(90);
-        previewImage.pickingMode = PickingMode.Ignore;
-
-        previewPane.Add(previewImage);
-
-        // 点击预览图弹大图
-        previewPane.RegisterCallback<ClickEvent>(_ =>
+        if (extension != null)
         {
-            if (previewImage?.sprite != null && previewOverlay != null)
-                previewOverlay.Show(previewImage.sprite);
-        });
-
-        // 无预览时的提示
-        var previewHint = new Label("选中表情查看预览")
-        {
-            name = "previewHint",
-            pickingMode = PickingMode.Ignore,
-            style =
+            // 扩展类型（Live2D 等）：MVP 无 Sprite 预览，显示占位文案（P4 换实例化预览）
+            var placeholder = new Label(extension.GetPreviewPlaceholder(profile) ?? "模型预览开发中（P4）")
             {
-                position = Position.Absolute,
-                top = 0, bottom = 0, left = 0, right = 0,
-                unityTextAlign = TextAnchor.MiddleCenter,
-                color = GalleryTheme.Hex(GalleryTheme.TextMuted),
-                fontSize = 11
-            }
-        };
-        previewPane.Add(previewHint);
+                style =
+                {
+                    unityTextAlign = TextAnchor.MiddleCenter,
+                    whiteSpace = WhiteSpace.Normal,
+                    color = GalleryTheme.Hex(GalleryTheme.TextMuted),
+                    fontSize = 11,
+                    paddingLeft = 8,
+                    paddingRight = 8
+                }
+            };
+            previewPane.Add(placeholder);
+        }
+        else
+        {
+            previewImage = new Image();
+            previewImage.scaleMode = ScaleMode.ScaleToFit;
+            previewImage.style.flexGrow = 1;
+            previewImage.style.width = Length.Percent(90);
+            previewImage.style.height = Length.Percent(90);
+            previewImage.pickingMode = PickingMode.Ignore;
+
+            previewPane.Add(previewImage);
+
+            // 点击预览图弹大图
+            previewPane.RegisterCallback<ClickEvent>(_ =>
+            {
+                if (previewImage?.sprite != null && previewOverlay != null)
+                    previewOverlay.Show(previewImage.sprite);
+            });
+
+            // 无预览时的提示
+            var previewHint = new Label("选中表情查看预览")
+            {
+                name = "previewHint",
+                pickingMode = PickingMode.Ignore,
+                style =
+                {
+                    position = Position.Absolute,
+                    top = 0, bottom = 0, left = 0, right = 0,
+                    unityTextAlign = TextAnchor.MiddleCenter,
+                    color = GalleryTheme.Hex(GalleryTheme.TextMuted),
+                    fontSize = 11
+                }
+            };
+            previewPane.Add(previewHint);
+        }
 
         middleContainer.Add(previewPane);
         contentPane.Add(middleContainer);
@@ -307,14 +329,17 @@ public class CharacterDetailPanelView : VisualElement
     // =========================================================
     //                      Tab 区域
     // =========================================================
-    private void DrawTabSection(CharacterProfile profile)
+    private void DrawTabSection(CharacterProfile profile, ICharacterTypeExtension extension)
     {
+        // 扩展类型（Live2D 等）：隐藏立绘 Tab，替换为扩展专属区块；头像 Tab 保留（静态头图）
+        bool customType = extension != null && extension.HideSpriteTabs(profile);
+
         // Tab 按钮行
         var tabContainer = new VisualElement();
         tabContainer.style.flexDirection = FlexDirection.Row;
         tabContainer.style.marginBottom = 0;
 
-        expTab = CreateTabButton("立绘 (Expressions)", 0);
+        expTab = CreateTabButton(customType ? $"{extension.TypeName} 配置" : "立绘 (Expressions)", 0);
         headTab = CreateTabButton("头像 (Heads)", 1);
 
         tabContainer.Add(expTab);
@@ -333,16 +358,29 @@ public class CharacterDetailPanelView : VisualElement
         listContainer.Add(headContainer);
         contentPane.Add(listContainer);
 
-        DrawExpressionList(profile);
-        DrawHeadList(profile);
+        if (customType)
+        {
+            // 扩展专属区块（模型/表情/动作配置），由扩展程序集渲染
+            var section = extension.CreateDetailSection(profile, () => Rebuild());
+            if (section != null)
+            {
+                section.style.flexGrow = 1;
+                expressionContainer.Add(section);
+            }
+        }
+        else
+        {
+            DrawExpressionList(profile);
+            // 拖放导入（二维分组：文件名三级自动分组）
+            RegisterDropHandlers(expressionContainer, profile.ElementSpriteGroups, profile, "立绘",
+                () => Rebuild());
+        }
 
-        // 拖放导入（二维分组：文件名三级自动分组）
-        RegisterDropHandlers(expressionContainer, profile.ElementSpriteGroups, profile, "立绘",
-            () => Rebuild());
+        DrawHeadList(profile);
         RegisterDropHandlers(headContainer, profile.HeadSpriteGroups, profile, "头像",
             () => Rebuild());
 
-        SwitchTab(currentTab);
+        SwitchTab(customType ? 0 : currentTab);
     }
 
     // =========================================================

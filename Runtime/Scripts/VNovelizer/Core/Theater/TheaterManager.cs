@@ -62,6 +62,12 @@ namespace VNovelizer.Core.Theater
         private Transform _root;
         private Transform _actorsRoot;
 
+        /// <summary>
+        /// 演员工厂（可插拔）。默认 MeshActor 工厂；插件内 Live2D 支持经
+        /// L2DBridge 替换——按 appearance.profile 是否为动态立绘返回 L2DActor。
+        /// </summary>
+        public static IActorFactory ActorFactory { get; set; } = new DefaultActorFactory();
+
         private readonly Dictionary<string, ActorState> _states = new Dictionary<string, ActorState>();
         private readonly Dictionary<string, IActor> _actors = new Dictionary<string, IActor>();
 
@@ -156,14 +162,36 @@ namespace VNovelizer.Core.Theater
             CharacterProfile profile = CharacterResManager.GetInstance().GetCharacterProfile(characterID);
             if (profile == null) return; // GetCharacterProfile 已打印详细错误
 
-            Sprite sprite = profile.GetEmotionSprite(group, emotion);
-            if (sprite == null)
+            // 外观解析：静态立绘走 Sprite；动态立绘（Live2D 等）外观直接携带配置引用，
+            // 由演员工厂创建对应动态演员（情绪串 = 动态演员的表情 ID 等专属语义，实现侧解析）。
+            ActorAppearance appearance;
+            if (!profile.IsSpriteBased)
             {
-                Debug.LogWarning($"[TheaterManager] 角色 {characterID}#{group}#{emotion} 缺少立绘 Sprite，跳过显示");
-                return;
+                // L2D：中段 = 入场动作 ID（空/"Default" = 不播动作，兼容分组写法习惯）；
+                // appearance id 归一为 ID#Default#表情（存档稳定、与"动作瞬态不重播"语义解耦），
+                // 动作经 showMotionId 现场触发——读档路径（ResolveAppearance）不填充该字段。
+                string motionId = group;
+                if (!string.IsNullOrEmpty(motionId) &&
+                    string.Equals(motionId, "Default", System.StringComparison.OrdinalIgnoreCase))
+                    motionId = "";
+
+                appearance = new ActorAppearance($"{characterID}#{CharacterProfile.DefaultGroupName}#{emotion}", profile)
+                {
+                    showMotionId = string.IsNullOrEmpty(motionId) ? null : motionId
+                };
+            }
+            else
+            {
+                Sprite sprite = profile.GetEmotionSprite(group, emotion);
+                if (sprite == null)
+                {
+                    Debug.LogWarning($"[TheaterManager] 角色 {characterID}#{group}#{emotion} 缺少立绘 Sprite，跳过显示");
+                    return;
+                }
+                appearance = new ActorAppearance($"{characterID}#{group}#{emotion}", sprite);
             }
 
-            string appearanceId = $"{characterID}#{group}#{emotion}";
+            string appearanceId = appearance.id;
 
             // 状态 + 渲染对象
             EnsureActor(posCode, ActorKind.Character);
@@ -184,8 +212,8 @@ namespace VNovelizer.Core.Theater
             SetAlpha(posCode, 1f);
             SetVisible(posCode, true);
 
-            // 最后应用外观（网格按 Sprite 尺寸重建）
-            GetActor(posCode)?.SetAppearance(new ActorAppearance(appearanceId, sprite));
+            // 最后应用外观（外观与演员实现不匹配时经工厂换演员：MeshActor ↔ 动态演员）
+            SetAppearance(posCode, appearance);
 
             VNDebug.LogVerbose($"[TheaterManager] 登台: {appearanceId} @ {posCode} (scale={profileScale}, flip={flipped}, pos={basePos + profile.offset})");
         }
@@ -628,10 +656,28 @@ namespace VNovelizer.Core.Theater
             if (!_actors.TryGetValue(actorId, out var actor) || actor == null || !actor.IsValid)
             {
                 if (actor != null) _actors.Remove(actorId);
-                actor = new MeshActor(actorId, kind, _actorsRoot);
+                actor = ActorFactory.Create(actorId, kind, null, _actorsRoot);
                 _actors[actorId] = actor;
                 ApplyState(actorId); // 新建渲染对象时全量同步一次状态
             }
+            return actor;
+        }
+
+        /// <summary>
+        /// 换演员：现有演员实现无法承载目标外观（AcceptS 不匹配）时销毁重建，
+        /// 新实现由工厂按 appearance 决策。状态（_states）保留不动。
+        /// </summary>
+        private IActor RecreateActor(string actorId, ActorKind kind, ActorAppearance appearance)
+        {
+            if (_actors.TryGetValue(actorId, out var old) && old != null)
+            {
+                old.Interrupt();
+                old.Dispose();
+            }
+            _actors.Remove(actorId);
+
+            var actor = ActorFactory.Create(actorId, kind, appearance, _actorsRoot);
+            _actors[actorId] = actor;
             return actor;
         }
 
@@ -657,7 +703,7 @@ namespace VNovelizer.Core.Theater
             if (_actors.TryGetValue(actorId, out var actor))
             {
                 actor?.Interrupt();
-                (actor as MeshActor)?.Dispose();
+                actor?.Dispose();
                 _actors.Remove(actorId);
             }
             _states.Remove(actorId);
@@ -681,7 +727,7 @@ namespace VNovelizer.Core.Theater
             foreach (var actor in _actors.Values)
             {
                 actor?.Interrupt();
-                (actor as MeshActor)?.Dispose();
+                actor?.Dispose();
             }
             _actors.Clear();
             _states.Clear();
@@ -835,7 +881,13 @@ namespace VNovelizer.Core.Theater
             if (!string.IsNullOrEmpty(state.appearance))
             {
                 var resolved = ResolveAppearance(state);
-                if (resolved != null) actor.SetAppearance(resolved);
+                if (resolved != null)
+                {
+                    // 外观类型与现有演员实现不匹配（如读档后立绘 → Live2D）→ 换演员
+                    if (!actor.Accepts(resolved))
+                        actor = RecreateActor(actorId, state.kind, resolved);
+                    actor.SetAppearance(resolved);
+                }
             }
 
             actor.SetPosition(state.position);
@@ -868,7 +920,13 @@ namespace VNovelizer.Core.Theater
                 if (parts.Length == 3)
                 {
                     var profile = CharacterResManager.GetInstance().TryGetCharacterProfile(parts[0]);
-                    Sprite sprite = profile?.GetEmotionSprite(parts[1], parts[2]);
+                    if (profile == null) return null;
+
+                    // 动态立绘（Live2D 等）：外观携带配置引用，渲染实现由演员工厂决策
+                    if (!profile.IsSpriteBased)
+                        return new ActorAppearance(state.appearance, profile);
+
+                    Sprite sprite = profile.GetEmotionSprite(parts[1], parts[2]);
                     if (sprite != null) return new ActorAppearance(state.appearance, sprite);
                 }
                 return null;
@@ -904,7 +962,16 @@ namespace VNovelizer.Core.Theater
                 return;
             }
             state.appearance = appearance?.id ?? string.Empty;
-            GetActor(actorId)?.SetAppearance(appearance);
+
+            var actor = GetActor(actorId);
+            if (actor == null || !actor.Accepts(appearance))
+            {
+                // 现有演员无法承载该外观（立绘 ↔ Live2D 切换等）→ 换演员 + 全量状态同步
+                RecreateActor(actorId, state.kind, appearance);
+                ApplyState(actorId);
+                return;
+            }
+            actor.SetAppearance(appearance);
         }
 
         public void SetPosition(string actorId, Vector2 posPx)

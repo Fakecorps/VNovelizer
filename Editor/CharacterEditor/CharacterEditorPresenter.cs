@@ -105,15 +105,20 @@ public class CharacterEditorPresenter
         OnSelectionChanged?.Invoke(profile);
     }
 
-    public void CreateNewCharacter()
+    /// <summary>
+    /// 新建角色（类型分发）：extension 为 null = 普通立绘角色；
+    /// 否则由扩展（如 Live2D）创建并初始化对应类型的资产实例。
+    /// </summary>
+    public void CreateNewCharacter(ICharacterTypeExtension extension)
     {
         EnsureDirectory();
 
         // 保存位置由用户自选（SaveFilePanelInProject 限定项目内）：
         // 物理位置与运行时索引无关（注册走 Addressables 地址/Label），默认落点仍是角色类别目录
+        string title = extension == null ? "新建角色" : $"新建{extension.TypeName}";
         string path = EditorUtility.SaveFilePanelInProject(
-            "新建角色", "NewCharacter", "asset",
-            "选择角色资产（CharacterProfile）的保存位置。\n文件名 = 角色ID（剧本 Speaker / CharLeft 等列引用的名字），\n保存在项目内任意位置均可。",
+            title, "NewCharacter", "asset",
+            "选择角色资产的保存位置。\n文件名 = 角色ID（剧本 Speaker / CharLeft 等列引用的名字），\n保存在项目内任意位置均可。",
             CHARACTER_PATH);
         if (string.IsNullOrEmpty(path)) return; // 用户取消
 
@@ -124,11 +129,26 @@ public class CharacterEditorPresenter
         }
 
         string characterId = Path.GetFileNameWithoutExtension(path);
-        CharacterProfile newProfile = ScriptableObject.CreateInstance<CharacterProfile>();
-        newProfile.CharacterID = characterId;
-        // 新建角色自带默认分组
-        newProfile.ElementSpriteGroups.Add(new ElementSpriteGroup { Group = CharacterProfile.DefaultGroupName });
-        newProfile.HeadSpriteGroups.Add(new ElementSpriteGroup { Group = CharacterProfile.DefaultGroupName });
+
+        CharacterProfile newProfile;
+        if (extension != null)
+        {
+            // 扩展类型（Live2D 等）：实例由扩展创建并初始化（落盘/地址注册由核心统一处理）
+            newProfile = extension.CreateProfileAsset(path, characterId);
+            if (newProfile == null)
+            {
+                Debug.LogError($"[CharacterEditor] 扩展 '{extension.TypeName}' 未能创建角色资产实例");
+                return;
+            }
+        }
+        else
+        {
+            newProfile = ScriptableObject.CreateInstance<CharacterProfile>();
+            newProfile.CharacterID = characterId;
+            // 新建角色自带默认分组
+            newProfile.ElementSpriteGroups.Add(new ElementSpriteGroup { Group = CharacterProfile.DefaultGroupName });
+            newProfile.HeadSpriteGroups.Add(new ElementSpriteGroup { Group = CharacterProfile.DefaultGroupName });
+        }
 
         AssetDatabase.CreateAsset(newProfile, path);
         AssetDatabase.SaveAssets();

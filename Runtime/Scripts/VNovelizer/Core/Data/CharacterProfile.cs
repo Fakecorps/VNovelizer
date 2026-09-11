@@ -14,6 +14,13 @@ public class CharacterProfile : ScriptableObject, ISerializationCallbackReceiver
     /// <summary>默认分组名（未分类立绘归入此组）</summary>
     public const string DefaultGroupName = "Default";
 
+    /// <summary>
+    /// 是否为基于 Sprite 的静态立绘角色。
+    /// 动态立绘（如 Live2D 的 L2DCharacterProfile）覆写为 false——
+    /// 剧场层据此走"外观携带配置引用 + 动态演员工厂"路径而非 Sprite 解析。
+    /// </summary>
+    public virtual bool IsSpriteBased => true;
+
     // 角色ID（唯一标识）
     public string CharacterID;
 

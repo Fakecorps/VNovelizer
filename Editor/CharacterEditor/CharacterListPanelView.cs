@@ -16,9 +16,13 @@ public class CharacterListPanelView : VisualElement
     private ToolbarSearchField searchField;
     private Label statusLabel;
 
-    public CharacterListPanelView(CharacterEditorPresenter presenter)
+    /// <summary>新建对话框挂载根（窗口根；列表面板只有 340px 宽，挂这里会被裁切）</summary>
+    private readonly VisualElement dialogMountRoot;
+
+    public CharacterListPanelView(CharacterEditorPresenter presenter, VisualElement dialogMountRoot)
     {
         this.presenter = presenter;
+        this.dialogMountRoot = dialogMountRoot;
         style.flexDirection = FlexDirection.Column;
         style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgSecondary);
         style.borderRightWidth = 1;
@@ -73,7 +77,7 @@ public class CharacterListPanelView : VisualElement
         });
         row.Add(searchField);
 
-        var createBtn = new Button(presenter.CreateNewCharacter) { text = "+ 新建角色" };
+        var createBtn = new Button(() => CharacterCreateTypeDialog.Show(presenter, dialogMountRoot)) { text = "+ 新建角色" };
         GalleryStyles.ApplyButton(createBtn, GalleryTheme.Accent, true);
         createBtn.style.width = 88;
         createBtn.style.flexShrink = 0;
@@ -225,7 +229,8 @@ public class CharacterListPanelView : VisualElement
         }
         else
         {
-            var ph = new Label("无立绘")
+            var typeExt = CharacterTypeExtensionRegistry.Find(profile);
+            var ph = new Label(typeExt != null ? typeExt.TypeName : "无立绘")
             {
                 style =
                 {
@@ -237,6 +242,33 @@ public class CharacterListPanelView : VisualElement
                 }
             };
             imgWrap.Add(ph);
+        }
+
+        // 类型徽标：扩展类型（Live2D 等）在封面左上角显示小标签
+        var extBadge = CharacterTypeExtensionRegistry.Find(profile);
+        if (extBadge != null)
+        {
+            var badge = new Label(extBadge.TypeName.Replace("角色", "").Trim())
+            {
+                style =
+                {
+                    position = Position.Absolute,
+                    left = 2,
+                    top = 2,
+                    fontSize = 9,
+                    color = Color.white,
+                    backgroundColor = GalleryTheme.Hex(GalleryTheme.Accent),
+                    paddingTop = 1,
+                    paddingBottom = 1,
+                    paddingLeft = 4,
+                    paddingRight = 4,
+                    borderTopLeftRadius = 3,
+                    borderTopRightRadius = 3,
+                    borderBottomLeftRadius = 3,
+                    borderBottomRightRadius = 3
+                }
+            };
+            imgWrap.Add(badge);
         }
 
         var nameLabel = new Label(profile.CharacterID)

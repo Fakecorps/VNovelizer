@@ -46,6 +46,21 @@ namespace VNovelizer.Core.Theater
         public Sprite sprite;
         public Texture2D texture;
 
+        /// <summary>
+        /// 动态立绘（Live2D 等）的角色配置引用。
+        /// 本字段只承载核心自有类型 CharacterProfile——动态演员（如 L2DActor）拿到后
+        /// 自行 cast 为具体子类读取其专属配置，核心零外部依赖。
+        /// </summary>
+        public CharacterProfile profile;
+
+        /// <summary>
+        /// 现场登台时的一次性动作指令（仅动态立绘使用，如 L2D 立绘列 角色ID#动作#表情 的动作段）。
+        /// 只由 TheaterManager.OnShowCharacter 的现场路径填充；读档/快进重建的
+        /// ResolveAppearance 路径不填充——动作是瞬态表演，不随存档重播。
+        /// ActorState 只持久化 id 字符串，本字段天然不进存档。
+        /// </summary>
+        public string showMotionId;
+
         public ActorAppearance(string id, Sprite sprite)
         {
             this.id = id;
@@ -56,6 +71,12 @@ namespace VNovelizer.Core.Theater
         {
             this.id = id;
             this.texture = texture;
+        }
+
+        public ActorAppearance(string id, CharacterProfile profile)
+        {
+            this.id = id;
+            this.profile = profile;
         }
     }
 

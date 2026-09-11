@@ -1,0 +1,19 @@
+{
+    "name": "VNovelizer.L2D.Runtime",
+    "rootNamespace": "VNovelizer.L2D",
+    "references": [
+        "VNovelizer.Runtime",
+        "Live2D.Cubism"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "VN_L2D"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

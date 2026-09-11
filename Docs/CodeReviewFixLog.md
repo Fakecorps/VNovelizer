@@ -357,16 +357,16 @@
 | # | 事项 | 降级方式 | 原因 |
 |---|------|----------|------|
 | 1 | **#16 命令参数解析统一引号感知分割** | 未实施 | 跨全部命令替换 `Split(',')` 属高风险重构，无测试基建保护，盲改可能引入解析回归；已记录为优化方向 |
-| 2 | **#48 完整后台线程化**（AutoExcelConverter/RowPerfEditor/本地化 11MB 扫描） | 部分实施 | 已做批处理节流（Fix-48）；完整后台线程 + delayCall 回主线程的方案涉及 Editor 生命周期协调，建议在 Dev 工程实测后再切 |
+| 2 | **#48 完整后台线程化**（AutoExcelConverter/RowPerfEditor/本地化 11MB 扫描） | 部分实施 | 已做批处理节流（Fix-48）；完整后台线程 + delayCall 回主线程的方案涉及 Editor 生命周期协调，建议在 Dev1 工程实测后再切 |
 | 3 | **#60 asmdef 拆分**（Localization 独立程序集） | 未实施 | 拆 asmdef 影响程序集引用链与 GUID 依赖，属架构级变更；当前 package.json 已声明 `com.unity.localization` 为必装依赖，实际风险低 |
 | 4 | MusicManager 构造器 `AddUpdateListener` 无移除路径 | 接受现状 | 全局单例进程级常驻，无实际泄漏；已记录 |
 | 5 | `MeshActor.RunFade/RunMove` 提前 yield break 不置空协程句柄 | 未实施 | 现被 RemoveActor/Dispose 先调 Interrupt 掩盖，属脆弱设计但无现网触发路径；建议后续统一 `finally` 置空 |
 
 ---
 
-## 八、验证清单（建议在 Dev 工程执行）
+## 八、验证清单（建议在 Dev1 工程执行）
 
-1. **编译**：`D:\Unity\Unity项目\Vnovelizer_Dev` 打开 Unity，确认 Runtime/Editor 两程序集零编译错误（静态 lint 已全绿）。
+1. **编译**：`D:\Unity\Unity项目\VNovelizer_Dev1` 打开 Unity，确认 Runtime/Editor 两程序集零编译错误（静态 lint 已全绿）。
 2. **P0 存档**：开启 AES 加密 → 存/读档正常；删除 ProjectSettings 中 Key/IV → 保存应报错且**不落盘明文**；用旧版（无 IV 前缀）存档读档兼容；手工写坏 global_data.json → 游戏正常启动并生成 `.corrupted_*` 备份。
 3. **P1 流程**：连续开局/读档多次后开启自动播放 → 打字完成只推进一行；读档进 choice 后选择 → 特效不叠加；Pause→SaveLoad→读档→开设置→关闭 → 状态回 Gameplay 可点击。
 4. **P2 命令**：快进含 `charjump/playanim/playsfx/playvideo` 的行 → 不播动画/视频；跳过 `playvideo(op.mp4, loadscript(X))` → 不执行后续命令；跳过 `shake(screen,2)&wait(1)` → 震动立即停止；`bgtrans` 快进 → 背景即时切换且存档记录新背景。

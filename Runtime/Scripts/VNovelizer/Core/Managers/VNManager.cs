@@ -1585,12 +1585,50 @@ public class VNManager : BaseManager<VNManager>
             return;
         }
 
+        // 立绘引用解析（扩展规则，见 VNLive2DCharacterDesign.md §14）：
+        // - 三段 ID#中段#表情：静态 = ID#分组#表情；L2D = ID#动作#表情（动作非阻塞播一次，播完回 Idle）
+        // - 两段 ID#表情：静态 = Default 分组；L2D = 只切表情不播动作
+        // - 裸 ID：仅 L2D 合法（登台不改表情）；静态报错防呆
         string[] parts = charData.Split('#');
-        if (parts.Length != 3)
+        if (parts.Length > 3)
         {
-            Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。新格式为 CharacterID#分组#表情（如 Amy#uniform#Smile），旧格式 ID_表情 已不再支持");
+            Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。# 分段不能超过 3 段（角色ID#中段#表情）");
             return;
         }
+
+        string characterID = parts[0].Trim();
+        if (string.IsNullOrEmpty(characterID))
+        {
+            Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。角色 ID 为空");
+            return;
+        }
+
+        if (parts.Length == 1)
+        {
+            // 裸 ID：仅动态立绘（Live2D）合法——登台不改表情、不播动作
+            var profile = CharacterResManager.GetInstance().TryGetCharacterProfile(characterID);
+            if (profile == null)
+            {
+                if (characterID.Contains("_"))
+                {
+                    Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。旧格式 角色ID_表情 已不再支持，请改用 角色ID#表情");
+                    return;
+                }
+                Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。找不到角色 ID: '{characterID}'（请先在角色编辑器注册）");
+                return;
+            }
+            if (profile.IsSpriteBased)
+            {
+                Debug.LogError($"[VNManager] 立绘格式错误: '{charData}' (位置 {position})。静态立绘必须写 角色ID#表情 或 角色ID#分组#表情");
+                return;
+            }
+        }
+
+        // 中段：静态 = 分组名；L2D = 动作 ID（可为空 = 不播动作）
+        string middle = parts.Length >= 3 ? parts[1].Trim() : "";
+        // 末段：表情（两段式时第 2 段即表情）
+        string emotion = parts.Length >= 3 ? parts[2].Trim()
+            : (parts.Length == 2 ? parts[1].Trim() : "");
 
         this.currentCharacters[position] = charData;
 
@@ -1598,7 +1636,7 @@ public class VNManager : BaseManager<VNManager>
         // VNManager.GetCharacterScaleX(posCode) 应用，此处只需广播登台事件。
         var info = new Dictionary<string, string>
         {
-            { "position", position }, { "characterID", parts[0] }, { "group", parts[1] }, { "emotion", parts[2] }
+            { "position", position }, { "characterID", characterID }, { "group", middle }, { "emotion", emotion }
         };
         EventCenter.GetInstance().EventTrigger(VNGameEvents.ShowCharacter, info);
     }
