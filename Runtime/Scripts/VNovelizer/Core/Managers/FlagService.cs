@@ -450,13 +450,17 @@ public class FlagService : BaseManager<FlagService>
     private static int ParseIntDefault(FlagRegistry.FlagDefinition def)
     {
         int i;
-        return int.TryParse(def.DefaultValue, out i) ? i : 0;
+        // 【Fix-62】InvariantCulture：小数点为逗号的系统上注册表默认值解析行为一致
+        return int.TryParse(def.DefaultValue, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out i) ? i : 0;
     }
 
     private static float ParseFloatDefault(FlagRegistry.FlagDefinition def)
     {
         float f;
-        return float.TryParse(def.DefaultValue, out f) ? f : 0f;
+        // 【Fix-62】同上
+        return float.TryParse(def.DefaultValue, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out f) ? f : 0f;
     }
 
     private void AddUnregistered<K, V>(Dictionary<K, V> source, Dictionary<K, V> target)

@@ -120,6 +120,18 @@ public class GameStateManager : BaseManager<GameStateManager>
     }
 
     /// <summary>
+    /// 【Fix-3】整体复位到 Gameplay 基线：清空状态栈。
+    /// 供开局/读档/回主菜单等"全量场景复位"入口调用——
+    /// 之前这些入口只 SetState(Gameplay) 不清栈，残留的 {Pause,Gameplay} 状态对
+    /// 会在后续面板的 PopState 中弹出，导致状态机错乱（CanInteractGameplay 恒 false）。
+    /// </summary>
+    public void ResetToGameplay()
+    {
+        stateStack.Clear();
+        SetState(GameState.Gameplay);
+    }
+
+    /// <summary>
     /// 检查是否可以进行游戏交互 (点击下一句)
     /// </summary>
     public bool CanInteractGameplay()

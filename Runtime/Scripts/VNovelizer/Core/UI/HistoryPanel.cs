@@ -118,6 +118,15 @@ public class HistoryPanel : BasePanel
             // 从对象池获取对象 (异步/同步)
             PoolManager.GetInstance().GetObj(itemResPath, (obj) =>
             {
+                // 【Fix-24】回调守护：池空时 GetObj 是异步回调，面板可能已被关闭/销毁
+                // （contentTransform 已销毁、this 即将失效）。此时直接返回并销毁新实例，
+                // 防止实例化为无父根对象永久残留场景（孤儿 GameObject 泄漏）。
+                if (obj == null || this == null || contentTransform == null)
+                {
+                    if (obj != null) Destroy(obj);
+                    return;
+                }
+
                 // 初始化 Item
                 SetupHistoryItem(obj, current, prev);
 
@@ -141,13 +150,25 @@ public class HistoryPanel : BasePanel
         itemObj.transform.localRotation = Quaternion.identity;
 
         // 查找子组件 (Prefab 新结构：所有控件平铺在 HistoryItem 根下，H_SpeakerBoxImage 替代旧 H_SpeakerBox 容器)
+        // 【Fix-24】模板节点判空：自定义模板缺节点时不再 NRE（记录错误并安全跳过）
         Transform speakerBoxImage = itemObj.transform.Find("H_SpeakerBoxImage");
-        // 注意：这里用 GetControl<TMP_Text> 可能找不到子物体的组件，建议直接 GetComponent
-        Image speakerBoxGraphic = speakerBoxImage.GetComponent<Image>();
-        TMP_Text speakerText = speakerBoxImage.Find("H_SpeakerText").GetComponent<TMP_Text>();
+        Image speakerBoxGraphic = speakerBoxImage != null ? speakerBoxImage.GetComponent<Image>() : null;
+        TMP_Text speakerText = speakerBoxImage != null && speakerBoxImage.Find("H_SpeakerText") != null
+            ? speakerBoxImage.Find("H_SpeakerText").GetComponent<TMP_Text>()
+            : null;
 
-        TMP_Text dialogueText = itemObj.transform.Find("H_DialogueBox/H_Dialogue").GetComponent<TMP_Text>();
-        Button replayButton = itemObj.transform.Find("H_Replay").GetComponent<Button>();
+        Transform dialogueBox = itemObj.transform.Find("H_DialogueBox");
+        TMP_Text dialogueText = dialogueBox != null && dialogueBox.Find("H_Dialogue") != null
+            ? dialogueBox.Find("H_Dialogue").GetComponent<TMP_Text>()
+            : null;
+        Transform replayTransform = itemObj.transform.Find("H_Replay");
+        Button replayButton = replayTransform != null ? replayTransform.GetComponent<Button>() : null;
+
+        if (speakerBoxGraphic == null || speakerText == null || dialogueText == null || replayButton == null)
+        {
+            Debug.LogError("[HistoryPanel] HistoryItem 模板缺少必要节点（H_SpeakerBoxImage/H_SpeakerText/H_DialogueBox/H_Dialogue/H_Replay），已跳过该条目");
+            return;
+        }
 
         //处理 Speaker 重复
         bool isSameSpeaker = (prevEntry != null && prevEntry.Speaker == entry.Speaker);
@@ -189,7 +210,6 @@ public class HistoryPanel : BasePanel
         LayoutRebuilder.ForceRebuildLayoutImmediate(itemObj.GetComponent<RectTransform>());
         // H_DialogueBox 内的 ContentSizeFitter 需要在 H_Dialogue 文本写入后单独重建一次，
         // 否则首次实例化的 Item 高度仍为 prefab 默认值（TMP 文本未完成换行计算）
-        Transform dialogueBox = itemObj.transform.Find("H_DialogueBox");
         if (dialogueBox != null)
             LayoutRebuilder.ForceRebuildLayoutImmediate(dialogueBox.GetComponent<RectTransform>());
     }
@@ -216,6 +236,10 @@ public class HistoryPanel : BasePanel
     private void OnCloseButtonClick()
     {
         Debug.Log("我进来了");
+        // 【Fix-25】关闭面板时停止回放中的历史语音：VoiceManager 是全局单例，
+        // 不停止的话玩家关闭面板后仍会听到与当前剧情无关的历史语音，
+        // 且 IsVoicePlaying 会干扰自动播放推进判定。
+        StopReplayVoice();
         UIManager.GetInstance().HidePanel("HistoryPanel");
         GameStateManager.GetInstance().RestoreState();
     }
@@ -224,12 +248,21 @@ public class HistoryPanel : BasePanel
     {
         // 清理资源
         activeItems.Clear();
+        // 【Fix-25】销毁路径同样停止回放语音（场景切换/面板销毁时不残留）
+        StopReplayVoice();
         if (GameStateManager.GetInstance() != null && 
             GameStateManager.GetInstance().CurrentState == GameState.History)
         {
             GameStateManager.GetInstance().RestoreState();
             Debug.Log("[HistoryPanel] 面板被Destroy，已恢复游戏状态");
         }
+    }
+
+    /// <summary>【Fix-25】停止历史回放语音（若正在播放）。</summary>
+    private void StopReplayVoice()
+    {
+        if (VoiceManager.GetInstance() != null && VoiceManager.GetInstance().IsVoicePlaying())
+            VoiceManager.GetInstance().StopVoice();
     }
 }
 

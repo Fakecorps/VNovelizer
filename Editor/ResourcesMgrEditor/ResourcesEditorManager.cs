@@ -18,6 +18,8 @@ public class ResourcesEditorManager : AlchemyEditorWindow
 {
     private ResourceManagerPresenter _presenter;
     private ResourceWindowState _state;
+    // 【Fix-55】当前音频播放器视图：CreateGUI 重建前调用 Dispose 退订静态事件
+    private AudioPlayerView _audioPlayerView;
 
     [MenuItem("VNovelizer/资源管理器 (Resource Manager)", false, 23)]
     public static void ShowWindow()
@@ -50,11 +52,15 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         root.style.flexDirection = FlexDirection.Column;
 
         // 2. 创建所有视图
+        // 【Fix-55】重建前释放旧 AudioPlayerView 的静态事件订阅（状态栏切换会整体重建 UI）
+        _audioPlayerView?.Dispose();
+
         var toolbar = new ResourceToolbarView();
         var sidebar = new ResourceSidebarView();
         var content = new ResourceContentView();
         var statusBar = new ResourceStatusBarView();
         var audioPlayer = new AudioPlayerView();
+        _audioPlayerView = audioPlayer;
 
         // 2.5 标题栏（统一 Gallery Editor 风格）
         BuildTitleBar(root, toolbar);

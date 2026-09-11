@@ -190,14 +190,20 @@ public class CharacterEditorPresenter
         if (profile == null || string.IsNullOrEmpty(newName)) return;
         if (profile.CharacterID == newName) return;
 
-        string path = AssetDatabase.GetAssetPath(profile);
-        string newPath = $"{CHARACTER_PATH}/{newName}.asset";
-        string error = null;
-
-        if (path != newPath)
+        // 【Fix-57】非法字符校验：RenameAsset 只接受文件名（不含路径分隔符），
+        // 输入含 / \ 等字符时行为失真且无提示。
+        char[] invalid = System.IO.Path.GetInvalidFileNameChars();
+        if (newName.IndexOfAny(invalid) >= 0)
         {
-            error = AssetDatabase.RenameAsset(path, newName);
+            Debug.LogWarning($"重命名失败: 名称包含非法字符（{string.Join(" ", invalid)}）");
+            return;
         }
+
+        string path = AssetDatabase.GetAssetPath(profile);
+
+        // 【Fix-57】RenameAsset 第二参数只是新文件名（资产留在原目录改名），
+        // 无需拼接 newPath 比较；直接重命名即可。
+        string error = AssetDatabase.RenameAsset(path, newName);
 
         if (!string.IsNullOrEmpty(error))
         {

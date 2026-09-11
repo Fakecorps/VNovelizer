@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 using VNovelizer.Core.Compat;
 using VNovelizer.Core.Commands.Meta;
@@ -46,15 +47,22 @@ namespace VNovelizer.Core.Commands
         private readonly List<ActiveJump> _activeJumps = new List<ActiveJump>();
         private int _nextJumpToken;
 
+        // 【Fix-10】中断标志：Interrupt 置位后跳跃循环立即退出（循环体每帧检查）
+        private bool _interrupted;
+
         public override bool Execute(string args)
         {
-            MonoManager.GetInstance().StartCoroutine(ExecuteAsync(args));
+            // 【Fix-8】快进/Simulate 语境：同步路径只应写终态，绝不启动未登记的异步协程。
+            // 跳跃是纯表现动画，终态即原位（状态未写入目标位置），直接不动作。
             return true;
         }
 
         public override IEnumerator ExecuteAsync(string args)
         {
             if (string.IsNullOrEmpty(args)) yield break;
+
+            // 【Fix-10】每次启动复位中断标志（支持多实例复用同一命令对象）
+            _interrupted = false;
 
             string[] parts = args.Split(',');
             string posCode = TheaterManager.NormalizePosCode(parts[0]);
@@ -67,9 +75,11 @@ namespace VNovelizer.Core.Commands
             int times = defaultTimes;
             float height = defaultHeight;
 
-            if (parts.Length >= 2) float.TryParse(parts[1].Trim(), out duration);
-            if (parts.Length >= 3) int.TryParse(parts[2].Trim(), out times);
-            if (parts.Length >= 4) float.TryParse(parts[3].Trim(), out height);
+            // 【Fix-62】数值解析统一 InvariantCulture：de-DE/fr-FR 等小数点为逗号的系统上
+            // 剧本里的 "0.4" 必须按 '.' 解析，否则参数静默回默认值。
+            if (parts.Length >= 2) float.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out duration);
+            if (parts.Length >= 3) int.TryParse(parts[2].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out times);
+            if (parts.Length >= 4) float.TryParse(parts[3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out height);
 
             // R13：解析 [InEase, OutEase]；未指定 = 纯 sin 包络（与旧行为一致）
             var easeArgs = EaseArgParser.ParseAt(parts, 4);
@@ -96,6 +106,7 @@ namespace VNovelizer.Core.Commands
                     float elapsed = 0f;
                     while (elapsed < duration)
                     {
+                        if (_interrupted) yield break; // 【Fix-10】中断后立即退出，不再覆盖位置
                         if (theater.GetActor(posCode) == null) yield break; // 演员被移除
                         elapsed += Time.deltaTime;
                         float t = elapsed / duration;
@@ -130,13 +141,17 @@ namespace VNovelizer.Core.Commands
         /// <summary>中断全部跳跃：把空中的角色按回起始位置</summary>
         public override void Interrupt()
         {
+            _interrupted = true; // 【Fix-10】先置标志，让仍在运行的跳跃循环停止写入
+
             if (_activeJumps.Count == 0) return;
 
             var theater = TheaterManager.GetInstance();
             var snapshot = new List<ActiveJump>(_activeJumps);
             foreach (var aj in snapshot)
             {
-                theater.GetActor(aj.PosCode)?.SetPosition(aj.StartPos);
+                // 【Fix-10】写状态字典而非仅改 actor 视觉：
+                // state.position 是存档/读档恢复依据，只改视觉会残留"空中随机位置"
+                theater.SetPosition(aj.PosCode, aj.StartPos);
             }
 
             Debug.Log($"[CharJumpCommand] {snapshot.Count} 个跳跃动画被玩家中断，已全部归位。");

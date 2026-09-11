@@ -56,7 +56,30 @@ namespace VNovelizer.Core.Commands
         // 用于点击跳过时整树中断：先杀并行分支协程，再 Interrupt 命令动画
         private ChainRunContext _activeChainContext;
 
+        // 【Fix-7】额外的活跃链上下文（choice 选项链 / 双击重播路径自建的 ctx）：
+        // 这些路径不经过 ExecuteCommandsAsync 的 _activeChainContext 单槽登记，
+        // 单独登记进此列表，使 InterruptAll 能一并 Abort 它们的并行分支协程。
+        private readonly List<ChainRunContext> _extraChainContexts = new List<ChainRunContext>();
+
         public bool IsRunning => _runningCommandRefCount.Count > 0;
+
+        /// <summary>
+        /// 【Fix-7】登记一个外部创建的链运行上下文（choice 选项链 / 重播路径）。
+        /// 登记后点击跳过时其并行分支会被 InterruptAll 一并中止，防止残留命令污染下一行。
+        /// </summary>
+        public void RegisterActiveChain(ChainRunContext ctx)
+        {
+            if (ctx == null || _extraChainContexts.Contains(ctx)) return;
+            _extraChainContexts.Add(ctx);
+        }
+
+        /// <summary>
+        /// 【Fix-7】解登记链运行上下文（执行结束/中断后调用，引用相等才移除）。
+        /// </summary>
+        public void UnregisterActiveChain(ChainRunContext ctx)
+        {
+            if (ctx != null) _extraChainContexts.Remove(ctx);
+        }
 
         /// <summary>
         /// 已注册的命令数量（0 表示尚未 Init）。
@@ -392,13 +415,21 @@ namespace VNovelizer.Core.Commands
                     _runningCommandRefCount[command] = 0;
                 _runningCommandRefCount[command]++;
 
-                yield return command.ExecuteAsync(args);
-
-                if (_runningCommandRefCount.ContainsKey(command))
+                // 【Fix-6】递减逻辑放入 try/finally：命令 ExecuteAsync 抛异常（参数解析、
+                // 资源加载边界）时引用计数也必须归零，否则 IsRunning 恒 true，
+                // 自动播放/流程推进永久停摆（与 ChainExecutor.ExecuteCommand 的处理保持一致）。
+                try
                 {
-                    _runningCommandRefCount[command]--;
-                    if (_runningCommandRefCount[command] <= 0)
-                        _runningCommandRefCount.Remove(command);
+                    yield return command.ExecuteAsync(args);
+                }
+                finally
+                {
+                    if (_runningCommandRefCount.ContainsKey(command))
+                    {
+                        _runningCommandRefCount[command]--;
+                        if (_runningCommandRefCount[command] <= 0)
+                            _runningCommandRefCount.Remove(command);
+                    }
                 }
             }
             else
@@ -600,6 +631,15 @@ namespace VNovelizer.Core.Commands
             {
                 ChainExecutor.Abort(_activeChainContext);
                 _activeChainContext = null;
+            }
+
+            // 【Fix-7】一并中止外部登记的链上下文（choice 选项链 / 重播路径）
+            if (_extraChainContexts.Count > 0)
+            {
+                var extra = new List<ChainRunContext>(_extraChainContexts);
+                _extraChainContexts.Clear();
+                for (int i = 0; i < extra.Count; i++)
+                    ChainExecutor.Abort(extra[i]);
             }
 
             // 2. 中断当前运行中的命令动画（快进到最终态，避免画面停在中间状态）

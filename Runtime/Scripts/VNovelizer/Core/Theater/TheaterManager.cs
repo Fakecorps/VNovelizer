@@ -204,6 +204,16 @@ namespace VNovelizer.Core.Theater
             if (backgroundPath == "black" || backgroundPath == "hide")
             {
                 // 黑幕/隐藏：移除背景演员，露出相机 Clear Color（黑）
+                // 【Fix-18】与 OnHideBackground 对齐：作废在途异步加载与过渡，
+                // 防止上一行的背景加载完成后把黑幕覆盖掉。
+                _bgRequestToken++;
+                if (_bgLoadRoutine != null)
+                {
+                    MonoManager.GetInstance().StopCoroutine(_bgLoadRoutine);
+                    _bgLoadRoutine = null;
+                }
+                if (_bgTransitionRoutine != null)
+                    CancelBackgroundTransition();
                 RemoveActor(MainBackgroundId);
                 return;
             }
@@ -302,13 +312,21 @@ namespace VNovelizer.Core.Theater
         /// 纹理形态兜底：按 Texture2D 加载并构造 Sprite（pixelsPerUnit=100 与 TextureImporter
         /// 默认值一致）。用于"资产存在且已注册、但按 Sprite 类型未解析"的 Addressables 类型差异。
         /// </summary>
+        // 【Fix-19】纹理→Sprite 包装缓存：Sprite.Create 是托管包装对象不会自动回收，
+        // 每次背景切换/读档重建都新建会导致长剧本下 Sprite 对象单调累积（泄漏）。
+        private static readonly Dictionary<Texture2D, Sprite> _texSpriteCache = new Dictionary<Texture2D, Sprite>();
+
         private static Sprite LoadTextureAsSprite(string key)
         {
             var texture = VNResourceService.Load<Texture2D>(key);
             if (texture == null) return null;
-            var sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height),
-                new Vector2(0.5f, 0.5f), 100f);
-            sprite.name = texture.name;
+            if (!_texSpriteCache.TryGetValue(texture, out var sprite))
+            {
+                sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height),
+                    new Vector2(0.5f, 0.5f), 100f);
+                sprite.name = texture.name;
+                _texSpriteCache[texture] = sprite;
+            }
             return sprite;
         }
 
@@ -329,6 +347,45 @@ namespace VNovelizer.Core.Theater
 
             SetAlpha(MainBackgroundId, 1f);
             SetVisible(MainBackgroundId, true);
+        }
+
+        /// <summary>
+        /// 【Fix-13】同步即时应用背景（快进/skip 语义：不播过渡动画，直接呈现终态）。
+        /// 同步加载通常命中提供者缓存（Addressables 已完成句柄 / Resources），
+        /// 未命中时降级 Texture2D 兜底；加载失败仅记录日志
+        /// （数据状态已由调用方先行写入，下次换行事件会重试）。
+        /// </summary>
+        public void ApplyBackgroundImmediate(string bgName)
+        {
+            if (string.IsNullOrEmpty(bgName)) return;
+
+            // 作废在途请求与过渡（与新终态冲突）
+            _bgRequestToken++;
+            if (_bgLoadRoutine != null)
+            {
+                MonoManager.GetInstance().StopCoroutine(_bgLoadRoutine);
+                _bgLoadRoutine = null;
+            }
+            if (_bgTransitionRoutine != null)
+                CancelBackgroundTransition();
+
+            string primary = BuildBackgroundKey(bgName);
+            Sprite sprite = VNResourceService.Load<Sprite>(primary);
+            if (sprite == null) sprite = LoadTextureAsSprite(primary);
+            if (sprite == null)
+            {
+                string fallback = "Backgrounds/" + bgName;
+                sprite = VNResourceService.Load<Sprite>(fallback);
+                if (sprite == null) sprite = LoadTextureAsSprite(fallback);
+            }
+
+            if (sprite == null)
+            {
+                Debug.LogWarning($"[TheaterManager] 背景即时应用失败（同步加载未命中）: {bgName}");
+                return;
+            }
+
+            ApplyBackground(sprite, bgName);
         }
 
         #endregion
@@ -396,6 +453,10 @@ namespace VNovelizer.Core.Theater
             // 异步加载新图
             var holder = new SpriteHolder();
             yield return LoadBackgroundSprite(bgName, holder);
+            // 【Fix-17】加载完成后第一件事校验令牌：本协程已被取消/取代时立即退出，
+            // 绝不触碰 _bgTransTargetSprite/_bgTransTemp/_bgTransitionRoutine 等共享字段
+            // （旧协程复活覆盖新过渡字段会导致临时演员泄漏与等待死锁）。
+            if (token != _bgTransitionToken) yield break;
             Sprite newSprite = holder.value;
             if (newSprite == null) yield break;
 

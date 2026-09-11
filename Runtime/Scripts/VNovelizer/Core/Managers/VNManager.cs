@@ -316,6 +316,9 @@ public class VNManager : BaseManager<VNManager>
         MusicManager.GetInstance().ClearAllSFX();
 
         CommandManager.GetInstance().Init();
+        // 【Fix-1】幂等订阅：InitializeManager 会被 RunGameLogic 与读档路径反复调用，
+        // 先去重再添加，防止多次开局/读档叠加监听导致自动播放一次跳过 N 行。
+        EventCenter.GetInstance().RemoveEventListener(VNGameEvents.TypingFinished, OnTypingFinished);
         EventCenter.GetInstance().AddEventListener(VNGameEvents.TypingFinished, OnTypingFinished);
     }
 
@@ -375,6 +378,10 @@ public class VNManager : BaseManager<VNManager>
         }
         CommandManager.GetInstance().InterruptAll();
         AnimationCompat.StopAll();
+        // 【Fix-23】StopAll 会停掉黑幕 tween（不触发 OnComplete），转场协程挂死时
+        // IsTransitionPlaying 恒 true + 全局输入永久禁用；强制复位保证收敛。
+        if (TransitionManager.Instance != null)
+            TransitionManager.Instance.ForceReset();
         VNAPI.ClearAllEffects();
         PoolManager.GetInstance().Clear();
 
@@ -400,9 +407,8 @@ public class VNManager : BaseManager<VNManager>
         VNRuntimeDebugState.EndLine();
 
         // 5. 恢复状态机（暂停/设置等嵌套面板栈一并回到 Gameplay 基线）
-        var stateManager = GameStateManager.GetInstance();
-        if (stateManager != null && stateManager.CurrentState != GameState.Gameplay)
-            stateManager.SetState(GameState.Gameplay);
+        // 【Fix-3】改用 ResetToGameplay：清空残留状态栈，防止后续 PopState 弹出旧状态对
+        GameStateManager.GetInstance()?.ResetToGameplay();
 
         // 6. 切换界面
         UIManager.GetInstance().HidePanel("PausePanel");
@@ -899,7 +905,11 @@ public class VNManager : BaseManager<VNManager>
         }
 
         // 恢复立绘
-        Dictionary<string, string> charactersToRestore = new Dictionary<string, string>(saveData.Characters);
+        // 【Fix-4】旧版/损坏存档缺失 Characters 字段时 LitJson 反序列化后为 null，
+        // 直接拷贝构造会抛 ArgumentNullException 中断读档。
+        Dictionary<string, string> charactersToRestore = saveData.Characters != null
+            ? new Dictionary<string, string>(saveData.Characters)
+            : new Dictionary<string, string>();
         currentCharacters.Clear();
         foreach (var kvp in charactersToRestore)
         {
@@ -907,7 +917,10 @@ public class VNManager : BaseManager<VNManager>
         }
 
         // 恢复特效（在UI准备好后）
-        if (saveData.ActiveEffects != null)
+        // 【Fix-2】未遇 choice 时 FastForwardToLine 末尾已逐个 RestoreEffect，
+        // 此处只补 choice 场景——否则同名特效双重恢复（PlayParticle 的异步去重
+        // 在回调之前检查，两次调用都通过）导致两个同名粒子叠加播放。
+        if (saveData.ActiveEffects != null && encounteredChoice)
         {
             foreach (var effect in saveData.ActiveEffects)
             {
@@ -1434,10 +1447,12 @@ public class VNManager : BaseManager<VNManager>
             else if (!string.IsNullOrEmpty(currentLine.ID))
             {
                 // 只有当有 ID 时才自动生成，防止空行报错
+                // 【Fix-5】目录与文件名分开拼接：原实现把完整 ID 接到目录后（ch01/ch01/line001.mp3），
+                // 子目录行语音必然加载失败。
                 string dir = Path.GetDirectoryName(currentLine.ID);
                 resolved.Voice = string.IsNullOrEmpty(dir)
                     ? currentLine.ID + ".mp3"
-                    : dir.Replace('\\', '/') + "/" + currentLine.ID + ".mp3";
+                    : dir.Replace('\\', '/') + "/" + Path.GetFileName(currentLine.ID) + ".mp3";
             }
         }
         else if (resolved.Voice.Trim().ToLower() == "false")
@@ -2058,7 +2073,17 @@ public class VNManager : BaseManager<VNManager>
         int preIndex = CurrentLineIndex;
 
         var ctx = new ChainRunContext { IsConfirmChain = isConfirmChain };
-        yield return ChainExecutor.Execute(chain, ctx);
+        // 【Fix-7】登记 ctx：选项链内并行分支是独立协程，未登记时点击跳过
+        // InterruptAll 找不到它，残留的 wait/charmove 会污染下一行演出。
+        CommandManager.GetInstance().RegisterActiveChain(ctx);
+        try
+        {
+            yield return ChainExecutor.Execute(chain, ctx);
+        }
+        finally
+        {
+            CommandManager.GetInstance().UnregisterActiveChain(ctx);
+        }
 
         _flowCoroutine = null;
 
@@ -2377,10 +2402,11 @@ public class VNManager : BaseManager<VNManager>
         pendingLineID = null;
         
         // 【Bug修复】确保游戏状态是Gameplay
+        // 【Fix-3】读档路径同样清空残留状态栈（Pause→SaveLoad→读档 的栈会残留 {Pause,Gameplay}）
         if (GameStateManager.GetInstance().CurrentState != GameState.Gameplay && 
             GameStateManager.GetInstance().CurrentState != GameState.AutoPlay)
         {
-            GameStateManager.GetInstance().SetState(GameState.Gameplay);
+            GameStateManager.GetInstance().ResetToGameplay();
         }
         
         InitializeManager();
@@ -2621,7 +2647,16 @@ public class VNManager : BaseManager<VNManager>
             if (entryChain.Root != null)
             {
                 var ctx = new ChainRunContext();
-                yield return ChainExecutor.Execute(entryChain.Root, ctx, startPosition, isConfirmChain: false);
+                // 【Fix-7】重播路径同样登记 ctx，保证跳过时并行分支被中止
+                CommandManager.GetInstance().RegisterActiveChain(ctx);
+                try
+                {
+                    yield return ChainExecutor.Execute(entryChain.Root, ctx, startPosition, isConfirmChain: false);
+                }
+                finally
+                {
+                    CommandManager.GetInstance().UnregisterActiveChain(ctx);
+                }
             }
 
             _flowCoroutine = null;
@@ -2643,7 +2678,16 @@ public class VNManager : BaseManager<VNManager>
             if (confirmChain.Root != null)
             {
                 var ctx = new ChainRunContext();
-                yield return ChainExecutor.Execute(confirmChain.Root, ctx, startPosition, isConfirmChain: true);
+                // 【Fix-7】重播路径同样登记 ctx，保证跳过时并行分支被中止
+                CommandManager.GetInstance().RegisterActiveChain(ctx);
+                try
+                {
+                    yield return ChainExecutor.Execute(confirmChain.Root, ctx, startPosition, isConfirmChain: true);
+                }
+                finally
+                {
+                    CommandManager.GetInstance().UnregisterActiveChain(ctx);
+                }
             }
 
             _flowCoroutine = null;
@@ -3029,6 +3073,9 @@ public class VNManager : BaseManager<VNManager>
         replayEndLineID = "";
 
         AnimationCompat.StopAll();
+        // 【Fix-23】同上：StopAll 后强制复位转场状态，防止黑幕/输入永久卡死
+        if (TransitionManager.Instance != null)
+            TransitionManager.Instance.ForceReset();
         VNAPI.ClearAllEffects();
         PoolManager.GetInstance().Clear();
 

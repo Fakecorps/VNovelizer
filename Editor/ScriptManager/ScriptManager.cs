@@ -41,7 +41,21 @@ public class ScriptManagerWindow : EditorWindow
             return;
         }
 
-        excelFolderPath = Path.GetFullPath(AssetDatabase.GetAssetPath(config.ExcelSourceFolder));
+        // 【Fix-52】引用失效（配置指向的文件夹被删，成为 Missing 引用）时
+        // AssetDatabase.GetAssetPath 返回空串，Path.GetFullPath("") 会抛 ArgumentException
+        // 中断 CreateGUI 导致窗口白屏。先取路径判空再规范化。
+        string configAssetPath = AssetDatabase.GetAssetPath(config.ExcelSourceFolder);
+        if (string.IsNullOrEmpty(configAssetPath))
+        {
+            var error = new Label("VNProjectConfig 中配置的 Excel 源文件夹引用已失效（可能已被删除），请重新配置！")
+            {
+                style = { color = Color.red, fontSize = 16, unityTextAlign = TextAnchor.MiddleCenter, paddingTop = 50 }
+            };
+            rootVisualElement.Add(error);
+            return;
+        }
+
+        excelFolderPath = Path.GetFullPath(configAssetPath);
 
         // --- 根布局 ---
         var root = rootVisualElement;
@@ -228,6 +242,10 @@ public class ScriptManagerWindow : EditorWindow
         previewTable.columns.Clear();
         previewTable.itemsSource = null;
 
+        // 【Fix-51】旧格式 .xls（BIFF）解析依赖代码页编码（1252 等），
+        // 未注册 CodePagesEncodingProvider 会抛 NotSupportedException——其他转换入口都注册了，此处遗漏。
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
         try
         {
             using (var stream = File.Open(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
@@ -302,8 +320,9 @@ public class ScriptManagerWindow : EditorWindow
         }
         catch (System.Exception e)
         {
+            // 【Fix-51】展示真实异常而非一律误导为"文件被占用"（如编码提供程序缺失、格式损坏等）
             Debug.LogError($"预览失败: {e.Message}");
-            statusLabel.text = "预览失败：文件被占用";
+            statusLabel.text = $"预览失败：{e.Message}";
         }
     }
 
@@ -382,6 +401,15 @@ public class ScriptManagerWindow : EditorWindow
             if (string.IsNullOrEmpty(newName)) return;
             if (!newName.EndsWith(".xlsx")) newName += ".xlsx";
 
+            // 【Fix-53】非法字符校验：含 / \ : * ? 等字符时 MoveTo 会抛
+            // DirectoryNotFoundException/ArgumentException，此前被误报为"文件被占用"或穿透报错。
+            char[] invalid = Path.GetInvalidFileNameChars();
+            if (newName.IndexOfAny(invalid) >= 0)
+            {
+                EditorUtility.DisplayDialog("错误", $"名称包含非法字符（{string.Join(" ", invalid)}），请更换名称。", "确定");
+                return;
+            }
+
             string newPath = Path.Combine(file.DirectoryName, newName);
             if (File.Exists(newPath))
             {
@@ -394,7 +422,9 @@ public class ScriptManagerWindow : EditorWindow
                 file.MoveTo(newPath);
                 RefreshList();
             }
+            // 【Fix-53】全量捕获并展示真实错误，区分"文件被占用"与其他失败原因
             catch (IOException) { EditorUtility.DisplayDialog("错误", "文件被占用，无法重命名。", "确定"); }
+            catch (System.Exception e) { EditorUtility.DisplayDialog("错误", $"重命名失败：{e.Message}", "确定"); }
         });
     }
 
@@ -411,7 +441,8 @@ public class ScriptManagerWindow : EditorWindow
             // 确保 Config 存在且路径已配置
             if (config != null && config.CsvOutputFolder != null)
             {
-                string csvFolderPath = Path.GetFullPath(AssetDatabase.GetAssetPath(config.CsvOutputFolder));
+                string csvFolderAssetPath = AssetDatabase.GetAssetPath(config.CsvOutputFolder);
+                string csvFolderPath = Path.GetFullPath(csvFolderAssetPath);
                 string csvPath = Path.Combine(csvFolderPath, csvFileName);
 
                 // 2. 如果 CSV 存在，删除它
@@ -419,11 +450,18 @@ public class ScriptManagerWindow : EditorWindow
                 {
                     try
                     {
-                        File.Delete(csvPath);
-                        File.Delete(csvPath + ".meta"); // 顺便删掉 meta 文件，保持 Unity 干净
+                        // 【Fix-54】CSV 位于 Assets 内时走 AssetDatabase.DeleteAsset：
+                        // 直删物理文件不会清理 Addressables 注册条目与 meta/依赖引用（残留死条目），
+                        // DeleteAsset 一并处理并触发正确的导入状态。
+                        string csvAssetPath = csvFolderAssetPath.Replace('\\', '/') + "/" + csvFileName;
+                        if (!AssetDatabase.DeleteAsset(csvAssetPath))
+                        {
+                            File.Delete(csvPath);
+                            File.Delete(csvPath + ".meta");
+                        }
                         Debug.Log($"[ScriptManager] 已同步删除 CSV: {csvFileName}");
                     }
-                    catch (IOException e)
+                    catch (System.Exception e)
                     {
                         Debug.LogWarning($"[ScriptManager] 无法删除 CSV 文件: {e.Message}");
                     }
@@ -443,10 +481,22 @@ public class ScriptManagerWindow : EditorWindow
             // 3. 删除 Excel 文件
             try
             {
-                file.Delete();
-                // 尝试删除 meta 文件 (Excel 的 meta)
-                string metaPath = file.FullName + ".meta";
-                if (File.Exists(metaPath)) File.Delete(metaPath);
+                // 【Fix-54】Excel 在 Assets 内时走 AssetDatabase.DeleteAsset（清理 meta/GUID/依赖），
+                // 项目外文件才用 File.Delete。
+                string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                string rel = Path.GetRelativePath(projectRoot, file.FullName);
+                bool inAssets = !rel.StartsWith("..") && !Path.IsPathRooted(rel);
+                if (inAssets && AssetDatabase.DeleteAsset(rel.Replace('\\', '/')))
+                {
+                    // DeleteAsset 已处理 meta
+                }
+                else
+                {
+                    file.Delete();
+                    // 尝试删除 meta 文件 (Excel 的 meta)
+                    string metaPath = file.FullName + ".meta";
+                    if (File.Exists(metaPath)) File.Delete(metaPath);
+                }
             }
             catch (IOException e)
             {

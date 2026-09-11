@@ -28,6 +28,9 @@ public static class AutoExcelConverter
     /// <summary>检查间隔（秒）</summary>
     private const double CheckInterval = 2.0;
 
+    /// <summary>【Fix-48】每轮最多转换的文件数：把大文件同步转换的卡顿摊薄到多个轮询周期</summary>
+    private const int BatchSizePerCycle = 3;
+
     /// <summary>是否已完成首次扫描</summary>
     private static bool _firstScanDone = false;
 
@@ -93,7 +96,10 @@ public static class AutoExcelConverter
 
         // 扫描所有 Excel 文件
         string[] files = Directory.GetFiles(absExcelPath, "*.*", SearchOption.AllDirectories);
-        List<string> modifiedFiles = new List<string>();
+
+        // 【Fix-47】改动清单携带"改动前时间戳"：转换成功后才记账；失败时恢复旧值，
+        // 让下一轮轮询重试——否则 xlsx 被 Excel 独占等瞬时失败会把用户修改永久遗忘。
+        List<(string file, long lastTicks)> modifiedFiles = new List<(string, long)>();
 
         foreach (string file in files)
         {
@@ -114,20 +120,26 @@ public static class AutoExcelConverter
 
             if (currentTicks > lastTicks)
             {
-                modifiedFiles.Add(file);
-                _lastWriteTicks[file] = currentTicks;
+                modifiedFiles.Add((file, lastTicks));
+                // 不在转换前记账：成功后在下方记录，失败在 catch 恢复旧值
             }
         }
 
         if (modifiedFiles.Count == 0) return;
+
+        // 【Fix-48】每轮最多转换 3 个文件：同步全量解析大 Excel（11MB 级对白）在主线程会
+        // 周期性冻结编辑器；分批处理把单帧卡顿摊薄到多个轮询周期（2 秒间隔自然节流）。
+        if (modifiedFiles.Count > BatchSizePerCycle)
+            modifiedFiles.RemoveRange(BatchSizePerCycle, modifiedFiles.Count - BatchSizePerCycle);
 
         // 静默转换被修改的文件
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
         int successCount = 0;
         int failCount = 0;
 
-        foreach (string file in modifiedFiles)
+        foreach (var entry in modifiedFiles)
         {
+            string file = entry.file;
             try
             {
                 ExcelToCsvConverter.ConvertFile(file, csvOutputPath);
@@ -141,8 +153,10 @@ public static class AutoExcelConverter
             }
             catch (System.Exception e)
             {
+                // 【Fix-47】失败恢复旧时间戳：下一轮轮询重新检测并重试
+                _lastWriteTicks[file] = entry.lastTicks;
                 failCount++;
-                Debug.LogWarning($"[AutoConvert] 转换失败: {Path.GetFileName(file)} — {e.Message}");
+                Debug.LogWarning($"[AutoConvert] 转换失败（将自动重试）: {Path.GetFileName(file)} — {e.Message}");
             }
         }
 

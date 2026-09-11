@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Globalization;
 using UnityEngine;
 using VNovelizer.Core.API;
 using VNovelizer.Core.Compat;
@@ -40,7 +41,15 @@ namespace VNovelizer.Core.Commands
 
         public override bool Execute(string args)
         {
-            return true; // 异步命令，返回 true 表示已接受
+            // 【Fix-13】快进/skip 语义：同步写数据终态并即时应用背景（不播过渡动画）。
+            // 原空实现导致快进后画面与存档停留在旧背景，与剧本语义矛盾。
+            if (string.IsNullOrEmpty(args)) return false;
+            string bgName = args.Split(',')[0].Trim();
+            if (string.IsNullOrEmpty(bgName)) return false;
+
+            VNManager.GetInstance().UpdateCurrentBG_OnlyData(bgName);
+            TheaterManager.GetInstance().ApplyBackgroundImmediate(bgName);
+            return true;
         }
 
         public override IEnumerator ExecuteAsync(string args)
@@ -65,7 +74,8 @@ namespace VNovelizer.Core.Commands
             }
 
             float duration = DefaultDuration;
-            if (parts.Length > 2) float.TryParse(parts[2].Trim(), out duration);
+            // 【Fix-62】InvariantCulture：小数点为逗号的系统上 "1.0" 必须按 '.' 解析
+            if (parts.Length > 2) float.TryParse(parts[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out duration);
             if (duration < 0f) duration = 0f;
 
             // 更新剧本层背景数据状态（继承语义的数据源）

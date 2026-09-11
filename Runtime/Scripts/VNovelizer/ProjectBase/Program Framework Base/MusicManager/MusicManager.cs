@@ -10,6 +10,11 @@ public class MusicManager : BaseManager<MusicManager>
     private float BGMVolume = 1f;
     private string currentPlayingBGM = null; // 【新增】记录当前正在播放的 BGM 名称
 
+    // 【Fix-20】BGM 请求代际：快速连续切歌时两个异步加载回调按完成顺序执行，
+    // 无代际校验会导致"正在播放的 clip"与 currentPlayingBGM 错位（旧请求后到覆盖新歌），
+    // 且同名跳过逻辑使错误 BGM 无法自愈。每次 PlayBGM 递增，过期回调直接丢弃。
+    private int _bgmRequestId;
+
     // SFX 列表（用于在 Update 里检测播放是否结束）
     private List<AudioSource> SFXList = new List<AudioSource>();
     private float SFXVolume = 1f;
@@ -66,8 +71,15 @@ public class MusicManager : BaseManager<MusicManager>
         }
 
         string loadPath = VNProjectConfig.Instance.BgmResPath;
+        // 【Fix-20】记录本次请求代际，回调到达时校验：已有更新请求则丢弃本次结果
+        int gen = ++_bgmRequestId;
         ResourcesManager.GetInstance().LoadAsync<AudioClip>(loadPath +"/" + name, (clip) =>
         {
+            if (gen != _bgmRequestId)
+            {
+                Debug.Log($"[MusicManager] 忽略过期BGM加载: {name}（已有更新的切换请求）");
+                return;
+            }
             if (clip == null)
             {
                 // 加载失败：不记录 currentPlayingBGM（否则后续同名播放会被"已在播放"逻辑
@@ -92,6 +104,8 @@ public class MusicManager : BaseManager<MusicManager>
 
     public void StopBGM()
     {
+        // 【Fix-20】作废在途 BGM 加载：否则停止后旧请求回调到达会重新响起 BGM
+        _bgmRequestId++;
         if (BGM != null) BGM.Stop();
         currentPlayingBGM = null; // 【新增】停止时清空当前播放的 BGM
     }

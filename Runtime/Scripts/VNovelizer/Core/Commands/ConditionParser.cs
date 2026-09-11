@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 
 namespace VNovelizer.Core.Commands
@@ -168,7 +169,8 @@ namespace VNovelizer.Core.Commands
             if (type == FlagType.Bool && c.Op != null && !flags.IsRegistered(c.Name))
             {
                 double dummy;
-                if (double.TryParse(c.Value, out dummy)) type = FlagType.Float;
+                // 【Fix-62】InvariantCulture：小数点为逗号的系统上 "0.5" 必须按 '.' 解析
+                if (double.TryParse(c.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out dummy)) type = FlagType.Float;
             }
 
             switch (type)
@@ -193,7 +195,8 @@ namespace VNovelizer.Core.Commands
                 case FlagType.Int:
                 {
                     long rhs;
-                    if (!long.TryParse(c.Value, out rhs))
+                    // 【Fix-62】InvariantCulture：跨区域系统解析行为一致
+                    if (!long.TryParse(c.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out rhs))
                         throw new ArgumentException(string.Format("无法将 '{0}' 解析为整数", c.Value));
                     long lhs = flags.GetInt(c.Name);
                     return CompareLong(lhs, rhs, c.Op);
@@ -202,7 +205,8 @@ namespace VNovelizer.Core.Commands
                 case FlagType.Float:
                 {
                     double rhs;
-                    if (!double.TryParse(c.Value, out rhs))
+                    // 【Fix-62】InvariantCulture：跨区域系统解析行为一致
+                    if (!double.TryParse(c.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out rhs))
                         throw new ArgumentException(string.Format("无法将 '{0}' 解析为数值", c.Value));
                     double lhs = flags.GetFloat(c.Name);
                     return CompareDouble(lhs, rhs, c.Op);

@@ -20,8 +20,11 @@ public class ConfirmPanel : BasePanel
         yesBtn = GetControl<Button>("Yes");
         noBtn = GetControl<Button>("No");
 
-        yesBtn.onClick.AddListener(OnYesClick);
-        noBtn.onClick.AddListener(OnNoClick);
+        // 【Fix-28】判空保护：模板覆写缺控件时不再 Awake 阶段 NRE
+        if (yesBtn != null) yesBtn.onClick.AddListener(OnYesClick);
+        else Debug.LogError("[ConfirmPanel] 找不到 Yes 按钮！");
+        if (noBtn != null) noBtn.onClick.AddListener(OnNoClick);
+        else Debug.LogError("[ConfirmPanel] 找不到 No 按钮！");
     }
 
     /// <summary>

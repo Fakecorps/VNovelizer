@@ -18,6 +18,9 @@ public class poolData
         PushObj(obj);
     }
 
+    /// <summary>【Fix-42】每个池的最大缓存数量：超过后直接销毁，防止反复 Get/Push 无限膨胀</summary>
+    public const int MaxPooledPerKey = 20;
+
     public void PushObj(GameObject obj)
     { 
         // 【Bug修复】检查对象是否有效（使用 Unity 的 == 运算符，它会检查对象是否已被销毁）
@@ -37,7 +40,21 @@ public class poolData
                 Debug.LogWarning("[poolData] 对象的 transform 为 null，对象可能已被销毁");
                 return;
             }
-            
+
+            // 【Fix-42】去重：同一对象被重复 Push 会被 Add 多次，取出时列表膨胀
+            if (poolList.Contains(obj))
+            {
+                Debug.LogWarning($"[poolData] 对象 {obj.name} 已在缓存池中，忽略重复推回");
+                return;
+            }
+
+            // 【Fix-42】容量上限：超限直接销毁而非无限囤积
+            if (poolList.Count >= MaxPooledPerKey)
+            {
+                UnityEngine.Object.Destroy(obj);
+                return;
+            }
+
             //将对象放回缓存池
             poolList.Add(obj);
             //设置父对象
@@ -82,6 +99,9 @@ public class poolData
         // 激活
         try
         {
+            // 【Fix-42】取出时复位基础变换，避免 UI 条目复用出现错位/脏状态残留
+            obj.transform.localPosition = Vector3.zero;
+            obj.transform.localScale = Vector3.one;
             obj.SetActive(true);
             //设置父对象
             obj.transform.SetParent(null, false);

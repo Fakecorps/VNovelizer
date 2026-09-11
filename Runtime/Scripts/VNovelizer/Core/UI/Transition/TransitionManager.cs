@@ -25,8 +25,16 @@ public class TransitionManager : MonoBehaviour
                 var prefab = VNUIPrefabs.Load(VNUIPrefabKeys.TransitionManagerRoot, VNUIPrefabKeys.TransitionManagerRoot);
                 if (prefab != null)
                 {
-                    _instance = Instantiate(prefab).GetComponent<TransitionManager>();
-                    DontDestroyOnLoad(_instance.gameObject);
+                    GameObject go = Instantiate(prefab);
+                    _instance = go.GetComponent<TransitionManager>();
+                    if (_instance == null)
+                    {
+                        // 自愈：prefab 上组件缺失（脚本 GUID 失配被剥离 / 覆写模板不含本组件）
+                        // 时补挂，保证单例引导必然成功——否则 DontDestroyOnLoad(null.gameObject) NRE
+                        Debug.LogWarning("[TransitionManager] 默认转场根对象缺少 TransitionManager 组件（脚本引用可能已失效），已自动补挂");
+                        _instance = go.AddComponent<TransitionManager>();
+                    }
+                    DontDestroyOnLoad(go);
                     Debug.Log("[TransitionManager] 场景未放置转场根对象，已自动创建包内默认实例");
                 }
                 else
@@ -55,6 +63,15 @@ public class TransitionManager : MonoBehaviour
         DontDestroyOnLoad(gameObject);
 
         CacheEffects();
+
+        // 自愈：默认转场根缺少 DarkFade 效果组件（脚本 GUID 失配被剥离等）时补挂，
+        // 否则 effectMap 为空，所有转场请求都报"未找到转场效果"。
+        if (!effectMap.ContainsKey(DarkFadeTransitionEffect.EffectKeyConst))
+        {
+            Debug.LogWarning("[TransitionManager] 默认转场根缺少 DarkFade 效果组件，已自动补挂");
+            gameObject.AddComponent<DarkFadeTransitionEffect>();
+            CacheEffects();
+        }
     }
 
     private void CacheEffects()
@@ -94,6 +111,17 @@ public class TransitionManager : MonoBehaviour
         }
 
         return !string.IsNullOrEmpty(effectKey) && effectMap.ContainsKey(effectKey);
+    }
+
+    /// <summary>
+    /// 【Fix-23】强制复位转场状态：在全局 StopAll 类操作（如 VNManager.ResetState 的
+    /// AnimationCompat.StopAll()）之后调用。转场协程可能因 tween 被外部停止而永久挂起，
+    /// IsTransitionPlaying 恒 true + 全部 UI 输入被禁用；此入口保证状态必然收敛。
+    /// </summary>
+    public void ForceReset()
+    {
+        IsTransitionPlaying = false;
+        SetAllUIInputModulesEnabled(true);
     }
 
     private bool TryGetEffect(string effectKey, out TransitionEffectBase effect)

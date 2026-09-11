@@ -184,6 +184,9 @@ public class VNLocalizationWindow : EditorWindow
 
     private void LocateByCollectionName(string collectionName)
     {
+        // 【Fix-60】本地化 API 调用加宏保护：与 VNLocalizationSyncUtility 的降级路径保持一致，
+        // 本地化包被降级/移除（VN_LOCALIZATION 宏消失）时不再编译失败。
+#if VN_LOCALIZATION
         var all = UnityEditor.Localization.LocalizationEditorSettings.GetStringTableCollections();
         var obj = all?.FirstOrDefault(c => c != null && c.TableCollectionName == collectionName);
         if (obj != null)
@@ -191,6 +194,9 @@ public class VNLocalizationWindow : EditorWindow
             Selection.activeObject = obj;
             EditorGUIUtility.PingObject(obj);
         }
+#else
+        EditorUtility.DisplayDialog("提示", "当前工程未启用本地化（VN_LOCALIZATION 宏未定义），无法按名称定位 Collection。", "确定");
+#endif
     }
 }
 

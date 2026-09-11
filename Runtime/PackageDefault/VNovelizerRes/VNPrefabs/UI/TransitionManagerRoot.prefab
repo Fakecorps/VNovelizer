@@ -42,9 +42,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 9029709158710904902}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c837e396ac7e46688a0b94cfd3617fd0, type: 3}
+  m_Script: {fileID: 11500000, guid: 90a95fabfc0916249bfac6ab57af91ba, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TransitionManager
+  m_EditorClassIdentifier: VNovelizer.Runtime::TransitionManager
 --- !u!114 &8312536169962883877
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -54,9 +54,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 9029709158710904902}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: aebba0b864af417fba735ccce11fb1d5, type: 3}
+  m_Script: {fileID: 11500000, guid: 20afc3146ec7a8c41808d623da1ecaeb, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::DarkFadeTransitionEffect
+  m_EditorClassIdentifier: VNovelizer.Runtime::DarkFadeTransitionEffect
   defaultFadeOutDuration: 0.35
   defaultFadeInDuration: 0.35
   fadeOutEase: 1

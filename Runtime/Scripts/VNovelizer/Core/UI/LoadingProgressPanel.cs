@@ -134,6 +134,12 @@ public class LoadingProgressPanel : BasePanel
         {
             StopListening();
         }
+
+        // 【Fix-29】兜底路径必须自行隐藏：OnAllTasksCompleted 的 Invoke(HideMe) 是
+        // "无驱动者流程"的自主隐藏兜底，该路径没有 UIManager.HidePanel 补做
+        // SetActive(false)——原实现会让加载面板（sortingOrder=40）在 100% 后
+        // 永远停留在屏幕上压住一切 UI。UIManager 重复 SetActive(false) 无害。
+        gameObject.SetActive(false);
     }
     
     private void OnDisable()

@@ -33,6 +33,9 @@
     "com.unity.addressables": "1.21.19",
     "com.unity.textmeshpro": "3.0.6",
     "com.unity.inputsystem": "1.7.0",
-    "com.unity.localization": "1.5.2"
+    "com.unity.localization": "1.5.2",
+    "com.unity.serialization": "3.1.1",
+    "com.unity.collections": "2.1.4",
+    "com.kyrylokuzyk.primetween": "1.4.11"
   }
 }

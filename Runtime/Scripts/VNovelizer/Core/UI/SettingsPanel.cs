@@ -345,7 +345,11 @@ public class SettingsPanel : BasePanel
             displayModeDropdown.onValueChanged.RemoveListener(OnDisplayModeChanged);
         if (resolutionDropdown != null)
             resolutionDropdown.onValueChanged.RemoveListener(OnResolutionChanged);
-        // closeBtn不需要解绑（它不会在设置值时触发）
+        // 【Fix-26】closeBtn 必须与 BindEvents 成对解绑：UpdateUIFromGlobalData 每次
+        // Unbind+Bind（ShowMe 一次 + DelayedUpdateUI 协程一次），closeBtn 被排除在解绑外
+        // 导致每次打开面板累积 3 个监听器，点一次关闭执行 3 次。
+        if (closeBtn != null)
+            closeBtn.onClick.RemoveListener(OnCloseBtnClick);
     }
     
     protected override void OnEnable()

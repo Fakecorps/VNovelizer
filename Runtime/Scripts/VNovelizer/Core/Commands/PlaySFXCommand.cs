@@ -23,8 +23,8 @@ namespace VNovelizer.Core.Commands
 
         public override bool Execute(string args)
         {
-            // 音效播放是异步的，需要协程支持
-            MonoManager.GetInstance().StartCoroutine(ExecuteAsync(args));
+            // 【Fix-8】快进/Simulate 语境：同步路径不应启动未登记的异步协程
+            // （否则快进时音效会真的播放）。跳过播放即可——Simulate 已单独处理。
             return true;
         }
 

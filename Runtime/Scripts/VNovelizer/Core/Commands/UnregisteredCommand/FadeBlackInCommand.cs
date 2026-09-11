@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System.Globalization;
+using UnityEngine;
 using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Core.Commands
@@ -26,7 +27,8 @@ namespace VNovelizer.Core.Commands
                 return false;
             }
 
-            if (!float.TryParse(parts[0].Trim(), out float duration))
+            // 【Fix-62】InvariantCulture：小数点为逗号的系统上 "0.5" 必须按 '.' 解析
+            if (!float.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float duration))
             {
                 Debug.LogError($"[FadeBlackInCommand] 无法解析时长参数: {parts[0]}");
                 return false;
@@ -47,6 +49,29 @@ namespace VNovelizer.Core.Commands
             );
 
             return true;
+        }
+
+        /// <summary>
+        /// 【Fix-23】快进预演兜底：Simulate 默认为空实现，快进时会静默跳过本命令——
+        /// 但前置的 fadeBlackOut 已把屏幕拉黑（黑幕 Image + raycast 拦截），
+        /// 跳过淡入会导致黑幕永久残留、UI 完全卡死。此处立即解除黑幕与拦截。
+        /// </summary>
+        public override void Simulate(string args)
+        {
+            if (TransitionManager.Instance != null)
+                TransitionManager.Instance.PlayDarkFadeInOnlyAsync(duration: 0f);
+        }
+
+        /// <summary>
+        /// 【Fix-23】中断兜底：与 Simulate 同理，保证中断路径也必然解除黑幕。
+        /// </summary>
+        public override void Interrupt()
+        {
+            if (TransitionManager.Instance != null)
+            {
+                TransitionManager.Instance.ForceReset();
+                TransitionManager.Instance.PlayDarkFadeInOnlyAsync(duration: 0f);
+            }
         }
     }
 }

@@ -24,6 +24,10 @@ public class DarkFadeTransitionEffect : TransitionEffectBase
     [SerializeField] private string runtimeCanvasName = "__DarkFadeCanvas";
     [SerializeField] private string runtimeImageName = "__DarkFadeImage";
 
+    // 【Fix-23】middleAction 完成回调的超时上限（秒）。转场中间动作正常应在数秒内完成，
+    // 超时视为异常（回调丢失/被中断），强制继续流程，防止输入永久禁用。
+    private const float MiddleActionTimeoutSeconds = 600f;
+
     private Canvas fadeCanvas;
     private Image fadeImage;
     private CompatTween fadeTween;
@@ -122,7 +126,14 @@ public class DarkFadeTransitionEffect : TransitionEffectBase
         {
             bool middleDone = false;
             middleActionAsync(() => middleDone = true);
-            yield return new WaitUntil(() => middleDone);
+            // 【Fix-23】超时兜底：middleAction 的回调若因异常/中断永不触发，
+            // WaitUntil 会永久挂起 → IsTransitionPlaying 恒 true + 全局输入被永久禁用。
+            float waited = 0f;
+            while (!middleDone && waited < MiddleActionTimeoutSeconds)
+            {
+                waited += Time.deltaTime;
+                yield return null;
+            }
         }
 
         yield return FadeToAlpha(0f, fadeInDuration, fadeInEase);
@@ -199,7 +210,16 @@ public class DarkFadeTransitionEffect : TransitionEffectBase
             ease: ease
         ).OnComplete(() => tweenDone = true);
 
-        yield return new WaitUntil(() => tweenDone);
+        // 【Fix-23】超时兜底：外部 AnimationCompat.StopAll()（如 VNManager.ResetState）停止 tween 时
+        // 不会触发 OnComplete，WaitUntil 会永久挂起 → 黑幕协程挂死、输入被永久禁用。
+        // 改为计时等待：超时后强制写入终态 alpha，保证转场流程必然收敛。
+        float t = 0f;
+        while (!tweenDone && t < duration + 1f)
+        {
+            t += Time.deltaTime;
+            yield return null;
+        }
+        if (!tweenDone) SetAlpha(targetAlpha);
     }
 
     private void EnsureRuntimeFadeUI()

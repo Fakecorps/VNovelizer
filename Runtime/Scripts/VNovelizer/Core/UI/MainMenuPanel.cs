@@ -222,7 +222,8 @@ public class MainMenuPanel : BasePanel
     /// </summary>
     private void OnLoadGameBtnClick()
     {
-        if (!loadGameBtn.interactable)
+        // 【Fix-28】判空：与 SetMenuInteractable 风格对齐，模板覆写缺按钮时不 NRE
+        if (loadGameBtn != null && !loadGameBtn.interactable)
         {
             Debug.LogWarning("[MainMenuPanel] 没有可用的存档");
             return;

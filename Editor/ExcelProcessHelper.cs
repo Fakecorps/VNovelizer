@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
+using UnityEditor;
 // System.Diagnostics 提供 Process，同时会引入 System.Diagnostics.Debug，
 // 与 UnityEngine.Debug 冲突——用别名显式指定日志 API。
 using Debug = UnityEngine.Debug;
@@ -155,7 +156,22 @@ public static class ExcelProcessHelper
         if (excelProcs.Count == 0) return true;
 
         string fileName = Path.GetFileName(filePath);
-        Debug.LogWarning($"[CmdSync] 电子表格程序正占用 {fileName}，自动关闭以完成镜像写回，写回后会自动重新打开。");
+        Debug.LogWarning($"[CmdSync] 电子表格程序正占用 {fileName}，需要关闭才能完成镜像写回（写回后会自动重新打开）。");
+
+        // 【Fix-45】Kill 会丢失用户在 Excel/WPS 中未保存的修改（含同一实例打开的其他工作簿），
+        // 属于破坏性操作：必须先弹窗获得用户确认，取消时放弃本次写回。
+        bool confirmed = EditorUtility.DisplayDialog(
+            "需要关闭电子表格程序",
+            $"电子表格程序（Excel/WPS）正占用 {fileName}。\n\n" +
+            "继续将强制关闭该程序——其中未保存的修改会丢失\n" +
+            "（包括同一实例中打开的其他工作簿）。\n\n" +
+            "写回完成后会自动重新打开该文件。",
+            "继续并关闭", "取消写回");
+        if (!confirmed)
+        {
+            Debug.LogWarning($"[CmdSync] 用户取消关闭电子表格程序，放弃本次镜像写回。");
+            return false;
+        }
 
         foreach (var p in excelProcs)
         {

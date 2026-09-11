@@ -43,6 +43,16 @@ public class AudioPlayerView
         AudioPreviewService.OnStateChanged += OnExternalStateChanged;
     }
 
+    /// <summary>
+    /// 【Fix-55】显式释放：退订静态事件。终结器在 Unity 托管堆中触发时机完全不可控，
+    /// CreateGUI 整体重建时旧实例会持续接收回调（操作已分离的 UI 元素、订阅者越积越多）。
+    /// 由 ResourcesEditorManager 在重建前显式调用。
+    /// </summary>
+    public void Dispose()
+    {
+        AudioPreviewService.OnStateChanged -= OnExternalStateChanged;
+    }
+
     ~AudioPlayerView()
     {
         AudioPreviewService.OnStateChanged -= OnExternalStateChanged;

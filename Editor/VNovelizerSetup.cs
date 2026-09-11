@@ -131,6 +131,16 @@ public class VNovelizerSetup : EditorWindow
 
         if (needRegistry)
         {
+            // 【Fix-46】不再用 LastIndexOf('}') 猜测 dependencies 闭合位置（嵌套对象/注释差异
+            // 会插错位置生成非法 JSON，导致整个项目包解析失败）。改为字符串感知的括号匹配
+            // 精确定位 "dependencies" 值对象的闭合大括号，写回前备份原文件。
+            int depCloseIdx = FindJsonValueCloseBrace(content, "\"dependencies\"");
+            if (depCloseIdx < 0)
+            {
+                Debug.LogError("[Setup] manifest.json 格式异常，无法定位 dependencies 块，跳过 scopedRegistries 写入");
+                return;
+            }
+
             // 在 dependencies 块闭合后追加 scopedRegistries（保持根对象为合法 JSON）
             string regJson =
                 ",\n" +
@@ -145,27 +155,15 @@ public class VNovelizerSetup : EditorWindow
                 "  ]\n" +
                 "}";
 
-            int lastIdx = content.LastIndexOf('}');
-            if (lastIdx >= 0)
-            {
-                int depCloseIdx = content.LastIndexOf('}', lastIdx - 1);
-                if (depCloseIdx >= 0)
-                {
-                    string before = content.Substring(0, depCloseIdx + 1); // 包含 dependencies 的 }
-                    content = before + regJson;
-                    File.WriteAllText(manifestPath, content);
-                    Debug.Log("[Setup] 已添加 scoped registry: npm (com.kyrylokuzyk)");
-                }
-                else
-                {
-                    Debug.LogError("[Setup] manifest.json 格式异常，找不到 dependencies 闭合括号");
-                }
-            }
-            else
-            {
-                Debug.LogError("[Setup] manifest.json 格式异常，无法写入 scopedRegistries");
-                return;
-            }
+            string before = content.Substring(0, depCloseIdx + 1); // 包含 dependencies 的 }
+            content = before + regJson;
+
+            // 写回前备份，写坏时可手动回滚；无 BOM UTF-8 与 Unity 默认约定一致
+            try { File.Copy(manifestPath, manifestPath + ".bak", overwrite: true); }
+            catch (System.Exception e) { Debug.LogWarning("[Setup] manifest 备份失败: " + e.Message); }
+
+            File.WriteAllText(manifestPath, content, new System.Text.UTF8Encoding(false));
+            Debug.Log("[Setup] 已添加 scoped registry: npm (com.kyrylokuzyk)");
         }
 
         if (needPrimeTween)
@@ -207,6 +205,43 @@ public class VNovelizerSetup : EditorWindow
         }
     }
 
+    /// <summary>
+    /// 【Fix-46】字符串感知的 JSON 定位：找到 key 对应的值对象（{...}）的闭合大括号位置。
+    /// 跳过引号内字符与转义，不再依赖"倒数第二个 }"这类脆弱假设。
+    /// </summary>
+    private static int FindJsonValueCloseBrace(string content, string key)
+    {
+        int idx = content.IndexOf(key, System.StringComparison.Ordinal);
+        if (idx < 0) return -1;
+        idx = content.IndexOf(':', idx + key.Length);
+        if (idx < 0) return -1;
+        int open = content.IndexOf('{', idx + 1);
+        if (open < 0) return -1;
+
+        int depth = 0;
+        bool inString = false;
+        bool escape = false;
+        for (int i = open; i < content.Length; i++)
+        {
+            char c = content[i];
+            if (inString)
+            {
+                if (escape) escape = false;
+                else if (c == '\\') escape = true;
+                else if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') inString = true;
+            else if (c == '{') depth++;
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
+    }
+
     // ===== Input System 为 Both 模式 =====
     /// <summary>切换 Active Input Handling 为 "Both"，需重启 Editor 生效。返回 true 表示做了修改。</summary>
     private static bool ConfigureInputSystemBoth()
@@ -218,6 +253,36 @@ public class VNovelizerSetup : EditorWindow
             return false;
         }
 
+        // 【Fix-3】优先走官方 SerializedObject API 修改（不会误伤文件内其他同名文本，
+        // 也避免 Unity 运行中整体重写该文件造成冲突丢失）；API 不可用时才回退到文本替换。
+        try
+        {
+            var assets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset");
+            if (assets != null && assets.Length > 0)
+            {
+                var so = new SerializedObject(assets[0]);
+                var prop = so.FindProperty("activeInputHandler");
+                if (prop != null)
+                {
+                    if (prop.intValue == 2)
+                    {
+                        Debug.Log("[Setup] Input System 已为 Both 模式，无需修改");
+                        return false;
+                    }
+                    prop.intValue = 2;
+                    so.ApplyModifiedProperties();
+                    AssetDatabase.SaveAssets();
+                    Debug.Log("[Setup] Input System 已切换为 Both 模式（需重启 Editor 生效）");
+                    return true;
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[Setup] SerializedObject 修改 activeInputHandler 失败，回退文本替换: " + e.Message);
+        }
+
+        // 回退：文本替换（保留原逻辑，但限制为整字段精确匹配，降低误伤）
         string content = File.ReadAllText(projectSettingsPath);
 
         if (content.Contains("activeInputHandler: 2"))

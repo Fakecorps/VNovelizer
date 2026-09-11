@@ -36,6 +36,9 @@ public class SaveSlot : MonoBehaviour
     private bool _screenshotResolved;
     // 飞行中的截图加载协程：数据快速变化时先停旧协程，避免新旧并行、完成顺序不定导致显示旧图
     private Coroutine _screenshotCoroutine;
+    // 【Fix-33】飞行中的 UnityWebRequest：协程被 StopCoroutine 中断时 using 不执行 Dispose，
+    // 持有句柄以便在中断处显式释放（下载缓冲与网络句柄不泄漏）
+    private UnityEngine.Networking.UnityWebRequest _pendingRequest;
 
     /// <summary>截图显示是否就绪（供面板决定是否强制刷新）</summary>
     public bool IsScreenshotReady => _screenshotResolved;
@@ -111,12 +114,12 @@ public class SaveSlot : MonoBehaviour
                 if (!string.IsNullOrEmpty(saveData.ScreenshotPath) && File.Exists(saveData.ScreenshotPath))
                 {
                     // 停掉仍在飞行的旧请求，防止新旧协程并行、完成顺序不定导致显示旧图
-                    if (_screenshotCoroutine != null) StopCoroutine(_screenshotCoroutine);
+                    StopPendingScreenshotLoad();
                     _screenshotCoroutine = StartCoroutine(LoadScreenshot(saveData.ScreenshotPath));
                 }
                 else
                 {
-                    if (_screenshotCoroutine != null) { StopCoroutine(_screenshotCoroutine); _screenshotCoroutine = null; }
+                    StopPendingScreenshotLoad();
                     SetDefaultScreenshot();
                 }
             }
@@ -218,7 +221,28 @@ public class SaveSlot : MonoBehaviour
 
     private void OnDestroy()
     {
+        // 【Fix-33】销毁前中断飞行中的请求并释放句柄
+        StopPendingScreenshotLoad();
         ReleaseLoadedVisual();
+    }
+
+    /// <summary>
+    /// 【Fix-33】中断飞行中的截图加载：StopCoroutine 直接丢弃迭代器时
+    /// using 的 Dispose 不会执行（迭代器被丢弃时 finally 不运行），
+    /// UnityWebRequest 的下载缓冲与句柄会泄漏；此处显式 Dispose 兜底。
+    /// </summary>
+    private void StopPendingScreenshotLoad()
+    {
+        if (_screenshotCoroutine != null)
+        {
+            StopCoroutine(_screenshotCoroutine);
+            _screenshotCoroutine = null;
+        }
+        if (_pendingRequest != null)
+        {
+            _pendingRequest.Dispose();
+            _pendingRequest = null;
+        }
     }
 
     /// <summary>
@@ -226,22 +250,24 @@ public class SaveSlot : MonoBehaviour
     /// </summary>
     private IEnumerator LoadScreenshot(string path)
     {
-        string uri = "file://" + path;
+        // 【Fix-33】URI 转义：file:// 对中文/空格路径未转义时加载必然失败
+        string uri = "file://" + System.Uri.EscapeUriString(path);
 
-        using (UnityEngine.Networking.UnityWebRequest www = UnityEngine.Networking.UnityWebRequestTexture.GetTexture(uri))
+        _pendingRequest = UnityEngine.Networking.UnityWebRequestTexture.GetTexture(uri);
+        try
         {
-            yield return www.SendWebRequest();
+            yield return _pendingRequest.SendWebRequest();
 
-            if (www.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
+            if (_pendingRequest.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
             {
-                Debug.LogWarning($"[SaveSlot] 截图加载失败: {www.error}");
+                Debug.LogWarning($"[SaveSlot] 截图加载失败: {_pendingRequest.error}");
                 SetDefaultScreenshot();
             }
             else
             {
                 if (screenshotImage != null)
                 {
-                    Texture2D texture = UnityEngine.Networking.DownloadHandlerTexture.GetContent(www);
+                    Texture2D texture = UnityEngine.Networking.DownloadHandlerTexture.GetContent(_pendingRequest);
 
                     // 兼容旧版全分辨率截图：下采样后再显示，避免整页 12 张全尺寸纹理挤占带宽与显存
                     Texture2D display = SaveManager.CreateThumbnail(texture, SaveManager.ThumbnailMaxSize);
@@ -255,6 +281,12 @@ public class SaveSlot : MonoBehaviour
                     SetLoadedScreenshot(sprite, texture);
                 }
             }
+        }
+        finally
+        {
+            // 【Fix-33】无论正常完成还是被中断，都确保 Dispose 并清理句柄
+            _pendingRequest?.Dispose();
+            _pendingRequest = null;
         }
 
         _screenshotCoroutine = null; // 正常完成，清理句柄

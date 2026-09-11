@@ -51,6 +51,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private List<CsvRow> _rows = new List<CsvRow>();
         private bool _isDirty;
 
+        /// <summary>【Fix-50】进 Play 时跳过镜像写回、退出 Play 后补写的挂起标记</summary>
+        private bool _mirrorPendingAfterPlay;
+
         /// <summary>
         /// 当前 EntryGraph 是否为视图合成的模板图（Normal/Enhanced 行展开的系统命令节点）。
         /// 为 true 且用户未编辑（!_isDirty）时，保存跳过序列化——不把合成模板写进 Command 列。
@@ -473,7 +476,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (change == PlayModeStateChange.ExitingEditMode && _isDirty)
             {
-                SaveCurrentRow();
+                // 【Fix-50】进 Play 前只落盘 CSV（快速原子写）；镜像写回 xlsx 推迟到退出 Play 后。
+                // 原实现同步执行"读 xlsx → ClosedXML 写回 →（可能弹 Kill 确认）→ 重试 Sleep"，
+                // 点 Play 后编辑器冻结数秒、状态切换路径上还可能弹窗打断。
+                _mirrorPendingAfterPlay = true;
+                SaveCurrentRow(skipMirrorWriteBack: true);
+            }
+            else if (change == PlayModeStateChange.ExitingPlayMode && _mirrorPendingAfterPlay)
+            {
+                _mirrorPendingAfterPlay = false;
+                MirrorCurrentRowToExcel();
             }
         }
 
@@ -610,7 +622,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             bar.Add(MakeDivider());
 
-            _saveButton = new Button(SaveCurrentRow) { text = "保存到 CSV" };
+            // 【Fix-50】SaveCurrentRow 带可选参数后方法组不能直接转 Action，用 lambda 包裹
+            _saveButton = new Button(() => SaveCurrentRow()) { text = "保存到 CSV" };
             bar.Add(_saveButton);
 
             // 主操作放最右：运行 = 触发引擎开始播放（最频繁的最终动作）
@@ -1774,7 +1787,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         // ==================== 保存 ====================
 
-        private void SaveCurrentRow()
+        private void SaveCurrentRow(bool skipMirrorWriteBack = false)
         {
             if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑（Play 中不写 CSV）
             var row = CurrentRow;
@@ -1864,12 +1877,27 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             // CSV 落盘后立即把该行 Command 镜像写回 Excel（Phase 1：编辑器保存 → CSV → Excel 反向覆写，
             // 见 VNCommandChainSpec.md §11.5）。写回失败仅告警，CSV 侧不受影响。
-            ExcelToCsvConverter.MirrorRowCommandBackToExcel(_csvPath, row.Id, newCommand);
+            // 【Fix-50】ExitingEditMode 路径传入 skipMirrorWriteBack=true，镜像推迟到退出 Play 后
+            if (!skipMirrorWriteBack)
+                ExcelToCsvConverter.MirrorRowCommandBackToExcel(_csvPath, row.Id, newCommand);
 
             SavePositionsOnly(row);
             _isDirty = false;
             RefreshAll();
             ShowNotification(new GUIContent("已保存到 CSV"));
+        }
+
+        /// <summary>
+        /// 【Fix-50】把当前行的 Command 镜像写回 xlsx（延迟到退出 Play 后执行，
+        /// 见 OnPlayModeStateChanged）。CSV 是运行时的数据源，xlsx 镜像仅用于 Excel 侧查看，
+        /// 推迟不影响运行时正确性。
+        /// </summary>
+        private void MirrorCurrentRowToExcel()
+        {
+            if (EditorApplication.isPlaying) return;
+            var row = CurrentRow;
+            if (row == null || string.IsNullOrEmpty(_csvPath)) return;
+            ExcelToCsvConverter.MirrorRowCommandBackToExcel(_csvPath, row.Id, row.Command ?? "");
         }
 
         /// <summary>
@@ -2065,13 +2093,24 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                         output.Add(original[i]); // 未识别的行原样保留，绝不丢内容
                 }
 
-                string tempPath = _csvPath + ".tmp";
+                // 【Fix-49】临时文件仍在同目录（保证 File.Replace 同卷原子性），但后缀用
+                // ".tmp~" 让 AssetDatabase 不会把它当资产导入（残留时也不污染工程）；
+                // 无论成功失败都在 finally 中清理残留。
+                string tempPath = _csvPath + ".tmp~";
                 File.WriteAllLines(tempPath, output);
 
                 if (File.Exists(_csvPath))
                 {
-                    // File.Replace 在同卷内是原子操作
-                    File.Replace(tempPath, _csvPath, null);
+                    try
+                    {
+                        // File.Replace 在同卷内是原子操作
+                        File.Replace(tempPath, _csvPath, null);
+                    }
+                    catch (IOException)
+                    {
+                        // Replace 失败（如杀毒/权限瞬时占用）降级为覆盖拷贝，保证保存不中断
+                        File.Copy(tempPath, _csvPath, true);
+                    }
                 }
                 else
                 {
@@ -2085,6 +2124,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 error = e.Message;
                 return false;
+            }
+            finally
+            {
+                // 【Fix-49】清理残留临时文件
+                string leftover = _csvPath + ".tmp~";
+                if (File.Exists(leftover))
+                {
+                    try { File.Delete(leftover); } catch { /* 清理失败不阻断保存结果 */ }
+                }
             }
         }
 

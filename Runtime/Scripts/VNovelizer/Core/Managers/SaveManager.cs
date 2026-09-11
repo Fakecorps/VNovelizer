@@ -126,7 +126,14 @@ public class SaveManager : BaseManager<SaveManager>
 
         try
         {
-            File.WriteAllText(savePath, contentToWrite);
+            // 【Fix-36】原子写入：先写临时文件再原子替换，避免写一半崩溃（断电/OOM/杀进程）损坏旧档；
+            // 同时保留上一版为 .bak 轮换备份，便于玩家/客服恢复。
+            string tmpPath = savePath + ".tmp";
+            File.WriteAllText(tmpPath, contentToWrite);
+            if (File.Exists(savePath))
+                File.Replace(tmpPath, savePath, savePath + ".bak");
+            else
+                File.Move(tmpPath, savePath);
             Debug.Log($"[SaveManager] 存档保存成功: {savePath}");
             return true;
         }
@@ -163,7 +170,12 @@ public class SaveManager : BaseManager<SaveManager>
     /// </summary>
     private SaveData ReadSaveData(string savePath)
     {
-        if (File.Exists(savePath))
+        if (!File.Exists(savePath)) return null;
+
+        // 【Fix-38】整个读取流程（含 ReadAllText/解密/反序列化/重试）包进单一 try-catch：
+        // 任一环节失败都按"坏档"降级处理，绝不让异常穿透到主菜单/存档面板刷新逻辑
+        // （文件被占用、密文 base64 非法、JSON 残缺等场景一律安全返回 null）。
+        try
         {
             string fileContent = File.ReadAllText(savePath);
             string json = fileContent;
@@ -180,23 +192,38 @@ public class SaveManager : BaseManager<SaveManager>
                     Debug.LogWarning($"[SaveManager] 存档 {Path.GetFileName(savePath)} 解密失败，尝试按明文读取。");
                 }
             }
+
             try
             {
                 return LitJson.JsonMapper.ToObject<SaveData>(json);
             }
-            catch
+            catch (System.Exception first)
             {
                 // 如果解析失败，说明可能是加密的但没解开，或者文件坏了
                 // 这里可以再尝试一次 AES Decrypt (防止 Config 没开但读了加密档)
                 string retryDecrypt = AESUtil.Decrypt(fileContent);
                 if (!string.IsNullOrEmpty(retryDecrypt))
-                    return LitJson.JsonMapper.ToObject<SaveData>(retryDecrypt);
+                {
+                    try
+                    {
+                        return LitJson.JsonMapper.ToObject<SaveData>(retryDecrypt);
+                    }
+                    catch (System.Exception second)
+                    {
+                        Debug.LogError($"存档 {Path.GetFileName(savePath)} 损坏（解密后仍无法解析）: {second.Message}");
+                        return null;
+                    }
+                }
 
-                Debug.LogError($"存档 {Path.GetFileName(savePath)} 损坏或格式无法识别。");
+                Debug.LogError($"存档 {Path.GetFileName(savePath)} 损坏或格式无法识别: {first.Message}");
                 return null;
             }
         }
-        return null;
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[SaveManager] 读取存档失败 {savePath}: {e.Message}");
+            return null;
+        }
     }
 
     /// <summary>
@@ -256,8 +283,17 @@ public class SaveManager : BaseManager<SaveManager>
             Directory.CreateDirectory(dir);
         }
 
-        byte[] bytes = texture.EncodeToPNG();
-        File.WriteAllBytes(screenshotPath, bytes);
+        // 【Fix-39】截图写盘异常（磁盘满/权限/占用）不得中断保存主流程：JSON 主数据可继续落盘。
+        // 失败时仍返回原路径（文件不存在），避免返回 null 引发下游 File.Exists(null) 抛异常。
+        try
+        {
+            byte[] bytes = texture.EncodeToPNG();
+            File.WriteAllBytes(screenshotPath, bytes);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[SaveManager] 截图写入失败 {screenshotPath}: {e.Message}");
+        }
         return screenshotPath;
     }
     
@@ -408,12 +444,15 @@ public class SaveManager : BaseManager<SaveManager>
         cam.Render();
         cam.targetTexture = oldTarget;
 
+        // 【Fix-21】保存并恢复先前的 RenderTexture.active，而非硬置 null，
+        // 避免破坏其他系统（后处理/自定义渲染）在截图前设置的 active RT。
+        RenderTexture prevActive = RenderTexture.active;
         RenderTexture.active = rt;
         _tempScreenshot = new Texture2D(width, height, TextureFormat.RGB24, false);
         _tempScreenshot.ReadPixels(new Rect(0, 0, width, height), 0, 0);
         _tempScreenshot.Apply();
 
-        RenderTexture.active = null;
+        RenderTexture.active = prevActive;
         Object.Destroy(rt);
     }
 
@@ -467,8 +506,17 @@ public class SaveManager : BaseManager<SaveManager>
         Texture2D thumb = CreateThumbnail(_tempScreenshot, ThumbnailMaxSize);
         Texture2D target = thumb != null ? thumb : _tempScreenshot; // 源图比目标更小时直接用原图
 
-        byte[] bytes = target.EncodeToPNG();
-        File.WriteAllBytes(screenshotPath, bytes);
+        // 【Fix-39】同 SaveScreenshot：写盘失败不得中断保存主流程。
+        // 失败时仍返回原路径（文件不存在），避免返回 null 引发下游 File.Exists(null) 抛 ArgumentNullException。
+        try
+        {
+            byte[] bytes = target.EncodeToPNG();
+            File.WriteAllBytes(screenshotPath, bytes);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[SaveManager] 截图写入失败 {screenshotPath}: {e.Message}");
+        }
 
         if (thumb != null) Object.Destroy(thumb); // 临时缩略图纹理，编码完即释放
         return screenshotPath;

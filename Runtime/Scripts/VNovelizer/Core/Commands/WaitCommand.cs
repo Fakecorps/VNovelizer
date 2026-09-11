@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Globalization;
 using UnityEngine;
 using VNovelizer.Core.Commands.Meta;
 
@@ -22,7 +23,8 @@ namespace VNovelizer.Core.Commands
 
         public override IEnumerator ExecuteAsync(string args)
         {
-            if (float.TryParse(args, out float seconds))
+            // 【Fix-62】InvariantCulture：小数点为逗号的系统上 wait(0.5) 必须按 '.' 解析
+            if (float.TryParse(args, NumberStyles.Float, CultureInfo.InvariantCulture, out float seconds))
             {
                 yield return new WaitForSeconds(seconds);
             }

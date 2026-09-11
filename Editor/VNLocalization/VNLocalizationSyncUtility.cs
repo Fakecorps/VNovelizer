@@ -224,7 +224,9 @@ public static class VNLocalizationSyncUtility
             return false;
         }
 
-        string csvPath = Path.Combine(csvFolderPath, scriptName + ".csv");
+        // 【Fix-58】规范化为绝对路径：File.* 基于 Environment.CurrentDirectory，
+        // 其他插件改变当前目录时会定位错文件或静默失败。
+        string csvPath = Path.Combine(Path.GetFullPath(csvFolderPath), scriptName + ".csv");
         if (!File.Exists(csvPath))
         {
             error = $"CSV 不存在：{csvPath}";
@@ -300,7 +302,8 @@ public static class VNLocalizationSyncUtility
             return false;
         }
 
-        string csvPath = Path.Combine(csvFolderPath, scriptName + ".csv");
+        // 【Fix-58】同上：规范化为绝对路径
+        string csvPath = Path.Combine(Path.GetFullPath(csvFolderPath), scriptName + ".csv");
         if (!File.Exists(csvPath))
         {
             error = $"CSV 不存在：{csvPath}（如果刚新建剧本，可能还没点“转换”，属于正常情况）";

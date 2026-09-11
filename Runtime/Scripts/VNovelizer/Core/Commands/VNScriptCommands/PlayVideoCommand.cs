@@ -23,15 +23,23 @@ namespace VNovelizer.Core.Commands
 
         private bool isFinished = false;
 
+        // 【Fix-9】中断标志：区分"自然播完"与"外部中断"——
+        // 外部中断不视为自然播完，绝不执行"结束后的命令"（如 loadscript 流程命令）
+        private bool _interrupted = false;
+
         public override bool Execute(string args)
         {
-            MonoManager.GetInstance().StartCoroutine(ExecuteAsync(args));
+            // 【Fix-8】快进/Simulate 语境：同步路径不应启动未登记的异步协程
+            // （否则快进时视频会真的全屏播放）。跳过视频播放，不触发后续命令。
             return true;
         }
 
         public override IEnumerator ExecuteAsync(string args)
         {
             if (string.IsNullOrEmpty(args)) yield break;
+
+            // 【Fix-9】每次启动复位中断标志
+            _interrupted = false;
 
             // 1. 解析参数
             // 这里我们只需要找到第一个逗号，把后面剩下的所有内容都当作 Command String
@@ -60,13 +68,16 @@ namespace VNovelizer.Core.Commands
             });
 
             // 3. 等待播放结束
-            while (!isFinished)
+            // 【Fix-9】加超时兜底：视频 Prepare 失败但未触发 error 回调时，
+            // 命令链不再永久挂起（10 分钟上限远大于任何正常视频时长）。
+            int frames = 0;
+            while (!isFinished && frames++ < 60 * 60 * 10)
             {
                 yield return null;
             }
 
-            // 4. 视频结束后，执行后续命令
-            if (!string.IsNullOrEmpty(nextCommand))
+            // 4. 视频自然结束后，执行后续命令；被中断则绝不执行
+            if (!_interrupted && !string.IsNullOrEmpty(nextCommand))
             {
                 Debug.Log($"[PlayVideo] 视频结束，执行后续命令: {nextCommand}");
                 // 使用 CommandManager 执行
@@ -81,6 +92,8 @@ namespace VNovelizer.Core.Commands
         /// </summary>
         public override void Interrupt()
         {
+            // 【Fix-9】先置中断标志：等待循环退出后不会执行"结束后的命令"
+            _interrupted = true;
             VNAPI.StopVideo();
             isFinished = true; // 让可能仍在等待的 ExecuteAsync 循环（如同步入口路径）退出
         }

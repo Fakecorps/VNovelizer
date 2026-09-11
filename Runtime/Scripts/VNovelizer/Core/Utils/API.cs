@@ -324,7 +324,13 @@ namespace VNovelizer.Core.API
             // 启动（登记活动实例，供 StopVideo 中断跳过）
             var player = go.GetComponent<VideoModel>();
             _activeVideo = player;
-            player.Play(videoName, onComplete);
+            // 【Fix-32】自然播完也清空静态引用：VideoModel 播完自毁 GO 时不会回调本层，
+            // 若不清理，_activeVideo 长期指向已销毁对象（静态引用泄漏）。
+            player.Play(videoName, () =>
+            {
+                if (_activeVideo == player) _activeVideo = null;
+                onComplete?.Invoke();
+            });
         }
 
         /// <summary>当前正在播放的 VideoModel 实例（播放完自毁时由 Stop 逻辑清空引用）</summary>

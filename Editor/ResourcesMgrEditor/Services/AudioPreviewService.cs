@@ -311,8 +311,19 @@ public static class EditorUpdateService
         EditorApplication.update -= OnUpdate;
     }
 
-    public static void RegisterCallback(Action callback) => _callback = callback;
-    public static void UnregisterCallback() => _callback = null;
+    public static void RegisterCallback(Action callback)
+    {
+        _callback = callback;
+        if (callback != null) StartTracking(); // 有消费者才需要每帧驱动
+    }
+
+    public static void UnregisterCallback()
+    {
+        _callback = null;
+        // 【Fix-56】无消费者时停止常驻 update 回调：此前 StartTracking 后全项目无任何
+        // 调用点停止，EditorApplication.update 永久挂着一个每帧空转的回调。
+        StopTracking();
+    }
 
     private static void OnUpdate()
     {

@@ -26,6 +26,15 @@ public class ChoicePanel : BasePanel
     /// <param name="choices">选项数据列表 (Text, CommandString)</param>
     public void ShowChoices(List<ChoiceData> choices)
     {
+        // 【Fix-30】预制体/容器判空：VNUIPrefabs.Load 失败（资源链缺失）时
+        // Instantiate(null) 抛 ArgumentNullException 中断 choice 行；container 为 null 时
+        // 实例化为场景根对象，面板销毁后孤儿残留。
+        if (choiceItemPrefab == null || container == null)
+        {
+            Debug.LogError("[ChoicePanel] 选项预制体或容器缺失，无法生成选项");
+            return;
+        }
+
         // 清理旧按钮
         foreach (var item in activeItems) Destroy(item);
         activeItems.Clear();

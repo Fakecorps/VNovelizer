@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 using VNovelizer.Core.API;
 using VNovelizer.Core.Commands.Meta;
@@ -33,6 +34,11 @@ namespace VNovelizer.Core.Commands
         private bool _screenShakeActive;
         private readonly List<string> _activeActorShakes = new List<string>();
 
+        // 【Fix-11】最近一次解析的时长：ExecuteAsync 用它保持"运行中"状态，
+        // 使点击跳过时 InterruptAll 能命中本命令并归位（震动是启动即返回的 fire-and-forget 命令，
+        // 若不保持运行中，shake(screen,1.5)&wait(1) 中 0.5 秒后跳过时震动会侵入下一行）。
+        private float _lastParsedDuration = 0.5f;
+
         // 对话框震动（UI 层）：协程句柄 + 原始位置
         private readonly List<(Coroutine co, RectTransform rect, Vector2 originalPos)> _activeUiShakes
             = new List<(Coroutine, RectTransform, Vector2)>();
@@ -57,10 +63,13 @@ namespace VNovelizer.Core.Commands
             float duration = defaultDuration;
             float intensity = defaultIntensity;
 
+            // 【Fix-62】InvariantCulture：小数点为逗号的系统上 "0.5" 必须按 '.' 解析
             if (parts.Length >= 2)
-                float.TryParse(parts[1].Trim(), out duration);
+                float.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out duration);
             if (parts.Length >= 3)
-                float.TryParse(parts[2].Trim(), out intensity);
+                float.TryParse(parts[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out intensity);
+
+            _lastParsedDuration = duration;
 
             // 1) 相机震动：剧场场景相机（只震戏内画面，UI 稳定）
             if (arg == "screen")
@@ -115,6 +124,23 @@ namespace VNovelizer.Core.Commands
 
             Debug.LogError($"[ShakeCommand] 未知的震动目标: {arg}。支持的目标: screen, L/ML/M/MR/R, dialogue");
             return false;
+        }
+
+        /// <summary>
+        /// 【Fix-11】异步执行：解析并启动震动后，在震动期间保持"运行中"（占用引用计数），
+        /// 使点击跳过时 InterruptAll 能命中本命令的 Interrupt 并归位，
+        /// 避免震动（相机/角色/对话框）继续播完侵入下一行画面。
+        /// </summary>
+        public override IEnumerator ExecuteAsync(string args)
+        {
+            if (!Execute(args)) yield break;
+
+            float t = 0f;
+            while (t < _lastParsedDuration && (_screenShakeActive || _activeActorShakes.Count > 0 || _activeUiShakes.Count > 0))
+            {
+                t += Time.deltaTime;
+                yield return null;
+            }
         }
 
         /// <summary>

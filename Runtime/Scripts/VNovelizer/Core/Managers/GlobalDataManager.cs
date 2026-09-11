@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -114,8 +115,19 @@ public class GlobalDataManager : BaseManager<GlobalDataManager>
         string path = Application.persistentDataPath + "/" + GLOBAL_DATA_PATH;
         if (File.Exists(path))
         {
-            string json = File.ReadAllText(path);
-            globalData = LitJson.JsonMapper.ToObject<GlobalData>(json);
+            // 【Fix-37】global_data.json 损坏/被占用时绝不能让异常沿 Init() 上抛导致游戏无法启动：
+            // 备份坏文件并重建默认值（与 SaveManager.ReadSaveData 的容错保持一致）。
+            try
+            {
+                string json = File.ReadAllText(path);
+                globalData = LitJson.JsonMapper.ToObject<GlobalData>(json) ?? new GlobalData();
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[GlobalDataManager] 全局数据损坏，备份并重建默认值: {e.Message}");
+                try { File.Move(path, path + ".corrupted_" + DateTime.Now.Ticks); } catch { }
+                globalData = new GlobalData();
+            }
         }
         else
         {
@@ -166,9 +178,20 @@ public class GlobalDataManager : BaseManager<GlobalDataManager>
     /// </summary>
     private void SaveGlobalData()
     {
+        // 【Fix-36】原子写入：先写临时文件再替换，避免写一半崩溃损坏全局数据（损坏即启动崩溃，见 LoadGlobalData）。
         string path = Application.persistentDataPath + "/" + GLOBAL_DATA_PATH;
         string json = LitJson.JsonMapper.ToJson(globalData);
-        File.WriteAllText(path, json);
+        try
+        {
+            string tmpPath = path + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            if (File.Exists(path)) File.Replace(tmpPath, path, path + ".bak");
+            else File.Move(tmpPath, path);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[GlobalDataManager] 全局数据写入失败: {e.Message}");
+        }
     }
     
     /// <summary>

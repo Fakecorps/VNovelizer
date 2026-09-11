@@ -265,8 +265,9 @@ public class VNGameplayPanel : BasePanel
                 if (stateManager != null && !stateManager.CanInteractGameplay())
                 {
                     // 在非 Gameplay/AutoPlay 状态下（如 Choice、SaveLoad、History、Pause 等），停止快进
-                    isSkipping = false;
-                    UpdateSkipButtonState();
+                    // 【Fix-22】走 StopSkip 收口：原实现只复位 isSkipping 不恢复 Time.timeScale，
+                    // 打开暂停/存档面板后全游戏保持 10 倍速。
+                    StopSkip();
                     return;
                 }
                 
@@ -274,8 +275,7 @@ public class VNGameplayPanel : BasePanel
                 if (stateManager.CurrentState == GameState.Choice)
                 {
                     // 在 Choice 状态下，停止快进，等待玩家选择
-                    isSkipping = false;
-                    UpdateSkipButtonState();
+                    StopSkip();
                     return;
                 }
 
@@ -390,6 +390,9 @@ public class VNGameplayPanel : BasePanel
             VNDebug.LogVerbose("[VNGameplayPanel] Input Actions Disabled");
         }
 
+        // 【Fix-22】隐藏/销毁前恢复时间缩放：面板在快进中被隐藏（打开暂停/读档）时，
+        // Update 的兜底可能未执行，此处防御性恢复，避免全游戏 10 倍速残留。
+        StopSkip();
         HideContinueIcon();
     }
     #endregion
@@ -1015,6 +1018,8 @@ public class VNGameplayPanel : BasePanel
 
     private void UpdateSkipButtonState()
     {
+        // 【Fix-27】判空：与 UpdateAutoButtonState 对齐，模板覆写缺 Skip 按钮时不 NRE
+        if (skipButton == null) return;
         TMP_Text buttonText = skipButton.GetComponentInChildren<TMP_Text>();
         if (buttonText != null)
         {
@@ -1028,14 +1033,25 @@ public class VNGameplayPanel : BasePanel
     /// </summary>
     private void StopSkip()
     {
-        if (!isSkipping) return;
+        bool wasSkipping = isSkipping;
         isSkipping = false;
         UpdateSkipButtonState();
-        Time.timeScale = 1f;
-        // 同步 VNManager 内部状态
-        if (VNManager.GetInstance().IsSkipping())
+
+        if (wasSkipping)
         {
-            VNManager.GetInstance().ToggleSkip();
+            Time.timeScale = 1f;
+            // 同步 VNManager 内部状态
+            if (VNManager.GetInstance().IsSkipping())
+            {
+                VNManager.GetInstance().ToggleSkip();
+            }
+        }
+        else if (Mathf.Approximately(Time.timeScale, 10f))
+        {
+            // 【Fix-22】防御分支：面板层 isSkipping 已被外部路径复位、但 TimeScale 仍是快进值
+            // （如 Update 中状态打断后原实现只复位 bool）——只有恰为快进值 10 才恢复，
+            // 不干扰其他合法的 timeScale 用法。
+            Time.timeScale = 1f;
         }
     }
 

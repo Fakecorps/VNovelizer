@@ -36,7 +36,8 @@ namespace VNovelizer.Core.Commands
 
         public override bool Execute(string args)
         {
-            MonoManager.GetInstance().StartCoroutine(ExecuteAsync(args));
+            // 【Fix-8】快进/Simulate 语境：同步路径不应启动未登记的异步协程
+            // （否则快进时动画特效会真的播放）。跳过播放即可。
             return true;
         }
 
@@ -107,10 +108,26 @@ namespace VNovelizer.Core.Commands
 
             // 初始化
             Transform parent = VNAPI.GetEffectLayer();
+            if (parent == null)
+            {
+                Debug.LogError($"[PlayAnim] 特效层不存在，无法挂载动画: {resPath}");
+                PoolManager.GetInstance().PushObj(resPath, animObj);
+                entry.Obj = null;
+                yield break;
+            }
             animObj.name = "VNAnim_" + animName;
             animObj.transform.SetParent(parent, false);
 
+            // 【Fix-14】RectTransform 判空：动画预制体为普通 3D 对象（或缺失 RectTransform）时
+            // 直接解引用会 NRE，并经 ExecuteSingleCommandAsync 卡死引用计数导致流程停摆。
             RectTransform rect = animObj.GetComponent<RectTransform>();
+            if (rect == null)
+            {
+                Debug.LogError($"[PlayAnim] {resPath} 缺少 RectTransform，无法定位，已回收");
+                PoolManager.GetInstance().PushObj(resPath, animObj);
+                entry.Obj = null;
+                yield break;
+            }
             rect.localScale = Vector3.one;
 
             // 设置位置 (核心逻辑)

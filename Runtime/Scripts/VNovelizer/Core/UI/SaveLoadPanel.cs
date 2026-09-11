@@ -73,9 +73,13 @@ public class SaveLoadPanel : BasePanel
         saveSlotsContainer = transform.Find("SaveSlotsContainer");
 
         // 绑定事件
-        closeButton.onClick.AddListener(OnCloseButtonClick);
-        prevPageButton.onClick.AddListener(OnPrevPageButtonClick);
-        nextPageButton.onClick.AddListener(OnNextPageButtonClick);
+        // 【Fix-28】GetControl 依赖子物体命名契约，模板覆写缺控件时判空保护（不再 Awake 阶段 NRE）
+        if (closeButton != null) closeButton.onClick.AddListener(OnCloseButtonClick);
+        else Debug.LogError("[SaveLoadPanel] 找不到 CloseButton 按钮！");
+        if (prevPageButton != null) prevPageButton.onClick.AddListener(OnPrevPageButtonClick);
+        else Debug.LogError("[SaveLoadPanel] 找不到 PrevPage 按钮！");
+        if (nextPageButton != null) nextPageButton.onClick.AddListener(OnNextPageButtonClick);
+        else Debug.LogError("[SaveLoadPanel] 找不到 NextPage 按钮！");
 
         // 初始化存档数据数组（根据实际的最大槽位数）
         int maxSlots = SaveManager.GetInstance().GetMaxSaveSlots();
@@ -598,11 +602,17 @@ public class SaveLoadPanel : BasePanel
     private void OnDestroy()
     {
         // 面板被Destroy时，如果当前状态是SaveLoad，需要恢复游戏状态
-        if (GameStateManager.GetInstance() != null && 
-            GameStateManager.GetInstance().CurrentState == GameState.SaveLoad)
+        // 【Fix-31】场景切换/HideAll 时各面板销毁顺序不定：若 PausePanel 先销毁
+        // （此时状态仍是 SaveLoad，其恢复条件不满足），本面板 PopState 只弹回 Pause，
+        // 无人再恢复 → CanInteractGameplay 恒 false 卡死交互。
+        // 此处连带把 Pause 一并弹出，不依赖销毁顺序。
+        var sm = GameStateManager.GetInstance();
+        if (sm != null && sm.CurrentState == GameState.SaveLoad)
         {
             // 尝试从栈中弹出状态（如果是从Pause打开的）
-            GameStateManager.GetInstance().PopState();
+            sm.PopState();
+            if (sm.CurrentState == GameState.Pause)
+                sm.PopState();
             Debug.Log("[SaveLoadPanel] 面板被Destroy，已恢复游戏状态");
         }
     }
