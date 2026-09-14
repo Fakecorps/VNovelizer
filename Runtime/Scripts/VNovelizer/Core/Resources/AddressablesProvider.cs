@@ -284,7 +284,9 @@ public class AddressablesProvider : IVNResourceProvider
                 if (!hasEntries) return null;
             }
 
-            var handle = Addressables.LoadAssetsAsync<T>(new List<object> { label }, null, Addressables.MergeMode.Union);
+            // 单 label key 用单 key 重载（MergeMode 系列重载已在 Addressables 1.19+ 弃用，
+            // 单 key 加载语义等价；releaseDependenciesOnFailure=true 失败时自动释放依赖）
+            var handle = Addressables.LoadAssetsAsync<T>(label, null, true);
 #if UNITY_EDITOR
             // 编辑器 Fast 模式：初始化完成后操作应同步完成。
             // 意外未完成时尝试 WaitForCompletion 补救一次，失败则回退链上下一环。

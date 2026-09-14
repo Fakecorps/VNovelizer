@@ -69,6 +69,14 @@ namespace VNovelizer.L2D
                 yield break;
             }
 
+            // 【Fix-L2D-3】wait + 循环动作（Idle 类 / Loop 勾选）必然死锁——
+            // 该类动作永不触发结束信号。拦截降级 async 并警告（不打断演出）。
+            if (wait && l2d.IsMotionEndless(motionID))
+            {
+                Debug.LogWarning($"[L2DMotion] 动作 '{motionID}' 是循环动作，wait 会永远阻塞——已按 async 处理（如需阻塞请改用非循环动作）");
+                yield break;
+            }
+
             if (!wait) yield break;
 
             _waitingTarget = l2d;

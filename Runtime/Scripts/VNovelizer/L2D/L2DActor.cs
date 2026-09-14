@@ -2,9 +2,12 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using Live2D.Cubism.Core;
+using Live2D.Cubism.Framework;
 using Live2D.Cubism.Framework.Expression;
 using Live2D.Cubism.Framework.Motion;
 using Live2D.Cubism.Framework.MotionFade;
+using Live2D.Cubism.Framework.MouthMovement;
 using Live2D.Cubism.Rendering;
 using UnityEngine;
 using VNovelizer.Core.Compat;
@@ -14,7 +17,8 @@ using VNovelizer.Core.Theater;
 namespace VNovelizer.L2D
 {
     /// <summary>
-    /// Live2D 演员：官方 Cubism SDK 5 OW 组件体系的封装实现（IActor + IL2DControllable）。
+    /// Live2D 演员：官方 Cubism SDK 5 OW 组件体系的封装实现
+    /// （IActor + IL2DControllable + ILipSyncHost）。
     ///
     /// 播放内核 100% 官方组件（见 VNLive2DCharacterDesign.md v3）：
     /// - 动作：CubismMotionController <b>单层</b>，Idle 与一次性动作共享同一层（SDK 的
@@ -23,10 +27,12 @@ namespace VNovelizer.L2D
     ///   多层会让 AnimationLayerMixerPlayable 覆盖遮蔽 Idle（实测踩坑），故改单层。
     /// - 表情：CubismExpressionController.CurrentExpressionIndex（保持型，官方淡入淡出）；
     /// - 透明度：CubismRenderController.Opacity。
+    /// - 口型：CubismMouthController + CubismAudioMouthInput（官方组件，AudioInput 绑定
+    ///   VoiceManager 的全局语音源，采样 RMS 驱动 MouthOpening）。
     ///
     /// 坐标契约与 MeshActor 一致：1 剧本像素 = 0.01 世界单位；zOrder → 世界 Z = -0.1 * zOrder。
     /// </summary>
-    public class L2DActor : IActor, IL2DControllable
+    public class L2DActor : IActor, IL2DControllable, ILipSyncHost
     {
         public const float PixelsToWorld = 0.01f;
         public const float DepthStep = -0.1f;
@@ -46,6 +52,10 @@ namespace VNovelizer.L2D
         private CubismMotionController _motionController;
         private CubismExpressionController _expressionController;
         private CubismRenderController _renderController;
+
+        // 口型同步（官方组件直封；AudioInput 懒绑定到 VoiceManager 全局语音源）
+        private CubismMouthController _mouthController;
+        private CubismAudioMouthInput _mouthInput;
 
         // 视觉状态缓存（动画与归位使用）
         private float _scale = 1f;
@@ -233,6 +243,86 @@ namespace VNovelizer.L2D
 
             // fade states 重建（mc 层数组此时已按正确层数建好）
             if (fade != null) fade.Refresh();
+
+            // 口型同步组件（官方直封 + 嘴参数自动标签，见 ConfigureLipSync）
+            ConfigureLipSync();
+        }
+
+        /// <summary>
+        /// 口型同步组件装配（Fix-L2D-LipSync，2026-09-14）：
+        ///
+        /// <list type="number">
+        /// <item><b>嘴参数自动标签</b>：SDK 不会自动给参数挂 <c>CubismMouthParameter</c>
+        ///      标签（官方需手动），且 Mao 等模型的嘴参数命名非标准（ParamMouthUp/Down/…
+        ///      而非 ParamMouthOpenY）——按开合参数白名单在运行时实例上补标签，
+        ///      不改动 prefab 资产，用户零操作。白名单**不包含** ParamMouthAngry/
+        ///      ParamMouthForm 等表情参数（否则口型会破坏表情嘴型）。</item>
+        /// <item><b>CubismMouthController</b>：缺则补。官方默认 MouthOpening=1（张嘴），
+        ///      必须立即归零，否则待机时模型嘴部张开。
+        ///      【实测踩坑】官方默认 BlendMode=Multiply（参数终值 = 当前值 × MouthOpening）——
+        ///      嘴参数默认值是 0（闭嘴原位），0 × 任何口型值 = 0 → 嘴永远紧闭。
+        ///      必须显式改为 Override（直接覆写参数值），口型才能驱动开合。</item>
+        /// <item><b>CubismAudioMouthInput</b>：缺则补，AudioInput 懒绑定到 VoiceManager
+        ///      的全局语音源（激活口型时解析——构造期 VoiceManager 可能尚未初始化）。</item>
+        /// </list>
+        /// </summary>
+        private void ConfigureLipSync()
+        {
+            if (_modelGo == null) return;
+
+            // 1. 嘴参数自动标签（实例级，不动 prefab 资产）。
+            //    白名单 = 嘴部"开合"参数（口型直接驱动）；表情类嘴参数
+            //    （ParamMouthAngry / ParamMouthForm / ParamMouthAngryLine 等）绝不打标签。
+            var model = _modelGo.FindCubismModel();
+            int taggedCount = 0;
+            if (model != null && model.Parameters != null)
+            {
+                foreach (var p in model.Parameters)
+                {
+                    if (p == null || string.IsNullOrEmpty(p.Id)) continue;
+                    if (!IsMouthOpenParameter(p.Id)) continue;
+                    if (p.GetComponent<CubismMouthParameter>() == null)
+                        p.gameObject.AddComponent<CubismMouthParameter>();
+                    taggedCount++;
+                }
+            }
+
+            // 2. MouthController（缺则补 + 归零 + Override 模式 + 刷新目标缓存）
+            _mouthController = _modelGo.GetComponent<CubismMouthController>();
+            if (_mouthController == null)
+                _mouthController = _modelGo.AddComponent<CubismMouthController>();
+            _mouthController.BlendMode = CubismParameterBlendMode.Override; // Multiply × 默认值 0 = 永远紧闭
+            _mouthController.MouthOpening = 0f;
+            _mouthController.Refresh();
+
+            // 3. AudioMouthInput（缺则补；初始禁用——由外部口型激活器按说话者开关）
+            _mouthInput = _modelGo.GetComponent<CubismAudioMouthInput>();
+            if (_mouthInput == null)
+                _mouthInput = _modelGo.AddComponent<CubismAudioMouthInput>();
+            _mouthInput.enabled = false;
+
+            if (taggedCount == 0)
+            {
+                Debug.LogWarning($"[L2DActor] {ActorId} 模型 '{_modelGo.name}' 未找到嘴部开合参数" +
+                                 "（期望 ParamMouthOpenY / ParamMouthUp / ParamMouthDown 等），口型同步将不生效");
+            }
+            else
+            {
+                VNDebug.LogVerbose($"[L2DActor] {ActorId} 口型组件就绪：{taggedCount} 个开合参数已驱动（Override 模式）");
+            }
+        }
+
+        /// <summary>
+        /// 参数 ID 是否为嘴部"开合"参数（口型驱动白名单）。
+        /// 标准 Live2D 规范 = ParamMouthOpenY；Mao 等官方模型用 ParamMouthUp / ParamMouthDown
+        /// （上/下唇位移模拟张嘴）。表情类嘴参数（Angry/Form/Smile/Line 等）不在白名单。
+        /// </summary>
+        private static bool IsMouthOpenParameter(string parameterId)
+        {
+            return string.Equals(parameterId, "ParamMouthOpenY", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(parameterId, "ParamMouthOpen", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(parameterId, "ParamMouthUp", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(parameterId, "ParamMouthDown", StringComparison.OrdinalIgnoreCase);
         }
 
         #region 外观
@@ -258,6 +348,27 @@ namespace VNovelizer.L2D
                 _modelGo = UnityEngine.Object.Instantiate(_profile.ModelPrefab, parent);
                 _modelGo.name = $"Actor_{Kind}_{ActorId}";
                 ConfigureOfficialComponents();
+
+                // 【Fix-L2D-2】重建后必须完整恢复原状：
+                // ① 重新订阅动作生命周期（播完回 Idle 兜底）；② 重播 Idle 待机；
+                // ③ 重新应用变换/深度/透明度/可见性（旧实现重建后新模型默认位姿，
+                //    位置缩放翻转 zOrder alpha visible 全部丢失）。
+                if (_motionController != null)
+                {
+                    _motionController.AnimationBeginHandler += OnMotionBegin;
+                    _motionController.AnimationEndHandler += OnMotionEnd;
+                }
+                PlayIdleMotion();
+
+                _currentExpId = null;     // 表情按新模型重设（索引随 ExpressionList 变化）
+                _currentMotionId = null;
+                _activeNonIdleInstanceId = -1;
+                _expectingNonIdleBegin = false;
+
+                ApplyTransform();
+                ApplyOpacity();
+                if (IsValid) SetDepth(_zOrder);
+                if (IsValid) _modelGo.SetActive(_visible);
             }
 
             // 情绪串（appearance.id 第 3 段，已归一为 ID#Default#表情）= 表情 ID：应用并保持。
@@ -386,6 +497,14 @@ namespace VNovelizer.L2D
             }
         }
 
+        public bool IsMotionEndless(string motionID)
+        {
+            var entry = _profile.FindMotion(motionID);
+            if (entry == null) return false;
+            // Idle 类恒循环（垫底待机）；Motion 类按 Loop 勾选
+            return entry.Kind == L2DMotionKind.Idle || entry.Loop;
+        }
+
         public bool TryStopMotion()
         {
             if (_motionController == null || !IsValid) return false;
@@ -481,9 +600,14 @@ namespace VNovelizer.L2D
 
         public IEnumerator WaitMotionFinished()
         {
-            // 循环动作永不结束——由命令层校验避免误用
-            while (IsValid && _motionController != null &&
-                   _motionController.IsPlayingAnimation(ActionLayer))
+            // 【Fix-L2D-1】单层设计下不能按"层空闲"等待——动作播完的 EndHandler 会
+            // 同步重播循环 Idle，CubismMotionLayer._isFinished 立即回到 false，
+            // IsPlayingAnimation 恒 true → wait 必然死锁命令链。
+            // 改为等待"当前一次性动作实例真正结束"：OnMotionEnd 里匹配实例 ID 后
+            // 置 -1（与"播完回 Idle"共用同一信号，无竞态）。
+            // 注意：Loop 动作 / Idle 类动作不触发 EndHandler，_activeNonIdleInstanceId
+            // 恒 >= 0 → 永远等待；该组合由命令层（L2DMotionCommand）校验拦截。
+            while (IsValid && _activeNonIdleInstanceId >= 0)
             {
                 yield return null;
             }
@@ -505,6 +629,35 @@ namespace VNovelizer.L2D
                 foreach (var e in _profile.Expressions)
                     if (e != null && !string.IsNullOrEmpty(e.ID)) ids.Add(e.ID);
             return ids.Count > 0 ? string.Join(", ", ids) : "（空）";
+        }
+
+        #endregion
+
+        #region ILipSyncHost（口型同步）
+
+        /// <summary>
+        /// 启用 / 停用口型同步（说话者绑定，见 L2DLipSyncDirector）：
+        /// active=true 时把官方 CubismAudioMouthInput 绑到 VoiceManager 的全局语音源
+        /// （AudioSource.GetOutputData 只能采样"正在播放该源"的音频，故必须绑定真实播放源），
+        /// Gain / Smoothing 取角色配置；false 时停用并归零口型，防止嘴部停在张开状态。
+        /// </summary>
+        public void SetLipSyncActive(bool active)
+        {
+            if (_mouthController == null || _mouthInput == null) return;
+
+            if (active)
+            {
+                if (_mouthInput.AudioInput == null)
+                    _mouthInput.AudioInput = VoiceManager.GetInstance().GetVoiceAudioSource();
+                _mouthInput.Gain = _profile.LipSyncGain > 0f ? _profile.LipSyncGain : 5f;
+                _mouthInput.Smoothing = Mathf.Clamp01(_profile.LipSyncSmoothing);
+                _mouthInput.enabled = true;
+            }
+            else
+            {
+                _mouthInput.enabled = false;
+                _mouthController.MouthOpening = 0f;
+            }
         }
 
         #endregion
@@ -549,7 +702,36 @@ namespace VNovelizer.L2D
         public void SetVisible(bool visible)
         {
             _visible = visible;
-            if (IsValid) _modelGo.SetActive(_visible);
+            if (!IsValid) return;
+
+            bool wasActive = _modelGo.activeSelf;
+            _modelGo.SetActive(_visible);
+
+            if (_visible)
+            {
+                if (!wasActive)
+                {
+                    // 【Fix-L2D-5】真正从"隐藏 → 显示"时，SDK 的 OnDisable/OnEnable
+                    // 已销毁并重建 PlayableGraph——隐藏前播放的动作（Idle / 一次性动作）
+                    // 全部丢失，_motionPriorities 数组也保留旧值。必须重置动作状态并
+                    // 重播 Idle 兜底（PlayIdleMotion 内部先反射清零优先级），否则模型僵住。
+                    _currentMotionId = null;
+                    _activeNonIdleInstanceId = -1;
+                    _expectingNonIdleBegin = false;
+                    PlayIdleMotion();
+                }
+                // wasActive==true：SetActive(true) 是 no-op（不触发 OnEnable、graph 未重建），
+                // 保持当前动作——VN 每行重发 ShowCharacter 的幂等去重语义不变。
+            }
+            else
+            {
+                // 隐藏期间动作层随 graph 销毁，EndHandler 不会再触发——
+                // 立即作废动作状态，防止在途 WaitMotionFinished 死等、以及
+                // 重新显示时误判"动作还在播放"（去重逻辑跳过重播）。
+                _currentMotionId = null;
+                _activeNonIdleInstanceId = -1;
+                _expectingNonIdleBegin = false;
+            }
         }
 
         private void ApplyTransform()
@@ -702,8 +884,13 @@ namespace VNovelizer.L2D
             _motionController = null;
             _expressionController = null;
             _renderController = null;
+            _mouthController = null;
+            _mouthInput = null;
             _currentMotionId = null;
             _currentExpId = null;
+            // 【Fix-L2D-1】实例信号复位——销毁后任何在途 WaitMotionFinished 立即退出
+            _activeNonIdleInstanceId = -1;
+            _expectingNonIdleBegin = false;
         }
 
         #endregion

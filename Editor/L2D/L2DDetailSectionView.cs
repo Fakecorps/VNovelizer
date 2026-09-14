@@ -39,6 +39,8 @@ namespace VNovelizer.L2D.EditorTools
             Add(BuildExpressionSection());
             Add(BuildCardLabel("动作配置（ID → .anim 动作）"));
             Add(BuildMotionSection());
+            Add(BuildCardLabel("口型同步（说话时自动动嘴，跟随本行语音）"));
+            Add(BuildLipSyncSection());
             Add(BuildValidationSection());
             RefreshValidation();
         }
@@ -338,6 +340,87 @@ namespace VNovelizer.L2D.EditorTools
             row.Add(delBtn);
 
             return row;
+        }
+
+        // =========================================================
+        //                      口型同步
+        // =========================================================
+        private VisualElement BuildLipSyncSection()
+        {
+            var box = new VisualElement();
+            box.style.marginBottom = 12;
+            box.style.paddingTop = 6;
+            box.style.paddingBottom = 6;
+            box.style.paddingLeft = 8;
+            box.style.paddingRight = 8;
+            box.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgCard);
+            box.style.borderTopLeftRadius = 4;
+            box.style.borderTopRightRadius = 4;
+            box.style.borderBottomLeftRadius = 4;
+            box.style.borderBottomRightRadius = 4;
+
+            var gainRow = new VisualElement();
+            gainRow.style.flexDirection = FlexDirection.Row;
+            gainRow.style.alignItems = Align.Center;
+            gainRow.style.marginBottom = 5;
+
+            var gainLabel = new Label("采样增益");
+            gainLabel.style.width = 110;
+            gainLabel.style.flexShrink = 0;
+            gainLabel.tooltip = "语音 RMS 幅度普遍偏小（0.05~0.2），需放大到可感知的嘴部张合";
+            gainRow.Add(gainLabel);
+
+            var gainSlider = new Slider(1f, 10f) { value = profile.LipSyncGain };
+            gainSlider.style.flexGrow = 1;
+            gainSlider.style.flexShrink = 1;
+            gainSlider.style.minWidth = 0; // Unity 内置 Slider 有固有最小宽度约束，不覆盖会溢出卡片
+            gainSlider.RegisterValueChangedCallback(evt =>
+            {
+                profile.LipSyncGain = evt.newValue;
+                EditorUtility.SetDirty(profile);
+            });
+            gainRow.Add(gainSlider);
+
+            var gainValue = new Label(profile.LipSyncGain.ToString("0.0"));
+            gainValue.style.width = 34;
+            gainValue.style.flexShrink = 0;
+            gainValue.style.marginLeft = 6;
+            gainSlider.RegisterValueChangedCallback(evt =>
+                gainValue.text = evt.newValue.ToString("0.0"));
+            gainRow.Add(gainValue);
+            box.Add(gainRow);
+
+            var smoothRow = new VisualElement();
+            smoothRow.style.flexDirection = FlexDirection.Row;
+            smoothRow.style.alignItems = Align.Center;
+
+            var smoothLabel = new Label("平滑系数");
+            smoothLabel.style.width = 110;
+            smoothLabel.style.flexShrink = 0;
+            smoothLabel.tooltip = "口型平滑时间：0 = 机械感，1 = 迟钝";
+            smoothRow.Add(smoothLabel);
+
+            var smoothSlider = new Slider(0f, 1f) { value = profile.LipSyncSmoothing };
+            smoothSlider.style.flexGrow = 1;
+            smoothSlider.style.flexShrink = 1;
+            smoothSlider.style.minWidth = 0; // 同上：覆盖内置最小宽度，防止溢出
+            smoothSlider.RegisterValueChangedCallback(evt =>
+            {
+                profile.LipSyncSmoothing = evt.newValue;
+                EditorUtility.SetDirty(profile);
+            });
+            smoothRow.Add(smoothSlider);
+
+            var smoothValue = new Label(profile.LipSyncSmoothing.ToString("0.00"));
+            smoothValue.style.width = 34;
+            smoothValue.style.flexShrink = 0;
+            smoothValue.style.marginLeft = 6;
+            smoothSlider.RegisterValueChangedCallback(evt =>
+                smoothValue.text = evt.newValue.ToString("0.00"));
+            smoothRow.Add(smoothValue);
+            box.Add(smoothRow);
+
+            return box;
         }
 
         // =========================================================

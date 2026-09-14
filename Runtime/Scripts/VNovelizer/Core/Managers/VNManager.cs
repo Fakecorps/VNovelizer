@@ -1672,7 +1672,8 @@ public class VNManager : BaseManager<VNManager>
         // 语音路径合法性：不接受 URL 形式
         string voicePath = line.Voice.Trim();
         if (voicePath.Length > 0 && !voicePath.Contains("://"))
-            VoiceManager.GetInstance().PlayVoice(voicePath);
+            // 携带说话者 ID——口型同步等系统按"谁在说话"绑定模型动画
+            VoiceManager.GetInstance().PlayVoice(voicePath, line.Speaker);
         else
             Debug.LogWarning($"[VNManager] 无效的语音路径: {voicePath}");
     }
@@ -1822,10 +1823,12 @@ public class VNManager : BaseManager<VNManager>
     /// <summary>
     /// 【系统命令 playVoice 用】播放语音。
     /// 复用 <see cref="UpdateAudioState"/> 的语音分支（含 URL 形式拒绝）。
+    /// 说话者取当前行上下文（口型同步绑定用）。
     /// </summary>
     public void SysPlayVoice(string voicePath)
     {
-        UpdateAudioState(new ResolvedLine { BGM = "", Voice = voicePath });
+        var ctx = VNAPI.GetCurrentLineContext();
+        UpdateAudioState(new ResolvedLine { BGM = "", Voice = voicePath, Speaker = ctx?.Speaker });
     }
 
     public void UpdateCurrentBG_OnlyData(string bgName)

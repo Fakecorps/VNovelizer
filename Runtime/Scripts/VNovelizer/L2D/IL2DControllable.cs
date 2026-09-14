@@ -23,6 +23,12 @@ namespace VNovelizer.L2D
         bool TryStopMotion();
 
         /// <summary>
+        /// 指定动作是否为"永不结束"（Idle 类或勾选 Loop）——
+        /// wait 模式等待其结束必然死锁，命令层据此拦截并降级 async。
+        /// </summary>
+        bool IsMotionEndless(string motionID);
+
+        /// <summary>
         /// 切换表情（官方 CubismExpressionController.CurrentExpressionIndex 语义）：
         /// 保持型——应用并持续挂在模型上，直到下一次切换或清除。
         /// </summary>

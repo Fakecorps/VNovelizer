@@ -287,9 +287,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 与系统命令族规则一致：nextline 作为流程命令默认出现在链尾（OnConfirm Entry
             // 与 OnConfirm Exit 之间），标记为 vn-node--template（半透明、不可连线）。
             // 用户删除它 → 触发 OnRequestPromotion → 提升为定制行（写入 Command 列）。
+            // 【Fix-R14-B】savedPositions 透传——模板节点的用户拖动位置随行持久化。
             if (isConfirm)
             {
-                EnsureTemplateNextLine(graph, isConfirm, startX, centerY);
+                EnsureTemplateNextLine(graph, isConfirm, startX, centerY, savedPositions);
+
+                // 【Fix-R14-E】清理图数据中残留的 Start→End 直连桥接边——
+                // Undo 快照恢复等路径不经 OnGraphViewChanged，模板与直连边并存
+                // 会重现"越过模板的扭曲连线"。模板存在时直连边必为错误残留。
+                RemoveDirectSentinelBridge(graph, isConfirm);
+
                 // 初始化时评估已有 nextline 节点的可见性（与模板判断条件一致）
                 RefreshNextLineVisibility(graph, isConfirm: true);
             }
@@ -414,6 +421,20 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 if (ghosts.Count > 0)
                 {
                     foreach (var ghost in ghosts) change.elementsToRemove.Remove(ghost);
+
+                    // 【Fix-R14-D2】模板节点的关联边一并拦截——GraphView 删除节点时
+                    // 会把关联边也加入 elementsToRemove，只拦节点不拦边会导致
+                    // Unity 应用 change 后边被删除而节点保留：取消提升时模板
+                    // 孤立悬空、entry→模板→exit 连线全断。
+                    var ghostEdges = change.elementsToRemove.OfType<Edge>()
+                        .Where(e =>
+                        {
+                            var f = e.output?.node as VNNodeViewBase;
+                            var t = e.input?.node as VNNodeViewBase;
+                            return ghosts.Any(g => g == f || g == t);
+                        }).ToList();
+                    foreach (var e in ghostEdges) change.elementsToRemove.Remove(e);
+
                     OnRequestPromotion?.Invoke();
                 }
             }
@@ -440,6 +461,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 // 图结构已变（删节点/改连线），选中 Fork/Join 的影响范围可能变化，重算高亮
                 RefreshRangeHighlight();
+
+                // 【Fix-R14-E】模板 nextline 随结构变更重新评估（创建/移除/清桥接残留）。
+                // 旧版模板只在 BuildLane 创建——图上删光出口段命令后模板永久消失，
+                // 且 BridgeRemovedNodes 桥接的 Start→End 直连边残留在视图里形成"越过
+                // 模板的扭曲连线"。必须先评估模板再评估可见性。
+                RefreshNextLineTemplate(ConfirmGraph, isConfirm: true);
 
                 // R11+：图数据变化时重新评估 nextline 节点的可见性——
                 // 主链尾已是 FlowCommand 时隐藏（不删数据，仅 UI）。
@@ -734,10 +761,21 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <item>删除时触发 <see cref="OnRequestPromotion"/>（<see cref="OnGraphViewChanged"/> 拦截）；</item>
         /// <item>不持久化到 Command 列 —— 它是视图合成的，用户提升后才写入。</item>
         /// </list>
+        ///
+        /// <para>
+        /// 【Fix-R14-B】位置计算：不再使用硬编码 (startX+170, centerY-30) 魔法数字——
+        /// 改为与 <see cref="ChainAutoLayout.Layout"/> 同源的「End 哨兵前一列 + 列内水平居中」
+        /// （列步长 = 全图最宽节点 + HorizontalGap），Y 用 NodeHeight 半高对齐 centerY，
+        /// 保证模板与端点基线一致、连线平直。savedPositions 中存在模板条目时恢复用户
+        /// 拖动位置（R13 用户布局持久化语义延伸至模板节点）。
+        /// </para>
         /// </summary>
-        private void EnsureTemplateNextLine(ChainGraph graph, bool isConfirm, float startX, float centerY)
+        private void EnsureTemplateNextLine(ChainGraph graph, bool isConfirm, float startX, float centerY,
+            Dictionary<string, Vector2> savedPositions = null)
         {
             if (graph == null || !isConfirm) return;
+
+            const string templateId = "__template_nextline__";
 
             // 检查图数据中是否已有 nextline（用户已显式写或已提升）
             foreach (var node in graph.Nodes)
@@ -749,8 +787,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // R11 修订：主链尾已是 FlowCommand（jump / jumpif / loadscript / choice /
             // loadscene 等）时，nextline 永远不会被执行——隐藏模板节点避免误导作者
             // 「删 nextline 提升」结果写进 Command 列后实际用不上。
-            // 判定：主链 BFS 后的所有 sink（普通命令节点 + 主延续缺失的 choice）全部是 FlowCommand。
-            if (!MainChainTailHasNonFlowCommand(graph)) return;
+            if (!MainChainTailHasNonFlowCommand(graph, isConfirm)) return;
 
             string startId = ChainGraphDumper.SentinelId(isConfirm, true);
             string endId = ChainGraphDumper.SentinelId(isConfirm, false);
@@ -759,7 +796,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             if (startView?.OutputPort == null || endView?.InputPort == null) return;
 
-            const string templateId = "__template_nextline__";
             var templateData = new ChainGraphNode(templateId,
                 ChainGraphNodeKind.Command, "nextline", "");
             var templateView = new CommandNodeView(templateData, isConfirmChain: true)
@@ -772,8 +808,38 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             templateView.SetTitle("nextline");
             templateView.capabilities &= ~Capabilities.Deletable;  // 删除走提升路径
             templateView.capabilities &= ~Capabilities.Copiable;
+
+            // 【Fix-R14-B】模板落点 = End 哨兵前一列（链尾列）+ 列内水平居中，
+            // 与 ChainAutoLayout 的列步长 / 端点基线同源，不再硬编码 170/30。
+            float templateX = startX + 170f;   // 防御兜底（layout 不可用时的旧落点）
+            float templateY = centerY - 30f;
+
+            var layoutAll = ChainAutoLayout.Layout(graph, centerY);
+            if (layoutAll != null && layoutAll.TryGetValue(endId, out var endPos))
+            {
+                float maxW = 0f;
+                foreach (var n in graph.Nodes)
+                    maxW = Mathf.Max(maxW, ChainAutoLayout.NodeWidthEst(n));
+                if (maxW <= 0f) maxW = ChainAutoLayout.NodeWidth;
+                float layerXStep = maxW + ChainAutoLayout.HorizontalGap;
+                float columnUsable = layerXStep - ChainAutoLayout.HorizontalGap;
+                float templateW = ChainAutoLayout.NodeWidthEst(templateData);
+
+                // End 哨兵列左边界往回退一列 = 链尾列左边界
+                templateX = endPos.x - layerXStep + (columnUsable - templateW) / 2f;
+                templateY = centerY - ChainAutoLayout.NodeHeight / 2f;
+            }
+
+            // 【Fix-R14-B】用户拖动持久化：savedPositions 命中模板条目则恢复
+            if (savedPositions != null &&
+                savedPositions.TryGetValue(PositionKey(isConfirm, templateId), out var saved))
+            {
+                templateX = saved.x;
+                templateY = saved.y;
+            }
+
             templateView.SetPosition(new Rect(
-                startX + 170f, centerY - 30f, 0f, 0f));
+                templateX, templateY, 0f, 0f));
             AddElement(templateView);
             _nodeViews[NodeViewKey(isConfirm, templateId)] = templateView;
 
@@ -785,6 +851,140 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var e2 = templateView.OutputPort.ConnectTo(endView.InputPort);
             e2.capabilities &= ~Capabilities.Deletable;
             AddElement(e2);
+        }
+
+        /// <summary>
+        /// 【Fix-R14-E】结构变更（删节点 / 改连线）后重新评估模板 nextline 的创建与移除。
+        ///
+        /// <para>
+        /// 旧版模板只在 <see cref="BuildLane"/> 创建——用户在图上删光出口段命令
+        /// （含真实 nextline 命令）后，出口段只剩哨兵直连（<see cref="BridgeRemovedNodes"/>
+        /// 桥接出的 Start→End 边），模板永久消失，与「空出口段应提示 nextline」的
+        /// 语义矛盾。现在每次结构变更后同步评估：
+        /// </para>
+        /// <list type="number">
+        /// <item>图中已有真实 nextline → 移除模板（避免双节点误导）；</item>
+        /// <item>链尾非 FlowCommand 且无真实 nextline → 确保模板存在，并清掉
+        ///       Start→End 直连桥接残留边（否则出现"越过模板的扭曲连线"）；</item>
+        /// <item>链尾全 FlowCommand（jump/choice/…）→ 移除模板。</item>
+        /// </list>
+        /// </summary>
+        private void RefreshNextLineTemplate(ChainGraph graph, bool isConfirm)
+        {
+            if (graph == null || !isConfirm) return;
+
+            const string templateId = "__template_nextline__";
+
+            bool hasRealNextLine = false;
+            foreach (var n in graph.Nodes)
+                if (n.Kind == ChainGraphNodeKind.Command &&
+                    string.Equals((n.CommandName ?? "").Trim(), "nextline",
+                        StringComparison.OrdinalIgnoreCase))
+                { hasRealNextLine = true; break; }
+
+            bool shouldShow = !hasRealNextLine && MainChainTailHasNonFlowCommand(graph, isConfirm);
+
+            var existing = GetNodeView(isConfirm, templateId);
+
+            if (!shouldShow)
+            {
+                // 已有真实 nextline（模板冗余）或链尾全 FlowCommand（模板永不执行）→ 移除
+                if (existing != null)
+                    RemoveTemplateView(isConfirm, existing, templateId);
+                return;
+            }
+
+            // 应显示：模板不存在 → 创建（视图操作需抑制回调递归，避免在
+            // graphViewChanged 应用 change 期间嵌套触发本回调）
+            if (existing == null)
+            {
+                bool prevSuppress = _suppressChangeEvents;
+                _suppressChangeEvents = true;
+                try
+                {
+                    EnsureTemplateNextLine(graph, isConfirm,
+                        ChainAutoLayout.StartX, ChainAutoLayout.ConfirmLaneY);
+                }
+                finally
+                {
+                    _suppressChangeEvents = prevSuppress; // 恢复先前状态（防嵌套调用破坏外层抑制）
+                }
+            }
+
+            // 模板存在（无论新旧）→ 清掉 Start→End 直连桥接残留边
+            RemoveDirectSentinelBridge(graph, isConfirm);
+        }
+
+        /// <summary>移除模板节点及其两条视图边（entry→模板→exit），并从 _nodeViews 注销。</summary>
+        private void RemoveTemplateView(bool isConfirm, VNNodeViewBase templateView, string templateId)
+        {
+            bool prevSuppress = _suppressChangeEvents;
+            _suppressChangeEvents = true;
+            try
+            {
+                var toRemove = new List<Edge>();
+                foreach (var e in edges)
+                {
+                    var f = e.output?.node as VNNodeViewBase;
+                    var t = e.input?.node as VNNodeViewBase;
+                    if (f == templateView || t == templateView) toRemove.Add(e);
+                }
+                foreach (var e in toRemove)
+                {
+                    e.output?.Disconnect(e);
+                    e.input?.Disconnect(e);
+                    RemoveElement(e);
+                }
+                RemoveElement(templateView);
+            }
+            finally
+            {
+                _suppressChangeEvents = prevSuppress; // 恢复先前状态（防嵌套调用破坏外层抑制）
+            }
+            _nodeViews.Remove(NodeViewKey(isConfirm, templateId));
+        }
+
+        /// <summary>
+        /// 【Fix-R14-E】清理 Start→End 直连桥接边。删除出口段最后一个命令（含 nextline）时，
+        /// <see cref="BridgeRemovedNodes"/> 把 Start 桥接到 End（哨兵间直连），模板重建后
+        /// Start→模板→End 与 Start→End 并存——画面上出现"越过模板的直连线"（用户反馈
+        /// 的连线诡异扭曲来源之一）。模板存在时该直连边是错误残留：视图 + 图数据同步移除。
+        /// </summary>
+        private void RemoveDirectSentinelBridge(ChainGraph graph, bool isConfirm)
+        {
+            string startId = ChainGraphDumper.SentinelId(isConfirm, true);
+            string endId = ChainGraphDumper.SentinelId(isConfirm, false);
+
+            var toRemove = new List<Edge>();
+            foreach (var e in edges)
+            {
+                var f = e.output?.node as VNNodeViewBase;
+                var t = e.input?.node as VNNodeViewBase;
+                if (f?.Data?.Id == startId && t?.Data?.Id == endId)
+                    toRemove.Add(e);
+            }
+
+            if (toRemove.Count == 0) return;
+
+            // 保存并恢复抑制状态——本方法在 BuildLane（Rebuild 外层已置 true）与
+            // OnGraphViewChanged（外层为 false）两条路径都会被调用，直接写 false
+            // 会破坏 Rebuild 的抑制窗口。
+            bool prevSuppress = _suppressChangeEvents;
+            _suppressChangeEvents = true;
+            try
+            {
+                foreach (var e in toRemove)
+                {
+                    e.output?.Disconnect(e);
+                    e.input?.Disconnect(e);
+                    RemoveElement(e);
+                }
+                graph.RemoveEdge(startId, endId);
+            }
+            finally
+            {
+                _suppressChangeEvents = prevSuppress;
+            }
         }
 
         /// <summary>
@@ -801,7 +1001,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (graph == null) return;
 
-            bool hide = !MainChainTailHasNonFlowCommand(graph);
+            bool hide = !MainChainTailHasNonFlowCommand(graph, isConfirm);
 
             foreach (var view in _nodeViews.Values)
             {
@@ -827,11 +1027,30 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// 主链 BFS 复用 <see cref="GraphToAst.CollectMainChainNodes"/>：
         /// choice 节点只沿主延续边（Port=Main）扩展，选项链内节点不进入主链。
         /// </para>
+        ///
+        /// <para>
+        /// 【Fix-R14-A】链尾判定不再依赖 <see cref="ChainGraph.FindSinks"/> 单一路径——
+        /// FORK/JOIN 汇合结构（Start→FORK→(a,b)→JOIN→End）的唯一 sink 是 End 哨兵，
+        /// 旧实现把所有非哨兵 sink 都跳过 → 链尾命令漏检 → 直接 return false：
+        /// nextline 模板不创建、用户显式写的 nextline 被 style.display=None 隐藏
+        /// （即"出口段含 FORK 时 nextline 凭空消失"）。改为遍历主链中所有
+        /// 「后继全部为 End 哨兵」的节点（含 JOIN / Fork / 普通命令 / 断链尾），
+        /// 逐个判定 FlowCommand。
+        /// </para>
+        ///
+        /// <para>
+        /// 【Fix-R14-F】哨兵按泳道精确取值（<see cref="ChainGraphDumper.SentinelId"/>），
+        /// 不再依赖 FindStartSentinel 的跨泳道兜底链（LineStart ?? ConfirmStart ?? Kind），
+        /// 防止两泳道哨兵 ID 同时存在时入口段哨兵污染出口段判定。
+        /// </para>
         /// </summary>
-        private static bool MainChainTailHasNonFlowCommand(ChainGraph graph)
+        private static bool MainChainTailHasNonFlowCommand(ChainGraph graph, bool isConfirm)
         {
             if (graph == null) return true; // 防御：空图 → 显示（提示用户）
-            var startSentinel = ChainGraphDumper.FindStartSentinel(graph);
+
+            // 【Fix-R14-F】按泳道精确取哨兵，不跨泳道兜底
+            var startSentinel = graph.GetNode(ChainGraphDumper.SentinelId(isConfirm, true))
+                                ?? ChainGraphDumper.FindStartSentinel(graph);
             if (startSentinel == null) return true;
             var mainChain = GraphToAst.CollectMainChainNodes(graph, startSentinel.Id);
             if (mainChain.Count == 0) return true; // 防御
@@ -845,16 +1064,33 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
             if (!hasAnyCommand) return true;
 
-            foreach (var s in graph.FindSinks())
+            string endId = ChainGraphDumper.FindEndSentinel(graph)?.Id;
+
+            // 【Fix-R14-A】链尾判定：主链中「后继全部为 End 哨兵」的非哨兵节点
+            // （普通命令 / Fork / Join / 断链尾）。FORK/JOIN 汇合时唯一
+            // FindSinks 结果是 End 哨兵，旧实现漏检所有链尾命令直接 return false。
+            foreach (var n in graph.Nodes)
             {
-                if (s.Kind == ChainGraphNodeKind.Choice) continue;
-                // 哨兵（Start/End）不是命令节点——End 的 CommandName 为 null 会被
-                // IsFlowCommand 误判为"非流程命令"从而错误显示 nextline
-                if (s.Kind == ChainGraphNodeKind.Start || s.Kind == ChainGraphNodeKind.End) continue;
-                if (!mainChain.Contains(s.Id)) continue;
-                if (!ChainParser.IsFlowCommand((s.CommandName ?? "").Trim()))
+                if (n.Kind == ChainGraphNodeKind.Start || n.Kind == ChainGraphNodeKind.End) continue;
+                if (!mainChain.Contains(n.Id)) continue;
+                if (n.Kind == ChainGraphNodeKind.Choice) continue; // choice 由下方专门处理
+
+                var succs = graph.GetSuccessors(n.Id);
+                if (succs.Count > 0)
+                {
+                    bool allEnd = true;
+                    foreach (var s in succs)
+                        if (s != endId) { allEnd = false; break; }
+                    if (!allEnd) continue; // 还有非哨兵后继 → 不是链尾
+                }
+                // succs 为空 = 断链尾（与旧 FindSinks 语义一致，同样视为链尾）
+
+                // 哨兵 CommandName 为 null → IsFlowCommand 返回 false →
+                // Fork/Join 链尾（无命令名）判定为"非 FlowCommand"→ 显示 nextline，正确。
+                if (!ChainParser.IsFlowCommand((n.CommandName ?? "").Trim()))
                     return true;
             }
+
             foreach (var n in graph.Nodes)
             {
                 if (n.Kind != ChainGraphNodeKind.Choice) continue;
@@ -873,7 +1109,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 //   让作者误以为「执行完选项链后会推进下一行」。
                 if (!hasMain) continue; // 主链 choice 无主延续 = 主链自然终止
             }
-            return false;
+            return false; // 所有链尾都是 FlowCommand → nextline 永远不会执行
         }
 
         // ---------------- R10 运行时执行状态可视化 ----------------
@@ -939,6 +1175,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         public override void AddToSelection(ISelectable selectable)
         {
+            // 【Fix-R14-D】模板节点（视图合成、不进图数据）选中时不通知 Inspector——
+            // 否则 Inspector 把它当真实命令节点展示并可编辑，改动丢失在下次 Rebuild，
+            // 途中触发 dirty 还可能把模板 nextline 误写进 CSV。仍允许加入选择集
+            // （框选/拖动的视觉反馈照常），只是不切 Inspector 目标。
+            if (selectable is VNNodeViewBase templateView &&
+                templateView.ClassListContains("vn-node--template"))
+            {
+                base.AddToSelection(selectable);
+                RefreshRangeHighlight();
+                return;
+            }
+
             base.AddToSelection(selectable);
             OnNodeSelected?.Invoke(selectable as VNNodeViewBase);
             RefreshRangeHighlight();

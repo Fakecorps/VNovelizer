@@ -198,7 +198,8 @@ public class HistoryPanel : BasePanel
         {
             replayButton.gameObject.SetActive(true);
             replayButton.onClick.AddListener(() => {
-                VoiceManager.GetInstance().PlayVoice(entry.VoiceID);
+                // 历史回放同样携带说话者——台上若仍是该 L2D 角色，口型跟随回放
+                VoiceManager.GetInstance().PlayVoice(entry.VoiceID, entry.Speaker);
             });
         }
         else

@@ -694,6 +694,32 @@ namespace VNovelizer.Core.Theater
             return _states.TryGetValue(actorId, out var state) ? state : null;
         }
 
+        /// <summary>
+        /// 按角色 ID 查找台上演员（外观 ID 首段 = "CharacterID#..."，大小写不敏感）。
+        /// 供口型同步等按"说话者"定位演员的跨系统场景使用；未登台返回 null。
+        /// 严格精确匹配——Speaker 列必须与注册的 CharacterID 完全一致（不做任何模糊回退）。
+        /// </summary>
+        public IActor FindCharacterActor(string characterId)
+        {
+            if (string.IsNullOrEmpty(characterId)) return null;
+
+            foreach (var pair in _states)
+            {
+                var s = pair.Value;
+                if (s == null || s.kind != ActorKind.Character) continue;
+                if (string.IsNullOrEmpty(s.appearance)) continue;
+
+                string[] parts = s.appearance.Split('#');
+                if (parts.Length > 0 &&
+                    string.Equals(parts[0].Trim(), characterId.Trim(),
+                        System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return GetActor(pair.Key);
+                }
+            }
+            return null;
+        }
+
         public bool Contains(string actorId) => _states.ContainsKey(actorId);
 
         /// <summary>移除演员（状态与渲染对象一并清除）</summary>

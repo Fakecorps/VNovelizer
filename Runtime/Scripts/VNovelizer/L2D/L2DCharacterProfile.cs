@@ -80,6 +80,15 @@ namespace VNovelizer.L2D
         [Header("动作配置（ID → 动作 clip）")]
         public List<L2DMotionEntry> Motions = new List<L2DMotionEntry>();
 
+        [Header("口型同步（LipSync，官方 CubismAudioMouthInput 参数）")]
+        [Tooltip("口型采样增益。语音 RMS 幅度普遍偏小（0.05~0.2），需放大到可感知的嘴部张合；过大会导致嘴一直大张")]
+        [Range(1f, 10f)]
+        public float LipSyncGain = 5f;
+
+        [Tooltip("口型平滑系数（官方 SmoothDamp 的平滑时间），0 = 无平滑（机械感），1 = 强平滑（迟钝）")]
+        [Range(0f, 1f)]
+        public float LipSyncSmoothing = 0.3f;
+
         // =========================================================
         //                      查询 API
         // =========================================================

@@ -15,6 +15,20 @@ public class VoiceManager : BaseManager<VoiceManager>
     private bool isVoiceRunning = false;
 
     /// <summary>
+    /// 语音开始播放（参数 = 说话者角色 ID，可为 null——如无行上下文的回放）。
+    /// 供口型同步等外部系统按"谁在说话"绑定模型动画。
+    /// </summary>
+    public event System.Action<string> VoicePlaybackStarted;
+
+    /// <summary>
+    /// 语音停止（播放完毕 / 中断 / 显式停止）。外部系统据此复位口型等绑定状态。
+    /// </summary>
+    public event System.Action VoicePlaybackStopped;
+
+    /// <summary>当前语音的说话者 ID（播放期间有效，供事件外部引用）</summary>
+    private string _currentSpeakerId;
+
+    /// <summary>
     /// 初始化
     /// </summary>
     public void Init()
@@ -31,7 +45,9 @@ public class VoiceManager : BaseManager<VoiceManager>
     /// 播放语音
     /// </summary>
     /// <param name="voicePath">语音文件路径（相对于Resources/VoiceResPath/，不包含扩展名）</param>
-    public void PlayVoice(string voicePath)
+    /// <param name="speakerId">说话者角色 ID（可选）——口型同步等外部系统按此定位模型；
+    /// 传 null 表示无说话者上下文（不触发口型绑定）</param>
+    public void PlayVoice(string voicePath, string speakerId = null)
     {
         // 1. 检查参数有效性
         if (string.IsNullOrEmpty(voicePath))
@@ -50,10 +66,13 @@ public class VoiceManager : BaseManager<VoiceManager>
         // 3. 停止当前播放
         StopVoice();
 
-        // 4. 规范化语音路径（移除前导/尾随空格和路径分隔符）
+        // 4. 记录说话者（异步加载期间行上下文可能已切换，播放时用快照值）
+        _currentSpeakerId = string.IsNullOrWhiteSpace(speakerId) ? null : speakerId.Trim();
+
+        // 5. 规范化语音路径（移除前导/尾随空格和路径分隔符）
         voicePath = voicePath.Trim().TrimStart('/', '\\').TrimEnd('/', '\\');
 
-        // 5. 移除扩展名（Resources.Load 不需要扩展名，会自动查找）
+        // 6. 移除扩展名（Resources.Load 不需要扩展名，会自动查找）
         // 如果路径包含扩展名，移除它
         if (voicePath.EndsWith(".mp3", System.StringComparison.OrdinalIgnoreCase) ||
             voicePath.EndsWith(".wav", System.StringComparison.OrdinalIgnoreCase) ||
@@ -66,15 +85,29 @@ public class VoiceManager : BaseManager<VoiceManager>
             }
         }
 
-        // 6. 构建Resources路径
+        // 7. 构建Resources路径
         string loadPath = VNProjectConfig.Instance.VoiceResPath;
         string fullResourcePath = string.IsNullOrEmpty(loadPath) 
             ? voicePath 
             : $"{loadPath}/{voicePath}";
 
-        // 7. 启动加载和播放流程
+        // 8. 启动加载和播放流程
         isVoiceRunning = true; // 标记开始
         currentLoadCoroutine = MonoManager.GetInstance().StartCoroutine(LoadAndPlayVoice(fullResourcePath));
+    }
+
+    /// <summary>
+    /// 暴露语音播放源（DontDestroyOnLoad 的全局 AudioSource）。
+    /// 供口型采样（如 CubismAudioMouthInput.AudioInput）等外部系统引用——
+    /// 注意该源只应在 <see cref="PlayVoice(string, string)"/> 播放期间有输出数据。
+    /// </summary>
+    public AudioSource GetVoiceAudioSource()
+    {
+        if (voiceSource == null)
+        {
+            Init();
+        }
+        return voiceSource;
     }
 
     /// <summary>
@@ -128,6 +161,9 @@ public class VoiceManager : BaseManager<VoiceManager>
         
         Debug.Log($"[VoiceManager] 开始播放语音: {resourcePath}, 时长: {clip.length}秒");
 
+        // 通知外部系统（口型同步等）——"谁在说话"用 PlayVoice 时的快照值
+        VoicePlaybackStarted?.Invoke(_currentSpeakerId);
+
         // 等待播放完成（使用AudioSource.isPlaying和clip.length）
         float duration = clip.length;
         float timer = 0f;
@@ -161,6 +197,12 @@ public class VoiceManager : BaseManager<VoiceManager>
         
         isVoiceRunning = false;
         currentLoadCoroutine = null;
+
+        // 播放终止（完毕 / 提前停止）→ 通知外部复位（口型等）。
+        // 注意：显式 StopVoice 已停协程，不会走到这里 → 无重复触发。
+        VoicePlaybackStopped?.Invoke();
+        _currentSpeakerId = null;
+
         if (VNManager.GetInstance().IsAutoPlaying())// 检查自动播放条件
         {
             VNManager.GetInstance().CheckAutoPlay(); 
@@ -187,6 +229,16 @@ public class VoiceManager : BaseManager<VoiceManager>
         {
             voiceSource.Stop();
             voiceSource.clip = null; // 清空引用释放内存
+        }
+
+        // 4. 通知外部复位（口型同步等）——无条件触发的幂等复位信号：
+        //    无论语音是"在播被停"还是"从未播放"，外部系统（如口型激活器）
+        //    收到后都只是把绑定状态归零，重复触发无害。
+        //    注意：播放协程已被上面 StopCoroutine 中止，不会走到协程尾部的二次触发。
+        if (VoicePlaybackStopped != null)
+        {
+            VoicePlaybackStopped.Invoke();
+            _currentSpeakerId = null;
         }
     }
 

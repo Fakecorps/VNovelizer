@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using UnityEngine;
 using VNovelizer.Core.Commands;
 using VNovelizer.Core.Commands.Meta;
@@ -49,6 +50,19 @@ namespace VNovelizer.L2D
                 Debug.LogWarning("[L2DExp] 缺少表情 ID");
                 return true;
             }
+
+            // 【Fix-L2D-4】第 3 参 fade 格式校验（与 l2dmotion 第 4 参对齐）——
+            // 数值暂时不生效（P4），但格式错误应早报，避免作者误以为已生效。
+            if (parts.Length > 2 && !string.IsNullOrWhiteSpace(parts[2]))
+            {
+                if (!float.TryParse(parts[2].Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out _))
+                {
+                    Debug.LogWarning($"[L2DExp] 第 3 参数不是数字: {parts[2].Trim()}");
+                    return true;
+                }
+            }
+
             string expID = parts[1].Trim();
 
             var actor = TheaterManager.GetInstance().GetActor(posCode);
