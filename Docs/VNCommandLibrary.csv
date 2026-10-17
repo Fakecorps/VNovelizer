@@ -41,6 +41,16 @@ y: 目标 Y（剧本像素，原点=画面中心）
 duration: 移动秒数（可选，默认 0.5）
 inEase: 移动曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
 outEase: 对称写法保留（无离场阶段，忽略。候选：Linear/Out*，含「无」空选）",移动角色到指定坐标（不继承：下一行自动归位）,"charmove(R, 200, 0, 2.0) 或 charmove(R, 200, 0, 2.0, OutBack)",,,,,,,,,,,,,,,
+charscale,"charscale(pos, scale, duration, inEase, outEase)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
+scale: 目标缩放比例（绝对值；负数取绝对值，翻转符号独立保持）
+duration: 缩放秒数（可选，默认 0.5）
+inEase: 缩放曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
+outEase: 对称写法保留（无离场阶段，忽略。候选：Linear/Out*，含「无」空选）",缩放到指定比例（不继承：下一行自动恢复默认）,"charscale(M, 1.5, 0.5) 或 charscale(M, 1.5, 0.5, OutBack)",,,,,,,,,,,,,,,
+charspin,"charspin(pos, angle, duration, inEase, outEase)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
+angle: 旋转角度（度，增量；正=屏幕顺时针，支持多圈如 720）
+duration: 旋转秒数（可选，默认 0.5）
+inEase: 旋转曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
+outEase: 对称写法保留（无离场阶段，忽略。候选：Linear/Out*，含「无」空选）",旋转角色立绘（增量角度；不继承：下一行自动回正）,"charspin(M, 90, 0.5) 或 charspin(M, 720, 1.5, InOutSine)",,,,,,,,,,,,,,,
 removechar,removechar(posID),posID: addChar 注册的自定义槽位 ID,移除并注销自由角色（立即中断该角色活动动画并移除演员；未注册的 posID 打警告容错）,removechar(Amy),,,,,,,,,,,,,,,
 setchartrans,"setchartrans(pos, x, y, scale)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
 x: 水平偏移（剧本像素，0=默认槽位）

@@ -20,7 +20,8 @@ public class VNovelizerSetup : EditorWindow
 {
     private static bool isPrimeTweenInstalled = false;
 
-    [MenuItem("VNovelizer/一键初始化 (Setup Wizard)", false, 50)]
+    // priority=1 置于 VNovelizer 菜单最顶部（其余编辑器工具从 16 起）
+    [MenuItem("VNovelizer/一键初始化 (Setup Wizard)", false, 1)]
     public static void ShowWindow()
     {
         CheckDependencies();

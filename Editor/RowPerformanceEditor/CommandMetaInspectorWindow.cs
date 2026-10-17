@@ -23,7 +23,10 @@ namespace VNovelizer.Editor
         private bool _onlyUnannotated;
         private readonly Dictionary<string, bool> _expanded = new Dictionary<string, bool>();
 
+        // 开发期测试工具，默认不在菜单显示；需要时在 Scripting Define Symbols 加 VN_DEV_TOOLS
+#if VN_DEV_TOOLS
         [MenuItem("VNovelizer/命令元数据检查器", false, 220)]
+#endif
         public static void Open()
         {
             var win = GetWindow<CommandMetaInspectorWindow>("命令元数据");

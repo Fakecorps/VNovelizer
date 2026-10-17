@@ -46,7 +46,10 @@ namespace VNovelizer.Editor
         /// <summary>辅助诊断：逐项顺序比对（顺序差异属预期，非契约失败）</summary>
         private PerformanceEventRecorder.ComparisonResult _orderComparison;
 
+        // 开发期测试工具，默认不在菜单显示；需要时在 Scripting Define Symbols 加 VN_DEV_TOOLS
+#if VN_DEV_TOOLS
         [MenuItem("VNovelizer/模板等价性回归测试", false, 222)]
+#endif
         public static void Open()
         {
             var win = GetWindow<TemplateEquivalenceTestWindow>("模板等价性");

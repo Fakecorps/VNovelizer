@@ -95,6 +95,7 @@ namespace VNovelizer.Core.Theater
         public Vector2 position;         // 剧本像素语义
         public float scale = 1f;
         public float scaleX = 1f;        // 翻转（沿用现有存档字段语义）
+        public float rotationZ;          // 绕 Z 轴旋转（度；行内瞬态，下一行 OnShowCharacter 重置 0）
         public int zOrder;
         public float alpha = 1f;
         public bool visible = true;

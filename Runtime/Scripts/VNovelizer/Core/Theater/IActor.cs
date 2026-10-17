@@ -29,6 +29,7 @@ namespace VNovelizer.Core.Theater
         void SetPosition(Vector2 posPx);     // 剧本像素语义
         void SetScale(float scale);
         void SetFlip(bool flipped);          // scaleX = -1
+        void SetRotation(float degreesZ);    // 绕 Z 轴旋转（度；屏幕顺时针 = 负值，由命令层换算后写入）
         void SetDepth(int zOrder);           // 前后层级
 
         // ---- 可见性 ----

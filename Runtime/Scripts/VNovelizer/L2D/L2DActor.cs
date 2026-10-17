@@ -60,6 +60,7 @@ namespace VNovelizer.L2D
         // 视觉状态缓存（动画与归位使用）
         private float _scale = 1f;
         private bool _flipped;
+        private float _rotationZ;
         private int _zOrder;
         private float _alpha = 1f;
         private bool _visible = true;
@@ -683,6 +684,13 @@ namespace VNovelizer.L2D
             ApplyTransform();
         }
 
+        /// <summary>绕 Z 轴旋转（度）。语义与 MeshActor 一致：屏幕顺时针 = 负值。</summary>
+        public void SetRotation(float degreesZ)
+        {
+            _rotationZ = degreesZ;
+            ApplyTransform();
+        }
+
         public void SetDepth(int zOrder)
         {
             _zOrder = zOrder;
@@ -743,6 +751,7 @@ namespace VNovelizer.L2D
                 _zOrder * DepthStep);
             _modelGo.transform.localScale = new Vector3(
                 _scale * (_flipped ? -1f : 1f), _scale, 1f);
+            _modelGo.transform.localRotation = Quaternion.Euler(0f, 0f, _rotationZ);
         }
 
         private void ApplyOpacity()

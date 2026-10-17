@@ -74,7 +74,10 @@ namespace VNovelizer.Editor
             "showbg(Beach) -> choice{去, jump(2001)} -> wait(1)",
         };
 
+        // 开发期测试工具，默认不在菜单显示；需要时在 Scripting Define Symbols 加 VN_DEV_TOOLS
+#if VN_DEV_TOOLS
         [MenuItem("VNovelizer/命令链往返一致性验证", false, 221)]
+#endif
         public static void Open()
         {
             var win = GetWindow<ChainRoundTripTestWindow>("命令链往返验证");

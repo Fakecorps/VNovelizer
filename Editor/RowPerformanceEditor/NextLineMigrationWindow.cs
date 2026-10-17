@@ -42,7 +42,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private Vector2 _scroll;
         private bool _scanned;
 
+        // 开发期测试工具，默认不在菜单显示；需要时在 Scripting Define Symbols 加 VN_DEV_TOOLS
+#if VN_DEV_TOOLS
         [MenuItem("VNovelizer/nextline 迁移工具", false, 220)]
+#endif
         public static void Open()
         {
             var win = GetWindow<NextLineMigrationWindow>("nextline 迁移");

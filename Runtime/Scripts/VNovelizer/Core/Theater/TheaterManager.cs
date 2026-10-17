@@ -208,6 +208,9 @@ namespace VNovelizer.Core.Theater
             bool flipped = VNManager.GetInstance().GetCharacterScaleX(posCode) < 0f;
             SetFlip(posCode, flipped);
 
+            // 旋转（行内瞬态，charspin 演出后下一行自动恢复 0°）
+            SetRotation(posCode, 0f);
+
             SetDepth(posCode, SlotZOrders[posCode]);
             SetAlpha(posCode, 1f);
             SetVisible(posCode, true);
@@ -919,6 +922,7 @@ namespace VNovelizer.Core.Theater
             actor.SetPosition(state.position);
             actor.SetScale(state.scale);
             actor.SetFlip(state.scaleX < 0f);
+            actor.SetRotation(state.rotationZ);
             actor.SetDepth(state.zOrder);
             actor.SetAlpha(state.alpha);
             actor.SetVisible(state.visible);
@@ -1022,6 +1026,19 @@ namespace VNovelizer.Core.Theater
             if (state == null) return;
             state.scaleX = flipped ? -1f : 1f;
             GetActor(actorId)?.SetFlip(flipped);
+        }
+
+        /// <summary>
+        /// 设置角色绕 Z 轴旋转（度）。屏幕顺时针 = 负值（命令层换算）。
+        /// 行内瞬态语义：state.rotationZ 随 SetRotation 实时同步（charspin 增量累加依据），
+        /// 下一行 OnShowCharacter 重置 0。
+        /// </summary>
+        public void SetRotation(string actorId, float degreesZ)
+        {
+            var state = GetState(actorId);
+            if (state == null) return;
+            state.rotationZ = degreesZ;
+            GetActor(actorId)?.SetRotation(degreesZ);
         }
 
         public void SetDepth(string actorId, int zOrder)

@@ -663,6 +663,8 @@ DSL 底层复用 VNovelizer 现有的 39 个命令（`CommandManager` 注册）�
 | `charflip` | `charflip(charId[, dir]);` | 翻转立绘（dir：`1`/`-1`/`left`/`right`，缺省切换） |
 | `charfadein` | `charfadein(charId[, duration]);` | 立绘淡入（duration 缺省 0.5） |
 | `charfadeout` | `charfadeout(charId[, duration]);` | 立绘淡出（duration 缺省 0.5） |
+| `charscale` | `charscale(charId, scale[, duration]);` | 缩放到指定比例（绝对值，翻转符号保持；duration 缺省 0.5） |
+| `charspin` | `charspin(charId, angle[, duration]);` | 增量旋转（度，正=屏幕顺时针；duration 缺省 0.5） |
 | `setchartrans` | `setchartrans(charId, x, y, scale);` | 设置立绘变换（保留翻转朝向） |
 
 > 注：当前 CSV 命令实现以槽位 posCode（`L/ML/M/MR/R`）定位立绘；上表以 `charId` 定位是本语言的升级设计（tag 即槽位），两者在转换层兼容。

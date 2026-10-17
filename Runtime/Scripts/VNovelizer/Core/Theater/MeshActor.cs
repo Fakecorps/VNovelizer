@@ -35,6 +35,7 @@ namespace VNovelizer.Core.Theater
         // 当前视觉状态缓存（供动画与归位使用）
         private float _scale = 1f;
         private bool _flipped;
+        private float _rotationZ;
         private int _zOrder;
         private float _alpha = 1f;
         private bool _visible = true;
@@ -148,6 +149,13 @@ namespace VNovelizer.Core.Theater
             ApplyTransform();
         }
 
+        /// <summary>绕 Z 轴旋转（度）。屏幕顺时针 = 负值（正交相机位于 +Z 朝 -Z 观看时绕 +Z 正转呈逆时针）。</summary>
+        public void SetRotation(float degreesZ)
+        {
+            _rotationZ = degreesZ;
+            ApplyTransform();
+        }
+
         public void SetDepth(int zOrder)
         {
             _zOrder = zOrder;
@@ -170,6 +178,7 @@ namespace VNovelizer.Core.Theater
         {
             if (!IsValid) return;
             _go.transform.localScale = new Vector3(_scale * (_flipped ? -1f : 1f), _scale, 1f);
+            _go.transform.localRotation = Quaternion.Euler(0f, 0f, _rotationZ);
         }
 
         #endregion
