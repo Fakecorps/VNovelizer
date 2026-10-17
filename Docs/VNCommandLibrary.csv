@@ -19,6 +19,8 @@ x: X 坐标（剧本像素，原点=画面中心）
 y: Y 坐标（剧本像素，原点=画面中心）
 scale: 缩放（正值大小）
 posID: 自定义槽位 ID（供 showchar/charjump 等引用；保留名 L/ML/M/MR/R 不可用；大小写不敏感唯一；不允许逗号/括号/引号/|/&/空格）",注册自由角色（仅登记不显示，需 showchar(posID) 展示；会话级跨行存活，removeChar 注销；posID 可供全部角色槽位命令引用）,"addchar(Amy#JK#Happy, 300, 0, 1, Amy) 后接 showchar(Amy) 展示、charjump(Amy, 0.5, 3, 50) 调用",,,,,,,,,,,,,,,
+adddlg,"addDlg(text)","text: 追加文本（可用双引号包裹以含逗号，如 addDlg(\"你好，世界\")）
+显示方式跟随本行 showDialogue：typewriter=追加部分继续逐字打字并阻塞至打完；direct=瞬间全显不阻塞",在当前对话文本末尾追加文字（不进历史记录、不参与本地化）,"addDlg(\"（小声）……真的吗？\")",,,,,,,,,,,,,,,
 charfadein,"charfadein(pos, duration, inEase, outEase)","pos: 槽位 L/ML/M/MR/R（或全名），要求同行对应立绘列非空
 duration: 淡入秒数（可选，默认 0.5）
 inEase: 淡入曲线（可选，默认 Linear；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）

@@ -85,6 +85,10 @@ public class VNManager : BaseManager<VNManager>
     private bool isAutoPlaying = false;
     private bool isSkipping = false;
     private bool isTextDisplaying = false;
+
+    /// <summary>行内瞬态：本行 showDialogue 的显示方式（true=direct 瞬间全显 / false=typewriter 逐字）。
+    /// 由 SysShowDialogue 写入、PlayCurrentLine 行首重置；addDlg 据此决定追加文本的显示方式。</summary>
+    private bool currentDialogueDirectMode = false;
     
     // 【新增】回放模式相关变量
     private bool isReplayMode = false;
@@ -969,6 +973,9 @@ public class VNManager : BaseManager<VNManager>
         // [NextLine 显式化] 进入新行：上一行残留的推进请求作废（防跨行污染）
         PendingNextLine = false;
 
+        // [addDlg] 进入新行：本行 showDialogue 显示方式重置为默认 typewriter（隐式路径语义）
+        currentDialogueDirectMode = false;
+
         var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
         SetLineContextForPlay(currentLine, resolved);
@@ -1237,6 +1244,9 @@ public class VNManager : BaseManager<VNManager>
 
         // [NextLine 显式化] 进入新行：上一行残留的推进请求作废（防跨行污染）
         PendingNextLine = false;
+
+        // [addDlg] 进入新行：本行 showDialogue 显示方式重置为默认 typewriter（隐式路径语义）
+        currentDialogueDirectMode = false;
 
         var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
@@ -1729,11 +1739,37 @@ public class VNManager : BaseManager<VNManager>
     {
         if (CurrentLineIndex < 0 || CurrentLineIndex >= StoryLines.Count) return;
 
+        currentDialogueDirectMode = direct;
+
         StoryLine line = StoryLines[CurrentLineIndex];
         UpdateDialogue(line, ResolveLine(line));
 
         if (direct)
             EventCenter.GetInstance().EventTrigger(VNGameEvents.DisplayAllText);
+    }
+
+    /// <summary>
+    /// 【addDlg 命令用】在当前对话文本末尾追加一段文字。
+    /// 显示方式跟随本行 showDialogue（<see cref="currentDialogueDirectMode"/>）：
+    /// direct = 瞬间全显（不阻塞）；typewriter = 追加部分继续逐字打字（isTextDisplaying 置位，
+    /// 供命令阻塞等待至 TypingFinished 事件复位）。
+    /// </summary>
+    public void SysAppendDialogue(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+
+        bool direct = currentDialogueDirectMode;
+
+        var panel = UIManager.GetInstance().Get<VNGameplayPanel>();
+        if (panel == null)
+        {
+            Debug.LogWarning("[VNManager] addDlg: 找不到 VNGameplayPanel，追加文本被忽略");
+            return;
+        }
+
+        // direct 不置位（立即全显不阻塞）；typewriter 置位，追加打完时 TypingFinished 复位
+        isTextDisplaying = !direct;
+        panel.AppendDialogueText(text, direct);
     }
 
     /// <summary>

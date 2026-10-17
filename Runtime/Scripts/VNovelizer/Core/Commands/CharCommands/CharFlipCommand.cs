@@ -17,7 +17,7 @@ namespace VNovelizer.Core.Commands
     public class CharFlipCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+            Description = "槽位（L/ML/M/MR/R 或全名，或 addChar 注册的自定义 posID），要求同行对应立绘列非空")]
         [VNParam(1, "direction", VNParamType.String, Optional = true,
             Description = "缺省=切换翻转；-1 或 left=强制朝左；1 或 right=强制朝右")]
         public override string CommandName { get { return "charflip"; } }

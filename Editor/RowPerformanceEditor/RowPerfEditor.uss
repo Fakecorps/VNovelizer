@@ -1338,6 +1338,40 @@
     color: #AAAAAA;
 }
 
+/* PosID 组合控件：可输入文本框 + 输入框内右侧候选下拉箭头 */
+.vn-insp-combo {
+    flex-grow: 1;
+}
+
+.vn-insp-combo .vn-insp-combo-input {
+    flex-grow: 1;
+    margin-bottom: 0;
+}
+
+/* 输入框作为箭头的定位锚点，右侧留白防文本被箭头遮挡 */
+.vn-insp-combo-input .unity-base-field__input {
+    position: relative;
+    padding-right: 20px;
+}
+
+.vn-insp-combo-arrow {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    bottom: 1px;
+    width: 16px;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    border-radius: 3px;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-background-scale-mode: scale-to-fit;
+}
+
+.vn-insp-combo-arrow:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
 .vn-insp-cond-row {
     flex-direction: row;
     align-items: center;

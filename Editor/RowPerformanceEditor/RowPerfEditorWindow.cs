@@ -268,6 +268,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _inspector = new InspectorBuilder(inspectorRoot);
             _inspector.OnValueChanged += HandleGraphChanged;
             _inspector.OnRequestJumpToColumn += HandleJumpToColumn;
+            _inspector.CurrentScriptNameProvider = () => _scriptName;
 
             // R11：choice 选项面板交互（新增 / 级联删除 / 选项链只读预览）
             _inspector.OnRequestAddChoiceOption += HandleAddChoiceOption;

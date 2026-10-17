@@ -21,7 +21,7 @@ namespace VNovelizer.Core.Commands
     public class CharMoveCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位（L/ML/M/MR/R），要求同行对应立绘列非空")]
+            Description = "槽位（L/ML/M/MR/R 或全名，或 addChar 注册的自定义 posID），要求同行对应立绘列非空")]
         [VNParam(1, "x", VNParamType.Float, Min = -960f, Max = 960f, Default = "0",
             Description = "目标 X（剧本像素，原点=画面中心）")]
         [VNParam(2, "y", VNParamType.Float, Min = -540f, Max = 540f, Default = "0",

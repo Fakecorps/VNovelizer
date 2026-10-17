@@ -19,7 +19,7 @@ namespace VNovelizer.Core.Commands
     public class CharJumpCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+            Description = "槽位（L/ML/M/MR/R 或全名，或 addChar 注册的自定义 posID），要求同行对应立绘列非空")]
         [VNParam(1, "duration", VNParamType.Float, Min = 0.05f, Max = 10f, Default = "0.4",
             Optional = true, Description = "单次跳跃秒数")]
         [VNParam(2, "times", VNParamType.Int, Min = 1, Max = 20, Default = "1",

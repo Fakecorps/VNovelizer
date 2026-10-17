@@ -22,7 +22,7 @@ namespace VNovelizer.Core.Commands
     public class CharSpinCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+            Description = "槽位（L/ML/M/MR/R 或全名，或 addChar 注册的自定义 posID），要求同行对应立绘列非空")]
         [VNParam(1, "angle", VNParamType.Float, Min = -1080f, Max = 1080f, Default = "90",
             Description = "旋转角度（度，增量；正=屏幕顺时针，支持多圈如 720）")]
         [VNParam(2, "duration", VNParamType.Float, Min = 0f, Max = 10f, Default = "0.5",

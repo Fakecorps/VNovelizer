@@ -46,6 +46,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>R11：选项链只读预览文本提供者（Window 侧注入；portIndex → 链文本）。</summary>
         public Func<int, string> ChoiceChainPreviewProvider;
 
+        /// <summary>当前剧本名提供者（Window 侧注入；用于 PosID 候选收集 addChar 声明）。</summary>
+        public Func<string> CurrentScriptNameProvider;
+
         private readonly VisualElement _root;
         private VNNodeViewBase _current;
 
@@ -949,15 +952,25 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             if (candidates != null && candidates.Count > 0)
             {
-                int selected = Mathf.Max(0, candidates.IndexOf(value.Trim()));
-                var popup = new PopupField<string>(param.Name, candidates, selected);
-                popup.RegisterValueChangedCallback(evt =>
+                // PosID 类参数（槽位 / 自由角色 ID / 含槽位选项的 Enum 如 shake target）：
+                // 下拉候选之外允许自由输入自定义 posID
+                if (param.Type == VNParamType.SlotCode || param.Type == VNParamType.FreePosId ||
+                    (param.Type == VNParamType.Enum && ParamCandidateProvider.ContainsSlotOptions(param.Options)))
                 {
-                    SetParamValue(view, info, index, evt.newValue);
-                    // 重建表单：联动参数（角色→分组→表情、剧本→起始行）候选随之更新
-                    Refresh();
-                });
-                field = popup;
+                    field = BuildComboField(view, info, param, index, value, candidates);
+                }
+                else
+                {
+                    int selected = Mathf.Max(0, candidates.IndexOf(value.Trim()));
+                    var popup = new PopupField<string>(param.Name, candidates, selected);
+                    popup.RegisterValueChangedCallback(evt =>
+                    {
+                        SetParamValue(view, info, index, evt.newValue);
+                        // 重建表单：联动参数（角色→分组→表情、剧本→起始行）候选随之更新
+                        Refresh();
+                    });
+                    field = popup;
+                }
             }
             else if (param.Type == VNParamType.Float && param.HasRange)
             {
@@ -1015,6 +1028,79 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             return field;
         }
 
+        /// <summary>
+        /// PosID 类参数的「可输入 + 候选下拉」组合控件：
+        /// 文本框允许自由输入自定义 posID（失焦 / 回车提交，与普通 TextField 提交时机一致），
+        /// 右侧下拉按钮列出候选（标准五槽位 + 当前剧本 addChar 已注册 posID），选中即提交。
+        /// </summary>
+        private VisualElement BuildComboField(CommandNodeView view, VNCommandInfo info,
+            VNParamInfo param, int index, string value, List<string> candidates)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("vn-insp-combo");
+
+            var text = new TextField(param.Name) { value = value };
+            text.AddToClassList("vn-insp-combo-input");
+
+            void Commit()
+            {
+                if (string.Equals(text.value, value, StringComparison.Ordinal)) return;
+                SetParamValue(view, info, index, text.value);
+            }
+
+            // 手动输入：失焦 / 回车提交（每次键入不写回，避免频繁触发图重建）
+            text.RegisterCallback<FocusOutEvent>(_ => Commit());
+            text.RegisterCallback<KeyDownEvent>(evt =>
+            {
+                if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+                {
+                    Commit();
+                    text.Blur();
+                }
+            });
+
+            // 先声明后赋值：点击回调闭包内引用 arrow 自身（菜单定位），
+            // 若在初始化器内直接引用会触发 CS0841（局部变量声明完成前不可使用）。
+            Button arrow = null;
+            arrow = new Button(() =>
+            {
+                var menu = new GenericDropdownMenu();
+                bool hasCurrent = false;
+                foreach (string candidate in candidates)
+                {
+                    if (string.IsNullOrEmpty(candidate)) continue;
+                    string captured = candidate;
+                    if (string.Equals(captured, text.value, StringComparison.OrdinalIgnoreCase))
+                        hasCurrent = true;
+                    menu.AddItem(captured, string.Equals(captured, text.value,
+                        StringComparison.OrdinalIgnoreCase), () =>
+                    {
+                        SetParamValue(view, info, index, captured);
+                        // 与旧 PopupField 行为一致：值变化后重建表单
+                        Refresh();
+                    });
+                }
+                // 当前值是自定义输入（不在候选中）→ 顶部置灰提示
+                if (!string.IsNullOrWhiteSpace(text.value) && !hasCurrent)
+                    menu.AddDisabledItem("当前：" + text.value, false);
+                if (arrow != null) menu.DropDown(arrow.worldBound, arrow, true);
+            });
+            arrow.AddToClassList("vn-insp-combo-arrow");
+            arrow.tooltip = "从候选列表选择（也可直接输入自定义 posID）";
+
+            var tex = UIElementBuilder.GetIcon("icon dropdown", "d_icon dropdown", "Dropdown") as Texture2D;
+            if (tex != null) arrow.style.backgroundImage = tex;
+            else arrow.text = "…";
+
+            // 箭头内嵌到输入框右侧（与 Unity 原生 PopupField 的内嵌箭头视觉一致），
+            // 而非独立按钮——独立按钮在深色 UI 上观感突兀（用户实测反馈）
+            var input = text.Q<VisualElement>(className: BaseField<string>.inputUssClassName);
+            if (input != null) input.Add(arrow);
+
+            row.Add(text);
+            return row;
+        }
+
         private List<string> ResolveCandidates(CommandNodeView view, VNCommandInfo info,
             VNParamInfo param, int index)
         {
@@ -1039,7 +1125,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 return ParamCandidateProvider.GetScriptLineIds(script);
             }
 
-            return ParamCandidateProvider.GetCandidates(param, null);
+            return ParamCandidateProvider.GetCandidates(param, CurrentScriptNameProvider?.Invoke());
         }
 
         private static string FindPrecedingValue(VNCommandInfo info, List<string> values,

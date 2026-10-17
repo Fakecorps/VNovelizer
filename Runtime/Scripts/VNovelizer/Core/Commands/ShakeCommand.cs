@@ -19,7 +19,7 @@ namespace VNovelizer.Core.Commands
     public class ShakeCommand : VNCommand
     {
         [VNParam(0, "target", VNParamType.Enum, Options = "screen|dialogue|L|ML|M|MR|R",
-            Description = "震动目标：screen=相机（UI 不动）/ dialogue=对话框 / 槽位码=角色")]
+            Description = "震动目标：screen=相机（UI 不动）/ dialogue=对话框 / 槽位码=角色（L/ML/M/MR/R 或 addChar 注册的自定义 posID）")]
         [VNParam(1, "duration", VNParamType.Float, Min = 0f, Max = 10f, Default = "0.5",
             Optional = true, Description = "持续秒数")]
         [VNParam(2, "intensity", VNParamType.Float, Min = 0f, Max = 100f, Default = "10",

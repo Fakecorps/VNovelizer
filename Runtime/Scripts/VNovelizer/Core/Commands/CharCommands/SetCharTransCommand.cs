@@ -15,7 +15,7 @@ namespace VNovelizer.Core.Commands
     public class SetCharTransCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+            Description = "槽位（L/ML/M/MR/R 或全名，或 addChar 注册的自定义 posID），要求同行对应立绘列非空")]
         [VNParam(1, "x", VNParamType.Float, Min = -2000f, Max = 2000f, Default = "0",
             Description = "水平偏移（剧本像素，0=默认槽位）")]
         [VNParam(2, "y", VNParamType.Float, Min = -2000f, Max = 2000f, Default = "0",

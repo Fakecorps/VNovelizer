@@ -14,8 +14,8 @@ namespace VNovelizer.Core.Commands
         "移除并注销自由角色（addChar 注册的角色；立即生效）")]
     public class RemoveCharCommand : VNCommand
     {
-        [VNParam(0, "posID", VNParamType.String,
-            Description = "addChar 注册的自定义槽位 ID")]
+        [VNParam(0, "posID", VNParamType.FreePosId,
+            Description = "addChar 注册的自定义槽位 ID（可下拉选择已注册 ID 或直接输入）")]
         public override string CommandName { get { return "removechar"; } }
 
         public override bool Execute(string args)

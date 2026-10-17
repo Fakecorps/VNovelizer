@@ -41,8 +41,17 @@ namespace VNovelizer.Core.Commands.Meta
         /// <summary>立绘引用全串 `角色#分组#表情`</summary>
         CharacterRef,
 
-        /// <summary>槽位代码 L / ML / M / MR / R</summary>
+        /// <summary>
+        /// 槽位代码：标准五槽位 L / ML / M / MR / R，或 addChar 注册的自定义 posID。
+        /// 编辑器渲染为「可输入 + 候选下拉」组合控件（候选 = 五槽位 + 当前剧本已注册 posID）。
+        /// </summary>
         SlotCode,
+
+        /// <summary>
+        /// 自由角色槽位 ID（addChar 注册的自定义 posID；候选来自当前剧本 addChar 声明）。
+        /// 编辑器渲染为「可输入 + 候选下拉」组合控件。
+        /// </summary>
+        FreePosId,
 
         /// <summary>背景名（候选来自资源注册表）</summary>
         BackgroundName,

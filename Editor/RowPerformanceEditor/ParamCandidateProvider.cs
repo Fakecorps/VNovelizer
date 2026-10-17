@@ -5,6 +5,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using VNovelizer.Core;
+using VNovelizer.Core.Commands;
 using VNovelizer.Core.Commands.Meta;
 
 namespace VNovelizer.Editor.RowPerformanceEditor
@@ -43,6 +44,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                             const string kNoneLabel = "（无）";
                             if (!opts.Contains(kNoneLabel)) opts.Insert(0, kNoneLabel);
                         }
+                        // Enum 选项含槽位代码（如 shake target 的 screen|dialogue|L|ML|M|MR|R）：
+                        // 槽位同样接受 addChar 注册的自定义 posID，候选一并追加（可下拉也可自由输入）
+                        if (opts != null && ContainsSlotOptions(opts))
+                        {
+                            var customs = GetRegisteredPosIds(currentScriptName);
+                            if (customs != null)
+                                foreach (string id in customs)
+                                    if (!opts.Contains(id)) opts.Add(id);
+                        }
                         return opts;
                     }
 
@@ -50,7 +60,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     return new List<string> { "true", "false" };
 
                 case VNParamType.SlotCode:
-                    return new List<string> { "L", "ML", "M", "MR", "R" };
+                    {
+                        // 标准五槽位 + 当前剧本 addChar 注册的自定义 posID
+                        var list = new List<string> { "L", "ML", "M", "MR", "R" };
+                        var customs = GetRegisteredPosIds(currentScriptName);
+                        if (customs != null)
+                            foreach (string id in customs)
+                                if (!list.Contains(id)) list.Add(id);
+                        return list;
+                    }
+
+                case VNParamType.FreePosId:
+                    // addChar 注册的自定义 posID；无已注册时返回 null（渲染为自由文本框）
+                    return GetRegisteredPosIds(currentScriptName);
 
                 case VNParamType.CharacterId:
                     return GetCharacterIds();
@@ -415,21 +437,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// </summary>
         public static List<string> GetScriptLineIds(string scriptName)
         {
-            if (string.IsNullOrEmpty(scriptName)) return null;
-
-            string csvPath = null;
-            var guids = AssetDatabase.FindAssets("t:TextAsset");
-            foreach (string guid in guids)
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (!path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.Equals(System.IO.Path.GetFileNameWithoutExtension(path), scriptName,
-                    StringComparison.Ordinal))
-                {
-                    csvPath = path;
-                    break;
-                }
-            }
+            string csvPath = FindCsvPath(scriptName);
             if (string.IsNullOrEmpty(csvPath)) return null;
 
             var csv = AssetDatabase.LoadAssetAtPath<TextAsset>(csvPath);
@@ -450,6 +458,110 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 if (!string.IsNullOrEmpty(id) && !result.Contains(id)) result.Add(id);
             }
             return result.Count > 0 ? result : null;
+        }
+
+        /// <summary>
+        /// 当前剧本中全部 addChar 声明过的自定义 posID 候选（按出现顺序，去重）。
+        /// 覆盖 14 列新格式与 12 列旧格式的 Command 列定位（与 ScriptParser 一致），
+        /// 命令串用 <see cref="ConditionParser.SplitTopLevel"/> 引号感知分割，
+        /// 兼容 @Confirm: 出口段中的 addChar。不依赖运行时资源链，编辑器非播放模式下也可用。
+        /// </summary>
+        public static List<string> GetRegisteredPosIds(string scriptName)
+        {
+            string csvPath = FindCsvPath(scriptName);
+            if (string.IsNullOrEmpty(csvPath)) return null;
+
+            var csv = AssetDatabase.LoadAssetAtPath<TextAsset>(csvPath);
+            if (csv == null || string.IsNullOrEmpty(csv.text)) return null;
+
+            var result = new List<string>();
+            string[] lines = ScriptParser.SplitCSVLines(csv.text);
+            bool first = true;
+            foreach (string line in lines)
+            {
+                string l = line.Trim();
+                if (string.IsNullOrEmpty(l)) continue;
+                if (first) { first = false; continue; } // 跳过标题行
+
+                string[] cols = ScriptParser.SplitCSV(l);
+                int cmdIdx = cols.Length >= 14 ? 12 : (cols.Length >= 12 ? 10 : -1);
+                if (cmdIdx < 0 || cmdIdx >= cols.Length) continue;
+
+                string commandText = cols[cmdIdx];
+                if (string.IsNullOrEmpty(commandText)) continue;
+
+                foreach (string seg in ConditionParser.SplitTopLevel(commandText, '&'))
+                {
+                    string s = seg.Trim();
+                    if (s.Length == 0) continue;
+
+                    // 宽松匹配：兼容段前缀标记（如 @Confirm:）
+                    int start = s.IndexOf("addchar", StringComparison.OrdinalIgnoreCase);
+                    if (start < 0) continue;
+                    int paren = s.IndexOf('(', start + "addchar".Length);
+                    if (paren < 0) continue;
+
+                    string args = s.Substring(paren + 1);
+                    // posID 合法字符不含括号，直接截到最后一个 ')'（防御性）
+                    int close = args.LastIndexOf(')');
+                    if (close > 0) args = args.Substring(0, close);
+
+                    var parts = ConditionParser.SplitTopLevel(args, ',');
+                    if (parts.Count < 5) continue;
+
+                    string posId = parts[4].Trim().Trim('"', '\'');
+                    if (string.IsNullOrEmpty(posId) || IsStandardSlot(posId)) continue;
+                    if (!result.Contains(posId)) result.Add(posId);
+                }
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+
+        /// <summary>标准五槽位（及大小写变体）判定——addChar 保留名，不进入自定义候选。</summary>
+        private static bool IsStandardSlot(string posId)
+        {
+            switch (posId.ToUpperInvariant())
+            {
+                case "L":
+                case "ML":
+                case "M":
+                case "MR":
+                case "R":
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 候选列表是否包含标准五槽位代码（大小写不敏感）。
+        /// 含槽位选项的 Enum 参数（如 shake 的 target）同样接受自定义 posID，
+        /// InspectorBuilder 据此渲染为「可输入 + 下拉」组合控件。
+        /// </summary>
+        public static bool ContainsSlotOptions(IList<string> options)
+        {
+            if (options == null) return false;
+            foreach (string option in options)
+                if (!string.IsNullOrEmpty(option) && IsStandardSlot(option))
+                    return true;
+            return false;
+        }
+
+        /// <summary>按剧本名（不含扩展名）定位 CSV 资产路径；找不到返回 null。</summary>
+        private static string FindCsvPath(string scriptName)
+        {
+            if (string.IsNullOrEmpty(scriptName)) return null;
+
+            var guids = AssetDatabase.FindAssets("t:TextAsset");
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(System.IO.Path.GetFileNameWithoutExtension(path), scriptName,
+                    StringComparison.Ordinal))
+                    return path;
+            }
+            return null;
         }
     }
 }

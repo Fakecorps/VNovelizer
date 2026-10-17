@@ -1241,6 +1241,53 @@ public class VNGameplayPanel : BasePanel
         return isTextTyping;
     }
 
+    /// <summary>
+    /// 【addDlg 命令用】在对话框文本末尾追加一段文字。
+    /// <paramref name="direct"/> = true 瞬间全显（跟随本行 showDialogue(direct)）；
+    /// false = 逐字打字（跟随 showDialogue(typewriter)）：
+    /// 已显示的字符保持不动，从当前可见字符数继续打字到新长度——
+    /// 无论追加时机是"原文本打字中"还是"原文本已打完"，视觉与阻塞语义都正确。
+    /// </summary>
+    public void AppendDialogueText(string appended, bool direct)
+    {
+        if (dialogueText == null || string.IsNullOrEmpty(appended)) return;
+
+        int originalLen = dialogueText.text.Length;
+        dialogueText.text += appended;
+
+        if (direct)
+        {
+            if (_typewriterTween.isAlive) _typewriterTween.Stop();
+            dialogueText.maxVisibleCharacters = 99999;
+            // 原打字机仍在运行：手动收尾（复位 isTextTyping + 广播 TypingFinished），
+            // 否则 VNManager.isTextDisplaying 会永久卡 true。
+            if (isTextTyping) OnTypewriterComplete();
+            return;
+        }
+
+        // typewriter：停止旧 tween，从「当前可见字符数」继续打字到新长度
+        if (_typewriterTween.isAlive) _typewriterTween.Stop();
+        isTextTyping = true;
+        HideContinueIcon();
+
+        int startVisible = Mathf.Min(dialogueText.maxVisibleCharacters, originalLen);
+        int newLen = dialogueText.text.Length;
+        float duration = (newLen - startVisible) * textSpeed;
+
+        if (duration <= 0f)
+        {
+            dialogueText.maxVisibleCharacters = 99999;
+            OnTypewriterComplete();
+            return;
+        }
+
+        _typewriterTween = AnimationCompat.CustomFloat((float)startVisible, (float)newLen, duration, onValueChange: (val) =>
+        {
+            dialogueText.maxVisibleCharacters = Mathf.FloorToInt(val);
+        })
+        .OnComplete(OnTypewriterComplete);
+    }
+
     /// <summary>立即完成当前台词的打字机效果。</summary>
     public void CompleteDialogueTyping() => CompleteTextTyping();
 

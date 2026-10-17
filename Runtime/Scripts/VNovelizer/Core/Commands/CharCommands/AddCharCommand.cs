@@ -36,8 +36,8 @@ namespace VNovelizer.Core.Commands
             Description = "Y 坐标（剧本像素，原点=画面中心）")]
         [VNParam(3, "scale", VNParamType.Float, Min = 0.1f, Max = 5f, Default = "1",
             Description = "缩放（正值大小）")]
-        [VNParam(4, "posID", VNParamType.String,
-            Description = "自定义槽位 ID（供 showchar/charjump 等引用；保留名 L/ML/M/MR/R 不可用；大小写不敏感唯一）")]
+        [VNParam(4, "posID", VNParamType.FreePosId,
+            Description = "自定义槽位 ID（供 showchar/charjump 等引用；保留名 L/ML/M/MR/R 不可用；大小写不敏感唯一，可下拉选择已有或直接输入新 ID）")]
         public override string CommandName { get { return "addchar"; } }
 
         public override bool Execute(string args)

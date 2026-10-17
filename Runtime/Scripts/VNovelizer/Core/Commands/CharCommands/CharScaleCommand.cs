@@ -21,7 +21,7 @@ namespace VNovelizer.Core.Commands
     public class CharScaleCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位（L/ML/M/MR/R 或全名），要求同行对应立绘列非空")]
+            Description = "槽位（L/ML/M/MR/R 或全名，或 addChar 注册的自定义 posID），要求同行对应立绘列非空")]
         [VNParam(1, "scale", VNParamType.Float, Min = 0.1f, Max = 5f, Default = "1",
             Description = "目标缩放（绝对值；负数取绝对值，翻转符号独立保持）")]
         [VNParam(2, "duration", VNParamType.Float, Min = 0f, Max = 10f, Default = "0.5",

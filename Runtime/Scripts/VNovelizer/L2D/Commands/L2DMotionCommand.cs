@@ -19,7 +19,7 @@ namespace VNovelizer.L2D
     public class L2DMotionCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位 L/ML/M/MR/R（或全名），也可用自由角色 posID")]
+            Description = "槽位 L/ML/M/MR/R（或全名），或 addChar 注册的自定义 posID")]
         [VNParam(1, "motionID", VNParamType.String,
             Description = "动作 ID（L2D 角色配置表内定义）；特殊值 idle = 停止动作回待机")]
         [VNParam(2, "mode", VNParamType.Enum, Options = "wait|async", Optional = true,

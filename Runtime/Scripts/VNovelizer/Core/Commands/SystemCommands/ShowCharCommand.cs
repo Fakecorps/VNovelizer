@@ -26,7 +26,7 @@ namespace VNovelizer.Core.Commands.SystemCommands
     public class ShowCharCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位：L / ML / M / MR / R（或全名）")]
+            Description = "槽位：L / ML / M / MR / R（或全名），或 addChar 注册的自定义 posID")]
         [VNParam(1, "charRef", VNParamType.CharacterRef,
             Optional = true, ImplicitBinding = true, BoundColumn = "(对应立绘列)",
             Description = "立绘引用 角色#分组#表情；留空则引用本行对应立绘列")]

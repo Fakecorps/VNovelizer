@@ -20,7 +20,7 @@ namespace VNovelizer.L2D
     public class L2DExpCommand : VNCommand
     {
         [VNParam(0, "pos", VNParamType.SlotCode,
-            Description = "槽位 L/ML/M/MR/R（或全名），也可用自由角色 posID")]
+            Description = "槽位 L/ML/M/MR/R（或全名），或 addChar 注册的自定义 posID")]
         [VNParam(1, "expID", VNParamType.String,
             Description = "表情 ID（L2D 角色配置表内定义）；特殊值 none = 清除表情")]
         [VNParam(2, "fade", VNParamType.Float, Min = 0f, Max = 10f, Optional = true,

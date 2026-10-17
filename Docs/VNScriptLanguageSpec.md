@@ -658,6 +658,7 @@ DSL 底层复用 VNovelizer 现有的 39 个命令（`CommandManager` 注册）�
 | `showSpeaker` | `showSpeaker(spk);` | 设置说话人 |
 | `showDialogue` | `showDialogue(dlg)#typewriter;` | 显示对话文本 |
 | `setExpression` | `setExpression(charId, group, emotion);` | 换表情（group 对应 CharacterProfile 二维立绘分组） |
+| `addDlg` | `addDlg("Text");` | 在对话文本末尾追加文字（显示方式跟随本行 showDialogue） |
 | `charmove` | `charmove(charId, x, y[, duration]);` | 移动立绘（duration 缺省 0.5） |
 | `charjump` | `charjump(charId[, duration, times, height]);` | 立绘跳跃（缺省 0.4 / 1 次 / 30px） |
 | `charflip` | `charflip(charId[, dir]);` | 翻转立绘（dir：`1`/`-1`/`left`/`right`，缺省切换） |
