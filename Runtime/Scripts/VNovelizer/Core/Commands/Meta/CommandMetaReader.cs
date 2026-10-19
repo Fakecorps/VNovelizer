@@ -24,6 +24,9 @@ namespace VNovelizer.Core.Commands.Meta
         public string BoundColumn;
         public bool InlineForbidden;
 
+        /// <summary>【本地化重构 P1】参数是玩家可见文本（自动生成本地化 key）。</summary>
+        public bool LocalizableText;
+
         public bool HasRange => !float.IsNaN(Min) && !float.IsNaN(Max);
 
         /// <summary>用于命令面板的签名片段（如 `dur` / `[str]` / `[name]📎`）</summary>
@@ -216,6 +219,7 @@ namespace VNovelizer.Core.Commands.Meta
                     ImplicitBinding = pa.ImplicitBinding,
                     BoundColumn = pa.BoundColumn,
                     InlineForbidden = pa.InlineForbidden,
+                    LocalizableText = pa.LocalizableText,
                 });
             }
 

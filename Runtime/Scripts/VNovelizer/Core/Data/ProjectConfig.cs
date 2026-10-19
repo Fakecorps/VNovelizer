@@ -140,21 +140,23 @@ public class VNProjectConfig : ScriptableObject
     public Sprite DefaultHeadFrameSprite;
 
     // ==================== 四、本地化 ====================
+    // 详见 Docs/VNLocalizationRefactoring.md：翻译 CSV（一种语言一张表）为真源，
+    // 编辑器聚合器全自动合并进单一 StringTableCollection "VNLocalization"。
     [Order(500), BoxGroup("四、剧情本地化"), LabelText("启用剧情本地化")]
-    [Tooltip("启用剧情 Text/Speaker 的多语言本地化。关闭时保持旧版 CSV 行为")]
+    [Tooltip("启用后剧情 Text/Speaker/命令文本/UI 走本地化表。关闭时保持 CSV 原文行为")]
     public bool EnableLocalization = false;
 
-    [Order(510), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("Collection 名称")]
-    [Tooltip("兼容旧方案：共享 StringTableCollection 名称")]
-    public string LocalizationCollectionName = "VN_Scripts";
+    [Order(510), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("翻译表文件夹")]
+    [Tooltip("翻译 CSV 根目录（一种语言一张表，可任意组织/任意多张）。默认 Assets/Localization/Translations/")]
+    public string TranslationFolder = "Assets/Localization/Translations/";
 
-    [Order(520), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("表名前缀")]
-    [Tooltip("一剧本一表方案使用的 Collection 前缀")]
-    public string ScriptTablePrefix = "VNScript_";
+    [Order(520), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("源语言 (Text_Origin)")]
+    [Tooltip("源语言 locale 代码（如 zh-Hans）。聚合时源 locale 表自动填原文，作为 fallback 链根")]
+    public string SourceLocale = "zh-Hans";
 
-    [Order(530), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("缺失时回退 CSV")]
-    [Tooltip("当前语言缺失翻译时，是否回退显示本行 CSV 的 Speaker/Text")]
-    public bool FallbackToCsvWhenMissing = true;
+    [Order(530), BoxGroup("四、剧情本地化"), ShowIf("EnableLocalization"), LabelText("目标语言列表")]
+    [Tooltip("模板生成器为这些语言生成翻译表（locale 代码，逗号分隔，如 en,ja）")]
+    public string TargetLocales = "en";
 
     // ==================== 五、AES 加密 ====================
     [Order(600), BoxGroup("五、AES 存档加密"), LabelText("启用加密")]
@@ -263,6 +265,31 @@ public class VNProjectConfig : ScriptableObject
     public SceneDataContainer Override_SceneDataContainer;
 
     // ==================== 辅助方法 ====================
+
+    /// <summary>
+    /// 【本地化重构 P1】解析目标语言列表（逗号分隔，去除空白/空项，统一小写）。
+    /// 模板生成器据此为每个语言生成翻译表。
+    /// </summary>
+    public string[] GetTargetLocales()
+    {
+        if (string.IsNullOrEmpty(TargetLocales))
+            return System.Array.Empty<string>();
+        return TargetLocales.Split(',')
+            .Select(s => s.Trim().ToLowerInvariant())
+            .Where(s => s.Length > 0)
+            .Distinct()
+            .ToArray();
+    }
+
+    /// <summary>
+    /// 【本地化重构 P1】翻译表根目录（规范化，去尾斜杠）。
+    /// </summary>
+    public string GetTranslationFolderPath()
+    {
+        return string.IsNullOrEmpty(TranslationFolder)
+            ? "Assets/Localization/Translations/"
+            : TranslationFolder.TrimEnd('/', '\\');
+    }
 
     /// <summary>
     /// UI 预制体/资产覆写查询（由 VNUIPrefabs 统一调用）。

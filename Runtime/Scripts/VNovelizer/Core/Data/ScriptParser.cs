@@ -18,8 +18,6 @@ public static class ScriptParser
     /// </summary>
     public static ScriptData Parse(string fileName)
     {
-        ScriptData data = new ScriptData();
-
         // 从配置路径加载（主路径）
         string configPath = VNProjectConfig.Instance.VNScriptResPath;
         string loadPath = configPath + "/" + fileName;
@@ -51,8 +49,25 @@ public static class ScriptParser
             return null;
         }
 
+        return ParseFromText(fileName, csvFile.text);
+    }
+
+    /// <summary>
+    /// 【本地化重构 P1】从 CSV 文本直接解析（Editor 工具从磁盘文件读取时使用，
+    /// 不经资源服务链）。与 <see cref="Parse"/> 共享同一套行分割 / 列映射 / 出口段切分逻辑。
+    /// </summary>
+    public static ScriptData ParseFromText(string fileName, string csvText)
+    {
+        ScriptData data = new ScriptData();
+
+        if (string.IsNullOrEmpty(csvText))
+        {
+            Debug.LogWarning($"[ScriptParser] CSV 内容为空: {fileName}");
+            return data;
+        }
+
         // 【修复】使用改进的行分割方法，正确处理引号内的换行符
-        string[] lines = SplitCSVLines(csvFile.text);
+        string[] lines = SplitCSVLines(csvText);
         bool isFirstLine = true;
 
         for (int i = 0; i < lines.Length; i++)

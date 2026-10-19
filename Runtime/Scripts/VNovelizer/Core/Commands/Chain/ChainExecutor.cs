@@ -277,13 +277,20 @@ namespace VNovelizer.Core.Commands.Chain
                 yield break; // R10 裁剪：前置已 Simulate（重播不重新弹面板）
 
             VNRuntimeDebugState.NodeStarted(choice.Position, ctx.IsConfirmChain);
+
+            // 【本地化 P1】仅顶层 choice 推进同名序号（嵌套 choice 文本只走 @loc:）；
+            // 【Fix-ChoiceChainKey】序号随选项推入面板，选项链执行时据此拼链内命令 key
+            int choiceOrdinal = VNovelizer.Core.Localization.VNCommandLocalizationContext.EnterChoice();
             try
             {
                 // R11：段信息随选项传递——点击后选项链按所属段执行与埋点
-                ChoiceCommand.PushChoiceOptions(choice, ctx.IsConfirmChain);
+                ChoiceCommand.PushChoiceOptions(choice, ctx.IsConfirmChain, choiceOrdinal);
             }
             finally
             {
+                if (choiceOrdinal >= 0)
+                    VNovelizer.Core.Localization.VNCommandLocalizationContext.PopCommand();
+                VNovelizer.Core.Localization.VNCommandLocalizationContext.ExitChoice();
                 VNRuntimeDebugState.NodeCompleted(choice.Position, ctx.IsConfirmChain);
             }
         }

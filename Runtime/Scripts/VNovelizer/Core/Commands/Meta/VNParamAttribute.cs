@@ -77,6 +77,14 @@ namespace VNovelizer.Core.Commands.Meta
         /// </summary>
         public bool InlineForbidden { get; set; }
 
+        /// <summary>
+        /// 【本地化重构 P1】该参数是"玩家可见文本"：本地化模板生成器会自动为其规划
+        /// key（{script}.{lineID}.command.{name}.{同名序号}），运行时按同一 key 查询译文。
+        /// 仅应标在确实会显示给玩家的参数上（如 showprompt 的 text、choice 的选项描述）；
+        /// 资源名 / flag 名 / 剧本名等标识性参数不要标记。
+        /// </summary>
+        public bool LocalizableText { get; set; }
+
         public VNParamAttribute(int index, string name, VNParamType type)
         {
             Index = index;

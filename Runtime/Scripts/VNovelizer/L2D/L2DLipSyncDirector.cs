@@ -62,7 +62,9 @@ namespace VNovelizer.L2D
         /// 解析说话者对应的口型宿主：角色必须已注册（L2D 配置）且当前登台，
         /// 台上演员需实现 <see cref="ILipSyncHost"/>（L2DActor）。
         /// 严格精确匹配——Speaker 列必须与注册的 CharacterID 完全一致（大小写不敏感），
-        /// 不做任何模糊回退。解析失败时输出警告（口型不生效的首要排查线索）。
+        /// 不做任何模糊回退。
+        /// 说话者未注册任何角色配置 = 非 L2D 角色（纯立绘工程/旁白配音等常态），静默降级；
+        /// 仅对"L2D 配置存在但口型无法生效"的异常情况（未登台/演员不支持）输出警告。
         /// </summary>
         private static ILipSyncHost ResolveHost(string speakerId)
         {
@@ -70,11 +72,7 @@ namespace VNovelizer.L2D
 
             var profile = CharacterResManager.GetInstance().TryGetCharacterProfile(speakerId);
             if (profile == null)
-            {
-                Debug.LogWarning($"[L2DLipSync] 说话者 '{speakerId}' 未注册角色配置，口型不生效" +
-                                 "（请确认 Speaker 列填的是 L2D 角色的 CharacterID）");
-                return null;
-            }
+                return null; // 【Fix-L2D-Lip】非 L2D 角色是常态（纯立绘工程每句配音都会走到这里），静默跳过
             if (profile.IsSpriteBased)
                 return null; // 静态立绘角色无口型，静默跳过
 

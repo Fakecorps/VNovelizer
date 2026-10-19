@@ -487,6 +487,10 @@ namespace VNovelizer.Core.API
         public static bool TryGetLocalizedByFullKey(string fullKey, out string localized) =>
             VNLocalizationService.TryGetByFullKey(GetCurrentScriptName(), fullKey, out localized);
 
+        /// <summary>【本地化重构 P1】读取 UI 文本（key 如 ui.mainmenu.start），缺失返回 fallback。</summary>
+        public static string GetUiText(string key, string fallback) =>
+            VNLocalizationService.GetUi(key, fallback);
+
         #endregion
         #region Coroutine Control (协程控制)
 

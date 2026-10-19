@@ -52,13 +52,13 @@ public class ChoicePanel : BasePanel
             // 绑定事件
             Button btn = btnObj.GetComponent<Button>();
             btn.onClick.RemoveAllListeners();
-            btn.onClick.AddListener(() => OnChoiceClicked(data.Command, data.Chain));
+            btn.onClick.AddListener(() => OnChoiceClicked(data.Command, data.Chain, -1, -1));
         }
 
         ShowMe();
     }
 
-    private void OnChoiceClicked(string command, ChainNode chain)
+    private void OnChoiceClicked(string command, ChainNode chain, int choiceOrdinal, int optionIndex)
     {
         // 关闭面板
         UIManager.GetInstance().HidePanel("ChoicePanel");
@@ -73,10 +73,11 @@ public class ChoicePanel : BasePanel
 
         // R11：块语法选项携带 AST 子树 → 经 ChainExecutor 独立执行（支持完整链语法）。
         // 段信息随选项传递：出口段 choice 的选项链按出口段语义推进与埋点。
+        // 【Fix-ChoiceChainKey】choiceOrdinal/optionIndex 随点击回传，链内命令自动 key 按链定位。
         if (chain != null)
         {
             VNManager.GetInstance().ExecuteChoiceChain(chain,
-                VNovelizer.Core.Commands.ChoiceCommand.LastPushedIsConfirm);
+                VNovelizer.Core.Commands.ChoiceCommand.LastPushedIsConfirm, choiceOrdinal, optionIndex);
         }
         else if (!string.IsNullOrEmpty(command))
         {
@@ -96,7 +97,10 @@ public class ChoicePanel : BasePanel
     /// <param name="text">按钮文字（本地化已解析）</param>
     /// <param name="command">旧语法命令文本（可为 null）</param>
     /// <param name="chain">R11 块语法选项链 AST（可为 null = 空链，点击后直接下一行）</param>
-    public void AddChoice(string text, string command, ChainNode chain = null)
+    /// <param name="choiceOrdinal">【Fix-ChoiceChainKey】行内顶层 choice 序号（-1 = 嵌套/无自动 key）</param>
+    /// <param name="optionIndex">选项序号（链内命令自动 key 用；-1 = 非顶层链）</param>
+    public void AddChoice(string text, string command, ChainNode chain = null,
+        int choiceOrdinal = -1, int optionIndex = -1)
     {
         // 确保 Container 存在
         if (container == null) container = transform.Find("ChoiceContainer");
@@ -109,7 +113,7 @@ public class ChoicePanel : BasePanel
 
         Button btn = btnObj.GetComponent<Button>();
         btn.onClick.RemoveAllListeners();
-        btn.onClick.AddListener(() => OnChoiceClicked(command, chain));
+        btn.onClick.AddListener(() => OnChoiceClicked(command, chain, choiceOrdinal, optionIndex));
 
         ShowMe();
     }

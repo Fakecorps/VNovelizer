@@ -69,6 +69,10 @@ public class VNGameplayPanel : BasePanel
     private float autoSpeed;
     private float _lastSkipAdvanceUnscaledTime;
 
+    // 【Fix-InputPhase】本帧是否有确认请求待处理：InputAction 回调阶段只置标志，
+    // UI 判定与推进延后到 LateUpdate（IsPointerOverGameObject 在回调阶段查的是上一帧结果）
+    private bool _confirmRequested;
+
     //Notification
     [Header("Prompt System")]
     [SerializeField] private Transform promptContainer; // 挂一个放在左上角的空物体
@@ -394,6 +398,9 @@ public class VNGameplayPanel : BasePanel
         // Update 的兜底可能未执行，此处防御性恢复，避免全游戏 10 倍速残留。
         StopSkip();
         HideContinueIcon();
+
+        // 【Fix-InputPhase】清掉未处理的确认请求，防面板重新启用后误触发 NextLine
+        _confirmRequested = false;
     }
     #endregion
 
@@ -404,6 +411,26 @@ public class VNGameplayPanel : BasePanel
     {
         VNDebug.LogVerbose($"[VNGameplayPanel] OnConfirm 被调用 - 状态: {GameStateManager.GetInstance().CurrentState}, isAutoPlaying: {isAutoPlaying}, isUIHidden: {isUIHidden}, isTextTyping: {isTextTyping}");
 
+        if (!GameStateManager.GetInstance().CanInteractGameplay())
+            return;
+
+        // 【Fix-InputPhase】InputAction 回调处于输入事件处理阶段，此刻 IsPointerOverGameObject()
+        // 只能拿到上一帧的 UI 射线缓存（且会刷 Unity 警告）。此处仅置请求标志，
+        // 真正的 UI 判定与推进（打字完成/下一句）延后到 LateUpdate 统一处理。
+        _confirmRequested = true;
+    }
+
+    /// <summary>
+    /// 【Fix-InputPhase】处理本帧的确认请求。放在 LateUpdate：
+    /// EventSystem 在 Update 阶段完成本帧 UI 射线检测后，这里查到的才是当前帧结果。
+    /// </summary>
+    private void LateUpdate()
+    {
+        if (!_confirmRequested)
+            return;
+        _confirmRequested = false;
+
+        // 请求发出后到本帧 LateUpdate 之间状态可能已变化（如进入 Choice/暂停），重新校验
         if (!GameStateManager.GetInstance().CanInteractGameplay())
             return;
 

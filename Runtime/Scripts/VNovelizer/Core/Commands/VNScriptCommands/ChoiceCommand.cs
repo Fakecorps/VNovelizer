@@ -11,8 +11,8 @@ namespace VNovelizer.Core.Commands
         ArgSeparator = '|')]
     public class ChoiceCommand : VNCommand
     {
-        [VNParam(0, "text", VNParamType.String,
-            Description = "选项文字；本地化写 @loc:表名.键，如 @loc:VNScript_CH1.choice_a")]
+        [VNParam(0, "text", VNParamType.String, LocalizableText = true,
+            Description = "选项文字；本地化自动 key（{script}.{lineID}.command.choice.{序号}.option.{选项}）或显式 @loc:key")]
         [VNParam(1, "command", VNParamType.String, Optional = true,
             Description = "点击后执行的命令链，如 jump(Scene_010) 或 loadscript(Chapter2)")]
         public override string CommandName { get { return "choice"; } }
@@ -32,14 +32,32 @@ namespace VNovelizer.Core.Commands
             string text = result.Item1;
             string cmd = result.Item2;
 
-            text = ResolveLocalizedText(text);
+            text = ResolveLocalizedText(text, out bool resolvedViaLoc);
+            // 【本地化 P1】@loc: 未命中时查自动 key（旧语法 = 单选项 choice 节点，选项序号 0）
+            text = ResolveAutoOptionKey(text, resolvedViaLoc, 0);
 
             VNDebug.LogVerbose($"[ChoiceCommand] 解析选项 -> Text: {text}, Cmd: {cmd}");
 
             // 旧语法无段上下文，点击后走 ExecuteChoiceCommand（进入段语义，与旧版一致）
             LastPushedIsConfirm = false;
 
-            PushSingleChoice(text, cmd, null);
+            // 【Fix-ChoiceChainKey】旧语法 cmd 也解析为选项链 AST（与扫描器/块语法同走
+            // ExecuteChoiceChain 路径），链内命令自动 key = ...command.choice.{i}.option.0.command.*，
+            // 与模板生成器的枚举一致；解析失败（Root 为 null）回退旧字符串路径。
+            // choiceOrdinal 取栈顶（CommandManager 已在 Execute 前为 choice 压栈计数）。
+            int choiceOrdinal = VNCommandLocalizationContext.TryGetCurrentOrdinal("choice", out int ord) ? ord : -1;
+            ChainNode chain = null;
+            if (!string.IsNullOrEmpty(cmd))
+            {
+                var parse = ChainParser.Parse(cmd);
+                if (parse != null && parse.Root != null)
+                    chain = parse.Root;
+            }
+
+            if (chain != null)
+                PushSingleChoice(text, null, chain, choiceOrdinal, 0);
+            else
+                PushSingleChoice(text, cmd, null, -1, -1);
             return true;
         }
 
@@ -58,7 +76,9 @@ namespace VNovelizer.Core.Commands
         /// 同一行多个 choice 节点（或新旧语法混合）会自然合并展示（决策 7）。
         /// </summary>
         /// <param name="isConfirmChain">choice 所在段（出口段 choice 在 R11 修订后合法）</param>
-        public static void PushChoiceOptions(ChoiceNode choice, bool isConfirmChain)
+        /// <param name="choiceOrdinal">【Fix-ChoiceChainKey】行内顶层 choice 同名序号（嵌套 choice = -1），
+        /// 随选项传入面板，选项链执行时据此拼链内命令 key。</param>
+        public static void PushChoiceOptions(ChoiceNode choice, bool isConfirmChain, int choiceOrdinal)
         {
             if (choice == null) return;
 
@@ -67,14 +87,47 @@ namespace VNovelizer.Core.Commands
             // 切换到 Choice 状态，阻止游戏点击下一句
             GameStateManager.GetInstance().SetState(GameState.Choice);
 
+            // 【本地化 P1】顶层 choice 经 EnterChoice 压栈（ChainExecutor），此处按选项序号查自动 key；
+            // 嵌套 choice 未压栈 → TryGetCurrentOrdinal 返回 false → 自动 key 静默跳过（仅 @loc:）。
+            int optionIndex = 0;
             foreach (var opt in choice.Options)
             {
-                PushSingleChoice(ResolveLocalizedText(opt?.Text), null, opt?.Chain);
+                string text = ResolveLocalizedText(opt?.Text, out bool resolvedViaLoc);
+                text = ResolveAutoOptionKey(text, resolvedViaLoc, optionIndex);
+                PushSingleChoice(text, null, opt?.Chain, choiceOrdinal, optionIndex);
+                optionIndex++;
             }
         }
 
-        /// <summary>推单个选项：本地化解析 + 打开/复用面板。</summary>
-        private static void PushSingleChoice(string text, string commandText, ChainNode chain)
+        /// <summary>
+        /// 【本地化 P1】@loc: 未命中时查自动 key：
+        /// {script}.{lineID}.command.choice.{行内顶层choice序号}.option.{optionIndex}。
+        /// </summary>
+        private static string ResolveAutoOptionKey(string text, bool resolvedViaLoc, int optionIndex)
+        {
+            if (resolvedViaLoc)
+                return text;
+
+            if (VNCommandLocalizationContext.TryGetCurrentOrdinal("choice", out int choiceOrdinal) &&
+                VNLocalizationService.TryGetChoiceOptionText(
+                    VNCommandLocalizationContext.ScriptName,
+                    VNCommandLocalizationContext.LineId,
+                    choiceOrdinal, optionIndex, out var autoLocalized) &&
+                !string.IsNullOrEmpty(autoLocalized))
+            {
+                return autoLocalized;
+            }
+
+            return text;
+        }
+
+        /// <summary>
+        /// 推单个选项：本地化解析 + 打开/复用面板。
+        /// 【Fix-ChoiceChainKey】<paramref name="choiceOrdinal"/>/<paramref name="optionIndex"/>
+        /// 随按钮传入面板（-1 = 非顶层链路径：链内命令不查自动 key）。
+        /// </summary>
+        private static void PushSingleChoice(string text, string commandText, ChainNode chain,
+            int choiceOrdinal, int optionIndex)
         {
             var panel = UIManager.GetInstance().Get<ChoicePanel>();
 
@@ -83,19 +136,24 @@ namespace VNovelizer.Core.Commands
                 // 如果面板没开，先打开（路径由 UIManager 注册表解析）
                 UIManager.GetInstance().Show<ChoicePanel>((p) =>
                 {
-                    p.AddChoice(text, commandText, chain);
+                    p.AddChoice(text, commandText, chain, choiceOrdinal, optionIndex);
                 });
             }
             else
             {
                 // 如果已经开了，直接加按钮
-                panel.AddChoice(text, commandText, chain);
+                panel.AddChoice(text, commandText, chain, choiceOrdinal, optionIndex);
             }
         }
 
-        /// <summary>多语言 choice 参数：choice(@loc:FULL_KEY|...)。翻译缺失时回退可读尾段。</summary>
-        private static string ResolveLocalizedText(string text)
+        /// <summary>
+        /// 多语言 choice 参数：choice(@loc:FULL_KEY|...)。翻译缺失时回退可读尾段。
+        /// <paramref name="resolvedViaLoc"/> 输出是否命中 @loc: 翻译（未命中时调用方再查自动 key）。
+        /// </summary>
+        private static string ResolveLocalizedText(string text, out bool resolvedViaLoc)
         {
+            resolvedViaLoc = false;
+
             if (VNLocalizationService.IsEnabled() && !string.IsNullOrEmpty(text) &&
                 text.TrimStart().StartsWith("@loc:", System.StringComparison.OrdinalIgnoreCase))
             {
@@ -103,6 +161,7 @@ namespace VNovelizer.Core.Commands
                 string scriptName = VNManager.GetInstance().GetCurrentScriptName();
                 if (VNLocalizationService.TryGetByFullKey(scriptName, fullKey, out var localized) && !string.IsNullOrEmpty(localized))
                 {
+                    resolvedViaLoc = true;
                     text = localized;
                 }
                 else

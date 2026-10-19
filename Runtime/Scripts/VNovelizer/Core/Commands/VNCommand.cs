@@ -5,6 +5,8 @@ using System.Linq;
 using System.Reflection;
 using System;
 using VNovelizer.Core.Commands.Chain;
+using VNovelizer.Core.Commands.Meta;
+using VNovelizer.Core.Localization;
 
 namespace VNovelizer.Core.Commands
 {
@@ -48,6 +50,9 @@ namespace VNovelizer.Core.Commands
     {
         // 命令映射表
         private Dictionary<string, VNCommand> _commandMap = new Dictionary<string, VNCommand>();
+
+        // 【本地化 P1】命令名 -> 是否含 LocalizableText 参数（懒缓存，RegisterCommand 时失效对应条目）
+        private readonly Dictionary<string, bool> _localizableTextCache = new Dictionary<string, bool>();
 
         // 正在运行的异步命令（同一命令类型可能并行多条，用引用计数）
         private Dictionary<VNCommand, int> _runningCommandRefCount = new Dictionary<VNCommand, int>();
@@ -291,7 +296,42 @@ namespace VNovelizer.Core.Commands
             {
                 string commandName = command.CommandName.ToLower();
                 _commandMap[commandName] = command;
+                // 【本地化 P1】新注册（或重注册）命令：本地化文本参数缓存失效，下次查询懒重建
+                _localizableTextCache.Remove(commandName);
             }
+        }
+
+        /// <summary>
+        /// 【本地化 P1】命令是否声明了 <see cref="VNParamAttribute.LocalizableText"/> 参数
+        /// （有则参与行内同名序号计数，执行时压栈供命令内部查自动 key）。
+        /// 反射结果按命令名缓存。
+        /// </summary>
+        public bool HasLocalizableTextParam(string commandName)
+        {
+            if (string.IsNullOrEmpty(commandName))
+                return false;
+
+            string key = commandName.ToLower();
+            if (_localizableTextCache.TryGetValue(key, out bool cached))
+                return cached;
+
+            bool result = false;
+            if (_commandMap.TryGetValue(key, out var instance) && instance != null)
+            {
+                var type = instance.GetType();
+                var attrs = new List<VNParamAttribute>();
+                attrs.AddRange(type.GetCustomAttributes<VNParamAttribute>(inherit: false));
+
+                var cmdNameProp = type.GetProperty("CommandName",
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (cmdNameProp != null)
+                    attrs.AddRange(cmdNameProp.GetCustomAttributes<VNParamAttribute>(inherit: false));
+
+                result = attrs.Any(a => a.LocalizableText);
+            }
+
+            _localizableTextCache[key] = result;
+            return result;
         }
 
         public bool ExecuteCommand(string commandString)
@@ -389,8 +429,19 @@ namespace VNovelizer.Core.Commands
             string commandName = cmd.ToLower();
             if (_commandMap.ContainsKey(commandName))
             {
-                // 同步执行不计入 _runningCommandRefCount（仅异步路径计数）
-                return _commandMap[commandName].Execute(args);
+                // 【本地化 P1】带文本参数的命令：推进同名序号并压栈（Execute 同步段查询用）
+                bool tracked = HasLocalizableTextParam(commandName) &&
+                               VNCommandLocalizationContext.PushCommand(commandName);
+                try
+                {
+                    // 同步执行不计入 _runningCommandRefCount（仅异步路径计数）
+                    return _commandMap[commandName].Execute(args);
+                }
+                finally
+                {
+                    if (tracked)
+                        VNCommandLocalizationContext.PopCommand();
+                }
             }
             else
             {
@@ -411,6 +462,12 @@ namespace VNovelizer.Core.Commands
             {
                 VNCommand command = _commandMap[commandName];
 
+                // 【本地化 P1】带文本参数的命令：推进同名序号并压栈（Execute 同步段查询用）。
+                // Push 发生在协程第一次 MoveNext（同步段内），查询翻译也都在 Execute 同步段，
+                // 因此与 finally 的 Pop 配对无 yield 交错（并行组边界见 VNCommandLocalizationContext 注释）。
+                bool tracked = HasLocalizableTextParam(commandName) &&
+                               VNCommandLocalizationContext.PushCommand(commandName);
+
                 if (!_runningCommandRefCount.ContainsKey(command))
                     _runningCommandRefCount[command] = 0;
                 _runningCommandRefCount[command]++;
@@ -424,6 +481,9 @@ namespace VNovelizer.Core.Commands
                 }
                 finally
                 {
+                    if (tracked)
+                        VNCommandLocalizationContext.PopCommand();
+
                     if (_runningCommandRefCount.ContainsKey(command))
                     {
                         _runningCommandRefCount[command]--;

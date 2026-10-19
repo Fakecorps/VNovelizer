@@ -1693,20 +1693,12 @@ public class VNManager : BaseManager<VNManager>
         string finalSpeaker = line.Speaker;
         string finalText = line.Text;
 
-        // 启用本地化：每行独立解析，不在行与行之间继承译文（空/缺失则按配置回退 CSV）
+        // 【本地化重构 P1】启用本地化：每行独立解析，不在行与行之间继承译文。
+        // 缺失译文统一回退 CSV 原文（源 locale 表由聚合器自动填原文，Unity fallback 链语义同源）
         if (VNLocalizationService.IsEnabled())
         {
-            bool fallbackToCsv = VNProjectConfig.Instance != null && VNProjectConfig.Instance.FallbackToCsvWhenMissing;
-
-            if (VNLocalizationService.TryGetSpeaker(currentScriptName, currentLine.ID, out var localizedSpeaker) && !string.IsNullOrEmpty(localizedSpeaker))
-                finalSpeaker = localizedSpeaker;
-            else
-                finalSpeaker = fallbackToCsv ? currentLine.Speaker : "";
-
-            if (VNLocalizationService.TryGetText(currentScriptName, currentLine.ID, out var localizedText) && !string.IsNullOrEmpty(localizedText))
-                finalText = localizedText;
-            else
-                finalText = fallbackToCsv ? currentLine.Text : "";
+            finalSpeaker = VNLocalizationService.GetSpeaker(currentScriptName, currentLine.ID, currentLine.Speaker);
+            finalText = VNLocalizationService.GetText(currentScriptName, currentLine.ID, currentLine.Text);
         }
 
         _dialogueEventScratch.Clear();
@@ -1786,15 +1778,11 @@ public class VNManager : BaseManager<VNManager>
         string speaker = speakerOverride ?? line.Speaker;
         string head = headProfileOverride ?? line.HeadProfile;
 
-        // 本地化：仅在未显式覆盖时才查译文（覆盖值是作者的显式意图，不应被译文顶掉）
+        // 本地化：仅在未显式覆盖时才查译文（覆盖值是作者的显式意图，不应被译文顶掉）。
+        // 缺失译文回退 CSV 原文（源 locale 表自动填原文，fallback 链同源）
         if (speakerOverride == null && VNLocalizationService.IsEnabled())
         {
-            bool fallbackToCsv = VNProjectConfig.Instance != null && VNProjectConfig.Instance.FallbackToCsvWhenMissing;
-            if (VNLocalizationService.TryGetSpeaker(currentScriptName, line.ID, out var localized) &&
-                !string.IsNullOrEmpty(localized))
-                speaker = localized;
-            else
-                speaker = fallbackToCsv ? line.Speaker : "";
+            speaker = VNLocalizationService.GetSpeaker(currentScriptName, line.ID, line.Speaker);
         }
 
         _headProfileEventScratch.Clear();
@@ -2127,7 +2115,9 @@ public class VNManager : BaseManager<VNManager>
     /// </summary>
     /// <param name="isConfirmChain">choice 所在段：false = 进入段（推进用进入段语义），
     /// true = 出口段（R11 修订后合法——「点击 → 弹出选择」，推进用出口段语义）。</param>
-    public void ExecuteChoiceChain(ChainNode chain, bool isConfirmChain)
+    /// <param name="choiceOrdinal">【Fix-ChoiceChainKey】行内顶层 choice 同名序号（-1 = 嵌套链）</param>
+    /// <param name="optionIndex">被点击选项的序号（链内命令自动 key 用）</param>
+    public void ExecuteChoiceChain(ChainNode chain, bool isConfirmChain, int choiceOrdinal, int optionIndex)
     {
         // 与 ExecuteChoiceCommand 相同的并发防护：终止当前行的残余演出
         if (_flowCoroutine != null)
@@ -2139,15 +2129,23 @@ public class VNManager : BaseManager<VNManager>
 
         if (chain != null)
             _flowCoroutine = MonoManager.GetInstance().StartCoroutine(
-                ExecuteChoiceChainCoroutine(chain, isConfirmChain));
+                ExecuteChoiceChainCoroutine(chain, isConfirmChain, choiceOrdinal, optionIndex));
         else
             PlayCurrentLine();
     }
 
     /// <summary>选项链执行协程：执行被选中的选项链 → 按所属段沿用推进决策。</summary>
-    private IEnumerator ExecuteChoiceChainCoroutine(ChainNode chain, bool isConfirmChain)
+    private IEnumerator ExecuteChoiceChainCoroutine(ChainNode chain, bool isConfirmChain,
+        int choiceOrdinal, int optionIndex)
     {
         int preIndex = CurrentLineIndex;
+
+        // 【本地化 P1】选项链仍属当前行：重新 BeginLine（幂等）使链内命令的自动 key 序号正确；
+        // 同时抑制链内嵌套 choice 的自动 key（其序号会与顶层 choice 碰撞，仅 @loc:）
+        VNCommandLocalizationContext.BeginLine(GetCurrentScriptName(), CurrentLineContext?.LineID);
+        VNCommandLocalizationContext.SetChoiceChainExecution(true);
+        // 【Fix-ChoiceChainKey】链上下文：顶层链命令按 choice/option 定位链 key；嵌套链不查自动 key
+        VNCommandLocalizationContext.BeginChoiceChain(choiceOrdinal >= 0, choiceOrdinal, optionIndex);
 
         var ctx = new ChainRunContext { IsConfirmChain = isConfirmChain };
         // 【Fix-7】登记 ctx：选项链内并行分支是独立协程，未登记时点击跳过
@@ -2160,6 +2158,10 @@ public class VNManager : BaseManager<VNManager>
         finally
         {
             CommandManager.GetInstance().UnregisterActiveChain(ctx);
+            // 【Fix-ChoiceChainKey】退出链上下文（先于恢复 choice 自动 key）
+            VNCommandLocalizationContext.EndChoiceChain();
+            // 【本地化 P1】选项链执行结束：恢复 choice 自动 key（下一行主执行正常计数）
+            VNCommandLocalizationContext.SetChoiceChainExecution(false);
         }
 
         _flowCoroutine = null;
@@ -2629,6 +2631,9 @@ public class VNManager : BaseManager<VNManager>
     {
         int preIndex = CurrentLineIndex;
 
+        // 【本地化 P1】进入段命令串：开启行上下文（命令内自动 key 序号推进）
+        VNCommandLocalizationContext.BeginLine(GetCurrentScriptName(), CurrentLineContext?.LineID);
+
         yield return CommandManager.GetInstance().ExecuteCommandsAsync(actionString);
 
         _flowCoroutine = null;
@@ -2888,6 +2893,9 @@ public class VNManager : BaseManager<VNManager>
     private IEnumerator ExecuteConfirmExit(string confirmCommands)
     {
         int preIndex = CurrentLineIndex;
+
+        // 【本地化 P1】出口段命令串：开启行上下文（命令内自动 key 序号推进）
+        VNCommandLocalizationContext.BeginLine(GetCurrentScriptName(), CurrentLineContext?.LineID);
 
         // R10：isConfirmChain=true —— 链执行埋点把节点状态写入出口段集合
         yield return CommandManager.GetInstance().ExecuteCommandsAsync(confirmCommands, true);

@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -92,7 +95,7 @@ internal class VNProjectSettingsProvider : SettingsProvider
     {
         if (_editor != null)
         {
-            Object.DestroyImmediate(_editor);
+            UnityEngine.Object.DestroyImmediate(_editor);
             _editor = null;
         }
     }
@@ -165,7 +168,186 @@ internal class VNProjectSettingsProvider : SettingsProvider
     private void DrawLocalizationPage()
     {
         EditorGUILayout.LabelField("剧情本地化", EditorStyles.boldLabel);
-        DrawFields("EnableLocalization", "LocalizationCollectionName", "ScriptTablePrefix", "FallbackToCsvWhenMissing");
+        DrawFields("EnableLocalization", "TranslationFolder");
+
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("语言配置", EditorStyles.boldLabel);
+
+        // 源语言 / 目标语言：直接从 Unity Localization 已创建的 Locale 中选择，
+        // 避免手输 locale 代码出错（如 zh_Hans 与标准 zh-Hans 不匹配导致"检测不到"）。
+        DrawSourceLocaleField();
+        EditorGUILayout.Space(4);
+        DrawTargetLocalesField();
+
+        EditorGUILayout.Space(4);
+        EditorGUILayout.HelpBox(
+            "语言候选来自 Edit → Project Settings → Localization 中已创建的 Locale 资产。\n" +
+            "如需新语言（如日语 ja），先到 Unity Localization 设置页创建对应 Locale，再回到本页选择/勾选。\n" +
+            "建议给每个目标 Locale 资产配置 Fallback Locale 指向源语言——翻译缺失时运行时自动回退原文。",
+            MessageType.Info);
+    }
+
+    /// <summary>源语言：下拉选择 Unity Localization 已创建的 Locale（旧值未匹配时兜底显示 + 警告）。</summary>
+    private void DrawSourceLocaleField()
+    {
+        var locales = GetProjectLocales();
+        string current = (_config.SourceLocale ?? "").Trim();
+
+        if (locales.Count == 0)
+        {
+            _config.SourceLocale = EditorGUILayout.TextField("源语言 (Text_Origin)", current);
+            EditorGUILayout.HelpBox(
+                "未检测到任何 Locale 资产。请先到 Edit → Project Settings → Localization 创建源语言 Locale" +
+                "（如 zh-Hans），创建后回到本页下拉选择。", MessageType.Warning);
+            return;
+        }
+
+        var displayNames = new List<string>();
+        var codes = new List<string>();
+        int selected = -1;
+
+        for (int i = 0; i < locales.Count; i++)
+        {
+            string code = locales[i].Identifier.Code;
+            if (string.IsNullOrEmpty(code))
+                continue;
+            codes.Add(code);
+            displayNames.Add(LocaleDisplayName(locales[i]));
+            if (selected < 0 && string.Equals(code, current, StringComparison.OrdinalIgnoreCase))
+                selected = i;
+        }
+
+        bool unmatched = false;
+        if (codes.Count == 0)
+        {
+            // 防御：Locale 列表存在但全部无 code（异常状态），回退手输
+            _config.SourceLocale = EditorGUILayout.TextField("源语言 (Text_Origin)", current);
+            return;
+        }
+
+        if (selected < 0 && current.Length > 0)
+        {
+            // 旧配置值不在候选列表（Locale 尚未创建，或填错代码如 zh_Hans）：追加一项让其可见并可重选
+            codes.Add(current);
+            displayNames.Add($"⚠ {current}（未在 Unity Localization 中找到）");
+            selected = displayNames.Count - 1;
+            unmatched = true;
+        }
+
+        int newSelected = EditorGUILayout.Popup("源语言 (Text_Origin)", selected, displayNames.ToArray());
+        if (newSelected != selected && newSelected >= 0 && newSelected < codes.Count)
+        {
+            _config.SourceLocale = codes[newSelected];
+            // 源语言不需要翻译表：从目标语言中自动剔除
+            RemoveFromTargets(_config.SourceLocale);
+        }
+
+        // 仅在配置值尚未修正时提示（选新值后下一帧自动消失）
+        if (unmatched && newSelected == selected)
+        {
+            EditorGUILayout.HelpBox(
+                "当前源语言代码未匹配到任何 Locale 资产，聚合导入会被跳过。请从下拉中重新选择。" +
+                (current.Contains("_")
+                    ? "\n注意：locale 代码使用连字符，应为 zh-Hans 而不是 zh_Hans。"
+                    : ""),
+                MessageType.Warning);
+        }
+    }
+
+    /// <summary>目标语言：多选 Unity Localization 已创建的 Locale（源语言除外；旧值未匹配时 ⚠ 兜底）。</summary>
+    private void DrawTargetLocalesField()
+    {
+        var locales = GetProjectLocales();
+        string source = (_config.SourceLocale ?? "").Trim();
+        var selected = new HashSet<string>(_config.GetTargetLocales(), StringComparer.OrdinalIgnoreCase);
+
+        if (locales.Count == 0)
+        {
+            _config.TargetLocales = EditorGUILayout.TextField("目标语言列表（逗号分隔）", _config.TargetLocales ?? "");
+            return; // 源语言字段已有"未检测到 Locale"提示
+        }
+
+        EditorGUILayout.LabelField("目标语言列表（生成翻译模板的语言）", EditorStyles.miniLabel);
+
+        bool changed = false;
+        var candidateCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var l in locales)
+        {
+            string code = l.Identifier.Code;
+            if (string.IsNullOrEmpty(code))
+                continue;
+            if (string.Equals(code, source, StringComparison.OrdinalIgnoreCase))
+                continue; // 源语言不需要翻译表
+
+            candidateCodes.Add(code);
+            bool on = selected.Contains(code);
+            bool newOn = GUILayout.Toggle(on, "  " + LocaleDisplayName(l));
+            if (newOn != on)
+            {
+                if (newOn) selected.Add(code); else selected.Remove(code);
+                changed = true;
+            }
+        }
+
+        // 旧配置值不在候选列表（Locale 尚未创建）：⚠ 显示，取消勾选即从配置移除
+        foreach (var stale in selected.Where(c => !candidateCodes.Contains(c)).ToList())
+        {
+            bool newOn = GUILayout.Toggle(true, $"  ⚠ {stale}（未在 Unity Localization 中找到）");
+            if (!newOn)
+            {
+                selected.Remove(stale);
+                changed = true;
+            }
+        }
+
+        if (candidateCodes.Count == 0)
+        {
+            EditorGUILayout.HelpBox(
+                "除源语言外没有其他 Locale 可选。请先到 Edit → Project Settings → Localization 创建目标语言 Locale（如 en、ja）。",
+                MessageType.Info);
+        }
+
+        if (changed)
+            _config.TargetLocales = string.Join(",", selected);
+    }
+
+    /// <summary>Unity Localization 已创建的 Locale 资产列表（空 = 未创建任何 Locale）。</summary>
+    private static List<UnityEngine.Localization.Locale> GetProjectLocales()
+    {
+        var result = new List<UnityEngine.Localization.Locale>();
+        try
+        {
+            var locales = UnityEditor.Localization.LocalizationEditorSettings.GetLocales();
+            if (locales != null)
+            {
+                foreach (var l in locales)
+                    if (l != null)
+                        result.Add(l);
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[VNProjectSettings] 读取 Unity Localization Locale 列表失败：{e.Message}");
+        }
+        return result;
+    }
+
+    /// <summary>Locale 显示名：名称（code），如 简体中文（zh-Hans）。</summary>
+    private static string LocaleDisplayName(UnityEngine.Localization.Locale locale)
+    {
+        string code = locale.Identifier.Code;
+        return string.IsNullOrEmpty(locale.LocaleName) ? code : $"{locale.LocaleName}（{code}）";
+    }
+
+    /// <summary>从目标语言列表中剔除指定 locale（源语言变更时联动）。</summary>
+    private void RemoveFromTargets(string localeCode)
+    {
+        if (string.IsNullOrEmpty(localeCode) || string.IsNullOrEmpty(_config.TargetLocales))
+            return;
+        var keep = _config.GetTargetLocales()
+            .Where(c => !string.Equals(c, localeCode, StringComparison.OrdinalIgnoreCase));
+        _config.TargetLocales = string.Join(",", keep);
     }
 
     /// <summary>加密页</summary>
@@ -240,9 +422,33 @@ internal class VNProjectSettingsProvider : SettingsProvider
         {
             var prop = so.FindProperty(name);
             if (prop == null) continue;
-            EditorGUILayout.PropertyField(prop, true);
+
+            // 【UI 修复】Alchemy 的 LabelText 不继承 Unity PropertyAttribute，PropertyField 不会应用它
+            //（此前显示英文原始字段名如 "Source Locale"，易与 Unity Localization 设置页混淆）
+            var label = GetFieldLabel(name);
+            if (label != null)
+                EditorGUILayout.PropertyField(prop, label, true);
+            else
+                EditorGUILayout.PropertyField(prop, true);
         }
         so.ApplyModifiedProperties();
+    }
+
+    /// <summary>读取字段的 Alchemy LabelText 特性文本作为显示名；无特性返回 null（用默认字段名）。</summary>
+    private static GUIContent GetFieldLabel(string fieldName)
+    {
+        var field = typeof(VNProjectConfig).GetField(fieldName,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic);
+        if (field == null) return null;
+
+        foreach (var a in field.GetCustomAttributes(true))
+        {
+            if (a is Alchemy.Inspector.LabelTextAttribute lt && !string.IsNullOrEmpty(lt.Text))
+                return new GUIContent(lt.Text);
+        }
+        return null;
     }
 
     /// <summary>加载配置资产；不存在则创建（首次打开设置页 = 用户主动创建配置）</summary>
