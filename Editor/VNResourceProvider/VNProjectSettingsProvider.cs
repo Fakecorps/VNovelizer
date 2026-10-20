@@ -165,25 +165,73 @@ internal class VNProjectSettingsProvider : SettingsProvider
             "BgmResPath", "SFXResPath", "VoiceResPath");
     }
 
-    /// <summary>本地化页</summary>
+    /// <summary>
+    /// 本地化页（分组卡片排版）：启用开关行内联（checkbox 与标签同行）；
+    /// 未启用时极简展示（开关 + 一行说明），启用后语言配置 / UI 资源 / 联动入口分组展开；
+    /// 与菜单「VNovelizer → 本地化」灰显联动（同一启用状态驱动），并提供「打开剧情本地化管理器」直达。
+    /// </summary>
     private void DrawLocalizationPage()
     {
+        // ==================== 分组 1：剧情本地化（开关 + 翻译表目录） ====================
+        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
         EditorGUILayout.LabelField("剧情本地化", EditorStyles.boldLabel);
-        DrawFields("EnableLocalization", "TranslationFolder");
+        EditorGUILayout.Space(2);
 
-        EditorGUILayout.Space(4);
+        bool newEnabled = EditorGUILayout.ToggleLeft(
+            new GUIContent("启用剧情本地化",
+                "启用后剧情文本/说话人/命令/UI 走本地化表；关闭时保持 CSV 原文行为。\n" +
+                "开启后菜单 VNovelizer → 本地化 下的管理器/导入入口同步可用。"),
+            _config.EnableLocalization, EditorStyles.boldLabel);
+        if (newEnabled != _config.EnableLocalization)
+            _config.EnableLocalization = newEnabled;
+
+        EditorGUILayout.LabelField(
+            "启用后：剧情/命令文本与 UI 界面走 Unity Localization 多语言表；关闭时全部保持中文原文、零痕迹。",
+            EditorStyles.miniLabel);
+
+        EditorGUILayout.Space(6);
+        DrawFields("TranslationFolder");
+        EditorGUILayout.LabelField(
+            "翻译表按语言子文件夹组织：…/Translations/en/Chapter1.csv、…/en/UI.csv（一种语言一个文件夹）。",
+            EditorStyles.miniLabel);
+        EditorGUILayout.EndVertical();
+
+        if (!_config.EnableLocalization)
+        {
+            EditorGUILayout.HelpBox(
+                "本地化未启用。启用后本页的语言配置、UI 本地化资源与菜单 VNovelizer → 本地化 下的" +
+                "「剧情本地化管理器 / 导入翻译表」入口将同步可用。",
+                MessageType.None);
+            return;
+        }
+
+        EditorGUILayout.Space(6);
+
+        // ==================== 分组 2：语言配置 ====================
+        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
         EditorGUILayout.LabelField("语言配置", EditorStyles.boldLabel);
+        EditorGUILayout.Space(2);
 
         // 源语言 / 目标语言：直接从 Unity Localization 已创建的 Locale 中选择，
         // 避免手输 locale 代码出错（如 zh_Hans 与标准 zh-Hans 不匹配导致"检测不到"）。
         DrawSourceLocaleField();
         EditorGUILayout.Space(4);
         DrawTargetLocalesField();
+        EditorGUILayout.EndVertical();
 
-        EditorGUILayout.Space(4);
+        EditorGUILayout.Space(6);
+
+        // ==================== 分组 3：UI 本地化资源 ====================
+        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
         DrawUiResourceImport(_config);
+        EditorGUILayout.EndVertical();
 
-        EditorGUILayout.Space(4);
+        EditorGUILayout.Space(6);
+
+        // ==================== 联动入口 + 提示 ====================
+        if (GUILayout.Button("打开剧情本地化管理器", GUILayout.Height(28)))
+            VNLocalizationWindow.ShowWindow();
+
         EditorGUILayout.HelpBox(
             "语言候选来自 Edit → Project Settings → Localization 中已创建的 Locale 资产。\n" +
             "如需新语言（如日语 ja），先到 Unity Localization 设置页创建对应 Locale，再回到本页选择/勾选。\n" +
@@ -196,50 +244,60 @@ internal class VNProjectSettingsProvider : SettingsProvider
         "Packages/com.fakecorps.vnovelizer/Runtime/PackageDefault/VNovelizerRes/UI_Localization");
 
     /// <summary>
-    /// 【P3 UI 独立集合】本地化资源导入区：把包内 UI 翻译表模板复制到项目翻译表目录，
-    /// 聚合进 VNUI 集合后，模板 UI 上内置的本地化组件即刻生效。
-    /// 已存在同名文件不覆盖（保护用户已填的译文）。
+    /// 【P3 UI 独立集合】本地化资源导入区：把包内 UI 翻译表模板复制到项目翻译表目录的语言文件夹
+    /// （UI_Locale_{locale}.csv → {locale}/UI.csv），聚合进 VNUI 集合后，模板 UI 上内置的本地化组件即刻生效。
+    /// 已存在（新结构或旧扁平同名表）不覆盖（保护用户已填的译文）。
     /// </summary>
     private void DrawUiResourceImport(VNProjectConfig config)
     {
-        string targetFolder = Path.GetFullPath(config.GetTranslationFolderPath());
-        string templateFolder = PackageUiTemplateFolder;
-
-        string[] templates = Directory.Exists(templateFolder)
-            ? Directory.GetFiles(templateFolder, "*.csv")
+        // 包内模板文件名形如 UI_Locale_en.csv → 目标语言文件夹 {en}/UI.csv（旧扁平同名表视为已导入）
+        var templates = Directory.Exists(PackageUiTemplateFolder)
+            ? Directory.GetFiles(PackageUiTemplateFolder, "*.csv")
             : new string[0];
-        var missing = templates.Where(f => !File.Exists(Path.Combine(targetFolder, Path.GetFileName(f)))).ToArray();
+        var missing = templates.Where(f =>
+        {
+            string locale = ParseUiTemplateLocale(Path.GetFileNameWithoutExtension(f));
+            return locale != null && VNTranslationTablePaths.FindUiTableAssetPath(config, locale) == null;
+        }).ToArray();
+
+        // 状态行独占整行（文件名单独一行且可换行，避免长文件名被按钮挤截断）
+        if (templates.Length == 0)
+        {
+            EditorGUILayout.LabelField("UI 本地化资源：模板缺失", EditorStyles.boldLabel);
+        }
+        else if (missing.Length == 0)
+        {
+            // 已全部导入：绿色状态
+            var prev = GUI.color;
+            GUI.color = new Color(0.35f, 0.75f, 0.4f);
+            EditorGUILayout.LabelField($"UI 本地化资源：已导入 {templates.Length} 张", EditorStyles.boldLabel);
+            GUI.color = prev;
+            EditorGUILayout.LabelField(string.Join("、", templates.Select(Path.GetFileName)),
+                EditorStyles.wordWrappedMiniLabel);
+        }
+        else
+        {
+            EditorGUILayout.LabelField($"UI 本地化资源：未导入（缺 {missing.Length} 张）", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                "缺失：" + string.Join("、", missing.Select(Path.GetFileName)),
+                EditorStyles.wordWrappedMiniLabel);
+        }
+
+        EditorGUILayout.Space(4);
 
         using (new EditorGUILayout.HorizontalScope())
         {
-            if (templates.Length == 0)
-            {
-                EditorGUILayout.LabelField("UI 本地化资源：模板缺失", EditorStyles.miniLabel);
-            }
-            else if (missing.Length == 0)
-            {
-                // 已全部导入：绿色状态
-                var prev = GUI.color;
-                GUI.color = new Color(0.35f, 0.75f, 0.4f);
-                EditorGUILayout.LabelField($"UI 本地化资源：已导入 {templates.Length} 张（{string.Join("、", templates.Select(Path.GetFileName))}）", EditorStyles.boldLabel);
-                GUI.color = prev;
-            }
-            else
-            {
-                EditorGUILayout.LabelField($"UI 本地化资源：未导入（缺 {missing.Length} 张）", EditorStyles.boldLabel);
-            }
-
             GUILayout.FlexibleSpace();
             if (GUILayout.Button(new GUIContent("导入本地化资源",
-                    "把包内默认 UI 翻译表复制到项目翻译表目录，并聚合进 VNUI 集合。\n已存在的同名文件不会覆盖（保护你已填写的译文）。"),
+                    "把包内默认 UI 翻译表复制到项目翻译表目录的语言文件夹，并聚合进 VNUI 集合。\n已存在的同名文件不会覆盖（保护你已填写的译文）。"),
                     GUILayout.Width(120)))
             {
-                ImportUiResources(config, templateFolder, targetFolder);
+                ImportUiResources(config, PackageUiTemplateFolder);
             }
         }
     }
 
-    private void ImportUiResources(VNProjectConfig config, string templateFolder, string targetFolder)
+    private void ImportUiResources(VNProjectConfig config, string templateFolder)
     {
         if (!Directory.Exists(templateFolder))
         {
@@ -254,24 +312,30 @@ internal class VNProjectSettingsProvider : SettingsProvider
             return;
         }
 
-        Directory.CreateDirectory(targetFolder);
+        // 【按语言文件夹分类】UI 表复制到 {locale}/UI.csv（旧扁平同名表存在视为已导入，跳过不覆盖）
         int copied = 0, skipped = 0;
         foreach (var f in templates)
         {
-            string dest = Path.Combine(targetFolder, Path.GetFileName(f));
-            if (File.Exists(dest))
+            string locale = ParseUiTemplateLocale(Path.GetFileNameWithoutExtension(f));
+            if (locale == null)
+                continue;
+
+            if (VNTranslationTablePaths.FindUiTableAssetPath(config, locale) != null)
             {
                 skipped++;
                 continue;
             }
+
+            string dest = Path.GetFullPath(VNTranslationTablePaths.GetUiTableAssetPath(config, locale));
+            Directory.CreateDirectory(Path.GetDirectoryName(dest));
             File.Copy(f, dest);
             copied++;
         }
 
         // 【UI 本地化开箱即送】其余目标语言生成空译文模板：
         // 包内只有 en 现成译文，用户目标语言列表里的其他语言（如 ja）自动补
-        // UI_Locale_{locale}.csv（ID + Text_Origin 照抄自包内 en 表，译文列留空待填）。
-        int generated = GenerateUiTemplatesForOtherLocales(config, templateFolder, targetFolder);
+        // {locale}/UI.csv（ID + Text_Origin 照抄自包内 en 表，译文列留空待填）。
+        int generated = GenerateUiTemplatesForOtherLocales(config, templateFolder);
 
         AssetDatabase.Refresh();
 
@@ -291,10 +355,10 @@ internal class VNProjectSettingsProvider : SettingsProvider
 
     /// <summary>
     /// 【UI 本地化开箱即送】为包内 en 表之外的目标语言生成空译文模板
-    /// （UI_Locale_{locale}.csv：ID + Text_Origin 照抄包内 en 表，译文列留空）。
+    /// （{locale}/UI.csv：ID + Text_Origin 照抄包内 en 表，译文列留空）。
     /// 同名文件不覆盖（保护用户已填译文）。返回新生成数量。
     /// </summary>
-    private static int GenerateUiTemplatesForOtherLocales(VNProjectConfig config, string templateFolder, string targetFolder)
+    private static int GenerateUiTemplatesForOtherLocales(VNProjectConfig config, string templateFolder)
     {
         // 包内 en 表 = ID/Text_Origin 权威来源（取目录里第一张表即可，当前仅 UI_Locale_en.csv）
         string enTemplate = null;
@@ -325,8 +389,8 @@ internal class VNProjectSettingsProvider : SettingsProvider
             if (string.IsNullOrEmpty(locale) || locale.Equals("en", System.StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            string dest = Path.Combine(targetFolder, $"UI_Locale_{locale}.csv");
-            if (File.Exists(dest))
+            string dest = Path.GetFullPath(VNTranslationTablePaths.GetUiTableAssetPath(config, locale));
+            if (VNTranslationTablePaths.FindUiTableAssetPath(config, locale) != null)
                 continue; // 已有同名文件：不覆盖（保护译文）
 
             // 表头换成该语言；数据行照抄 ID + Text_Origin（不含 en 译文列）
@@ -345,11 +409,23 @@ internal class VNProjectSettingsProvider : SettingsProvider
                     ""));
             }
 
+            Directory.CreateDirectory(Path.GetDirectoryName(dest));
             File.WriteAllText(dest, sb.ToString(), new System.Text.UTF8Encoding(true));
             generated++;
         }
 
         return generated;
+    }
+
+
+    /// <summary>包内 UI 模板文件名（UI_Locale_en）→ locale 代码（en）。非该格式返回 null。</summary>
+    private static string ParseUiTemplateLocale(string fileNameWithoutExt)
+    {
+        if (string.IsNullOrEmpty(fileNameWithoutExt) ||
+            !fileNameWithoutExt.StartsWith(VNTranslationTablePaths.UiLegacyPrefix + "_", System.StringComparison.OrdinalIgnoreCase))
+            return null;
+        string locale = fileNameWithoutExt.Substring(VNTranslationTablePaths.UiLegacyPrefix.Length + 1);
+        return string.IsNullOrEmpty(locale) ? null : locale;
     }
 
     /// <summary>源语言：下拉选择 Unity Localization 已创建的 Locale（旧值未匹配时兜底显示 + 警告）。</summary>

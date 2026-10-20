@@ -414,8 +414,10 @@ public class SettingsPanel : BasePanel
                   $"持久绑定 {persistentBound}，运行时自愈 {healed}，未绑定 {unbound}。");
     }
 
-    /// <summary>语言代码 → 显示名（未知语言回退显示代码本身）。</summary>
-    private static string GetLocaleDisplayName(string code)
+#endif
+
+    /// <summary>语言代码 → 显示名（未知语言回退显示代码本身）。编辑器（本地化管理器）亦复用。</summary>
+    public static string GetLocaleDisplayName(string code)
     {
         string key = (code ?? "").Replace('_', '-').ToLowerInvariant();
         switch (key)
@@ -459,7 +461,6 @@ public class SettingsPanel : BasePanel
             default: return code ?? "";
         }
     }
-#endif
 
     /// <summary>
     /// 解析分组查找根节点：

@@ -43,8 +43,9 @@ public static class VNTranslationTemplateGenerator
         if (config == null || string.IsNullOrEmpty(scriptName) || string.IsNullOrEmpty(locale))
             return null;
 
-        string folder = GetTemplatesFolder(config);
-        string path = Path.Combine(folder, $"{scriptName}_{locale}.csv");
+        // 【按语言文件夹分类】模板写入 {TranslationFolder}/{locale}/{script}.csv；
+        // 旧扁平 {script}_{locale}.csv 的译文兜底合并（译文永不丢），旧文件本身由迁移工具/迁移视图处理。
+        string path = Path.GetFullPath(VNTranslationTablePaths.GetTableAssetPath(config, scriptName, locale));
 
         // 1) 扫描剧本条目（key + 原文，有序）
         var entries = VNLocalizationScriptScanner.ScanScriptCsv(scriptName, csvText);
@@ -54,8 +55,14 @@ public static class VNTranslationTemplateGenerator
             return null;
         }
 
-        // 2) 读旧模板的译文（key -> 译文）
+        // 2) 读旧模板的译文（key -> 译文）：新结构路径优先，旧扁平路径兜底合并
         var oldTranslations = ReadOldTemplate(path, locale);
+        string legacyPath = Path.GetFullPath(VNTranslationTablePaths.GetLegacyTableAssetPath(config, scriptName, locale));
+        foreach (var kv in ReadOldTemplate(legacyPath, locale))
+        {
+            if (!oldTranslations.ContainsKey(kv.Key))
+                oldTranslations[kv.Key] = kv.Value;
+        }
 
         // 3) 重建模板：新条目按序 + 孤儿译文行追加
         var sb = new StringBuilder();
@@ -87,18 +94,10 @@ public static class VNTranslationTemplateGenerator
                 EscapeCsvField(kv.Value)));
         }
 
-        // 4) 写文件（UTF-8 with BOM：Excel 打开不乱码）
-        Directory.CreateDirectory(folder);
+        // 4) 写文件（UTF-8 with BOM：Excel 打开不乱码；语言文件夹不存在时自动创建）
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
         return path;
-    }
-
-    /// <summary>翻译模板目录：{TranslationFolder}（与聚合器扫描目录一致）。</summary>
-    public static string GetTemplatesFolder(VNProjectConfig config)
-    {
-        // TranslationFolder 是 Assets 相对路径
-        string rel = config.GetTranslationFolderPath();
-        return Path.GetFullPath(rel);
     }
 
     /// <summary>读旧模板：解析第三列（译文列），返回 key -> 译文（仅非空）。</summary>

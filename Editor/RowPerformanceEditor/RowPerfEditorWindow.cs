@@ -174,7 +174,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         // ==================== 打开入口 ====================
 
-        [MenuItem("VNovelizer/行演出编辑器", false, 210)]
+        [MenuItem("VNovelizer/行演出编辑器 (Row Performance Editor)", false, 210)]
         public static void Open()
         {
             var win = GetWindow<RowPerfEditorWindow>("行演出编辑器");

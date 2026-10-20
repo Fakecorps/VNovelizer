@@ -77,8 +77,7 @@ public class VNTranslationImportPostprocessor : AssetPostprocessor
         VNTranslationAggregator.Aggregate();
     }
 
-    /// <summary>手动导入入口（菜单兜底）。</summary>
-    [MenuItem("VNovelizer/Localization/导入翻译表")]
+    /// <summary>手动导入入口（菜单入口统一在 VNLocalizationMenu，未启用本地化时灰显）。</summary>
     public static void ImportNow()
     {
         var result = VNTranslationAggregator.Aggregate();

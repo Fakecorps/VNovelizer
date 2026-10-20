@@ -41,7 +41,7 @@ public static class VNUiLocalizationAssembler
         public Dictionary<string, string> TextToKey = new Dictionary<string, string>();
     }
 
-    [MenuItem("VNovelizer/Localization/装配 UI 本地化组件（开发用）")]
+    // 菜单入口统一注册在 VNLocalizationMenu（路径常量 + 未启用本地化时灰显 validate）
     public static void Assemble()
     {
         if (!EditorUtility.DisplayDialog("装配 UI 本地化组件",

@@ -21,13 +21,18 @@
 ## 2. 工作流
 
 1. 剧本管理器点「转换」（或自动转换）——CSV 写出时**自动生成/更新翻译表模板**：
-   - 每剧本 × 每目标语言一张：`{TranslationFolder}/{scriptName}_{locale}.csv`
+   - 每剧本 × 每目标语言一张，**按语言文件夹分类**：`{TranslationFolder}/{locale}/{scriptName}.csv`
+     （如 `Translations/en/Chapter1.csv`；旧版扁平 `{scriptName}_{locale}.csv` 的译文自动合并，不丢）
    - 新增行自动补入（译文列留空）；原文变化只刷新 `Text_Origin`；**译文列永不动**
    - 行删除后旧行保留在模板末尾（译文不丢，人工清理）
 2. 翻译团队打开模板 CSV（Excel 可直接编辑），在第三列填译文，保存
 3. 保存即自动聚合进 Unity 本地化资产（无需任何手动步骤）；也可以菜单
-   `VNovelizer → Localization → 导入翻译表` 手动兜底
-4. `VNovelizer → Localization → 剧情本地化管理器` 查看聚合结果、key 冲突、补生成模板
+   `VNovelizer → 本地化 (Localization) → 导入翻译表 (Import Translation Tables)` 手动兜底
+   （未启用剧情本地化时该子菜单灰显）
+4. `VNovelizer → 本地化 (Localization) → 剧情本地化管理器 (Story Localization Manager)`
+   （与其他管理器统一的深色分栏风格）：
+   左侧语言侧栏（全部剧本 / 单语言详情——每张表已译进度 + 定位/打开 / 缺失模板生成）、
+   旧版扁平表自动检测 + **一键迁移到语言文件夹**、导入结果折叠面板、状态栏概览
 
 ## 3. 翻译表格式
 
@@ -77,14 +82,14 @@ choice(@loc:ui.choice.rooftop|jump(C_100))
 包内模板 UI 预制体已预装官方 `LocalizeStringEvent`（表引用 `VNUI` + `ui.*` key），随包开箱即用，无需任何运行时挂载：
 
 1. 开启剧情本地化后，在 `Project Settings → VNovelizer → 四、剧情本地化` 点 **「导入本地化资源」**：
-   - 包内 `UI_Locale_en.csv`（英文译文现成）复制到翻译表目录
-   - 其余目标语言自动生成 `UI_Locale_{locale}.csv` 空译文模板（填译文即可用）
+   - 包内 `UI_Locale_en.csv`（英文译文现成）复制到翻译表目录的语言文件夹 `{locale}/UI.csv`
+   - 其余目标语言自动生成 `{locale}/UI.csv` 空译文模板（填译文即可用）
    - 缺失的源/目标 Locale 资产**自动创建**，目标 Locale 的 fallback 链**自动指向源语言**
    - 自动聚合生成 `VNUI` StringTableCollection
 2. **语言切换**：SettingsPanel 自动出现「语言」下拉（目标语言多于 1 种时），选择即时生效并持久化（`GlobalData.LanguageCode`）
 3. **未开启本地化**：UI 显示中文原文、零本地化痕迹、Console 零报错（官方组件在表缺失时静默保持原文；`LocalizationSettings` 资产由编辑器自动兜底创建）
 4. **译文缺失**：fallback 链自动回退中文原文，永不显示裸 key
-5. UI key 清单真源 = 包内 `Runtime/PackageDefault/VNovelizerRes/UI_Localization/UI_Locale_en.csv`；包开发者在新增静态文本后重跑 `VNovelizer → Localization → 装配 UI 本地化组件（开发用）` 同步 key（动态文本如页码/音量值/对话内容不参与装配）
+5. UI key 清单真源 = 包内 `Runtime/PackageDefault/VNovelizerRes/UI_Localization/UI_Locale_en.csv`；包开发者在新增静态文本后重跑 `VNovelizer → 本地化 (Localization) → 装配 UI 本地化组件 (Assemble UI Localization)` 同步 key（动态文本如页码/音量值/对话内容不参与装配）
 
 ## 7. 常见问题
 
