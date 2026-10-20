@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 #if VN_LOCALIZATION
 using UnityEngine.Localization;
@@ -29,6 +30,9 @@ namespace VNovelizer.Core.Localization
         /// <summary>聚合后的单一 StringTableCollection 名称（运行时固定，不再按剧本动态定位）。</summary>
         public const string CollectionName = "VNLocalization";
 
+        /// <summary>【P3 UI 独立集合】UI 文本的 StringTableCollection 名称（ui.* key 专属，随包开箱即用）。</summary>
+        public const string UICollectionName = "VNUI";
+
         /// <summary>语言切换广播（SettingsPanel 切换 locale 后由 SelectedLocaleChanged 触发）。</summary>
         public static event Action LocaleChanged;
 
@@ -38,8 +42,17 @@ namespace VNovelizer.Core.Localization
             return VNProjectConfig.Instance != null && VNProjectConfig.Instance.EnableLocalization;
         }
 
+        /// <summary>key 是否属于 UI 命名空间（ui.*，路由到独立 VNUI 集合）。</summary>
+        public static bool IsUiKey(string fullKey)
+        {
+            return !string.IsNullOrEmpty(fullKey) &&
+                   fullKey.StartsWith("ui.", StringComparison.OrdinalIgnoreCase);
+        }
+
 #if VN_LOCALIZATION
-        private static StringTable _cachedTable;
+        // 按集合名缓存 StringTable（语言切换时整体失效）
+        private static readonly Dictionary<string, StringTable> CachedTables =
+            new Dictionary<string, StringTable>();
         private static Locale _cachedLocale;
 
         static VNLocalizationService()
@@ -50,26 +63,27 @@ namespace VNovelizer.Core.Localization
 
         private static void OnSelectedLocaleChanged(Locale locale)
         {
-            _cachedTable = null;
+            CachedTables.Clear();
             _cachedLocale = null;
             LocaleChanged?.Invoke();
         }
 
-        private static StringTable GetTableCached()
+        private static StringTable GetTableCached(string collectionName)
         {
             var locale = LocalizationSettings.SelectedLocale;
             if (locale == null)
                 return null;
 
-            if (_cachedTable == null || _cachedLocale != locale)
+            if (!CachedTables.TryGetValue(collectionName, out var table) || _cachedLocale != locale)
             {
-                _cachedTable = LocalizationSettings.StringDatabase.GetTable(CollectionName, locale);
+                table = LocalizationSettings.StringDatabase.GetTable(collectionName, locale);
+                CachedTables[collectionName] = table;
                 _cachedLocale = locale;
             }
-            return _cachedTable;
+            return table;
         }
 
-        private static bool TryGetEntryValue(string fullKey, out string localizedValue)
+        private static bool TryGetEntryValue(string collectionName, string fullKey, out string localizedValue)
         {
             localizedValue = null;
 
@@ -79,7 +93,7 @@ namespace VNovelizer.Core.Localization
             if (string.IsNullOrEmpty(fullKey))
                 return false;
 
-            var table = GetTableCached();
+            var table = GetTableCached(collectionName);
             if (table == null)
                 return false;
 
@@ -95,7 +109,7 @@ namespace VNovelizer.Core.Localization
             return true;
         }
 #else
-        private static bool TryGetEntryValue(string fullKey, out string localizedValue)
+        private static bool TryGetEntryValue(string collectionName, string fullKey, out string localizedValue)
         {
             localizedValue = null;
             return false;
@@ -110,7 +124,7 @@ namespace VNovelizer.Core.Localization
             localized = null;
             if (string.IsNullOrEmpty(scriptName) || string.IsNullOrEmpty(lineID))
                 return false;
-            return TryGetEntryValue(VNLocalizationKeyPlanner.TextKey(scriptName, lineID), out localized);
+            return TryGetEntryValue(CollectionName, VNLocalizationKeyPlanner.TextKey(scriptName, lineID), out localized);
         }
 
         /// <summary>说话人（key = {script}.{lineID}.speakername）。</summary>
@@ -119,7 +133,7 @@ namespace VNovelizer.Core.Localization
             localized = null;
             if (string.IsNullOrEmpty(scriptName) || string.IsNullOrEmpty(lineID))
                 return false;
-            return TryGetEntryValue(VNLocalizationKeyPlanner.SpeakerKey(scriptName, lineID), out localized);
+            return TryGetEntryValue(CollectionName, VNLocalizationKeyPlanner.SpeakerKey(scriptName, lineID), out localized);
         }
 
         public static string GetText(string scriptName, string lineID, string csvFallbackText)
@@ -150,6 +164,7 @@ namespace VNovelizer.Core.Localization
                 string.IsNullOrEmpty(commandName) || ordinal < 0)
                 return false;
             return TryGetEntryValue(
+                CollectionName,
                 VNLocalizationKeyPlanner.CommandTextKey(scriptName, lineID, commandName, ordinal),
                 out localized);
         }
@@ -164,6 +179,7 @@ namespace VNovelizer.Core.Localization
                 choiceOrdinal < 0 || optionIndex < 0)
                 return false;
             return TryGetEntryValue(
+                CollectionName,
                 VNLocalizationKeyPlanner.ChoiceOptionKey(scriptName, lineID, choiceOrdinal, optionIndex),
                 out localized);
         }
@@ -182,6 +198,7 @@ namespace VNovelizer.Core.Localization
                 choiceOrdinal < 0 || optionIndex < 0 || ordinal < 0)
                 return false;
             return TryGetEntryValue(
+                CollectionName,
                 VNLocalizationKeyPlanner.ChoiceChainCommandKey(scriptName, lineID, choiceOrdinal, optionIndex, commandName, ordinal),
                 out localized);
         }
@@ -199,16 +216,21 @@ namespace VNovelizer.Core.Localization
         /// <summary>
         /// 读取"完整 key"（自由 key / UI key）。<paramref name="scriptName"/> 为兼容旧签名保留，
         /// 新 key 体系下 fullKey 全局唯一，不再需要剧本维度。
+        /// 【P3 UI 独立集合】ui.* key 路由到 VNUI 集合，其余走 VNLocalization。
         /// </summary>
         public static bool TryGetByFullKey(string scriptName, string fullKey, out string localized)
         {
-            return TryGetEntryValue(fullKey, out localized);
+            return TryGetByFullKey(fullKey, out localized);
         }
 
-        /// <summary>按完整 key 读取（无剧本维度）。</summary>
+        /// <summary>
+        /// 按完整 key 读取（无剧本维度）。ui.* → VNUI 集合，其余 → VNLocalization 集合。
+        /// </summary>
         public static bool TryGetByFullKey(string fullKey, out string localized)
         {
-            return TryGetEntryValue(fullKey, out localized);
+            return TryGetEntryValue(
+                IsUiKey(fullKey) ? UICollectionName : CollectionName,
+                fullKey, out localized);
         }
 
         public static string GetByFullKey(string scriptName, string fullKey, string fallback)

@@ -23,6 +23,9 @@ public class GlobalData
     public bool IsFullScreen = true;
     public int ScreenWidth = 1920;
     public int ScreenHeight = 1080;
+
+    // 语言设置（空 = 未手动选择，走 LocalizationSettings 默认/系统语言）
+    public string LanguageCode = "";
     
     // 游戏进度数据
     public List<string> UnlockedCGs = new List<string>();

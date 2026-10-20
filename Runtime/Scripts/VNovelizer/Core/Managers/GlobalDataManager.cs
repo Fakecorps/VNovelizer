@@ -368,6 +368,20 @@ public class GlobalDataManager : BaseManager<GlobalDataManager>
         Screen.fullScreen = isFullScreen;
         SaveGlobalData();
     }
+
+    /// <summary>
+    /// 【UI 本地化开箱即送】持久化用户选择的语言（locale 代码）。
+    /// 实际切换由 SettingsPanel 调用 LocalizationSettings.SelectedLocale 完成，
+    /// 这里只负责记住选择（下次启动恢复）。
+    /// </summary>
+    public void UpdateLanguage(string languageCode)
+    {
+        EnsureInitialized();
+        if (globalData == null)
+            return;
+        globalData.LanguageCode = languageCode ?? "";
+        SaveGlobalData();
+    }
     
     /// <summary>
     /// 更新分辨率

@@ -84,6 +84,12 @@ public class VNovelizerSetup : EditorWindow
         // 3. 导入 TMP Essential Resources
         ImportTMPEssentialResources();
 
+        // 3.5 【UI 本地化开箱即送】LocalizationSettings 资产兜底：
+        // 包内 UI 预制体预装官方 LocalizeStringEvent，其 OnEnable 要求工程存在
+        // LocalizationSettings 资产（否则抛异常）。此处显式兜底创建（另有
+        // InitializeOnLoad 静默兜底双保险）。
+        VNLocaleBootstrapper.EnsureLocalizationSettings();
+
         // 4. 配置 Input System 为 Both 模式
         bool needRestart = ConfigureInputSystemBoth();
 

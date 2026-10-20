@@ -1,0 +1,29 @@
+ID,Text_Origin,en
+ui.mainmenu.title,VNovelizer,VNovelizer
+ui.mainmenu.start,开始新游戏,New Game
+ui.mainmenu.load,加载游戏,Load Game
+ui.mainmenu.gallery,画廊,Gallery
+ui.mainmenu.settings,设置,Settings
+ui.mainmenu.exit,退出游戏,Exit Game
+ui.settings.title,Settings,Settings
+ui.settings.volumn.title,音量,Volume
+ui.settings.volumn.mastervolumnlabel,主音量,Master Volume
+ui.settings.volumn.bgmvolumnlabel,背景音乐,BGM Volume
+ui.settings.volumn.sfxvolumnlabel,效果音,SFX Volume
+ui.settings.volumn.voicevolumnlabel,配音音量,Voice Volume
+ui.settings.text.title,文本,Text
+ui.settings.text.textspeedlabel,文本播放速度,Text Speed
+ui.settings.text.autointervallabel,自动播放间隔,Auto Play Interval
+ui.settings.display.title,显示,Display
+ui.settings.display.displaymodelabel,DisplayMode,Display Mode
+ui.settings.display.resolutionlabel,Resolution,Resolution
+ui.settings.language,语言,Language
+ui.pause.save,保存,Save
+ui.pause.load,加载,Load
+ui.pause.settings,设置,Settings
+ui.pause.totitle,返回标题画面,Return to Title
+ui.confirm.yes,是,Yes
+ui.confirm.no,否,No
+ui.gallery.tab.cg,CG,CG
+ui.gallery.tab.scene,场景,Scene
+ui.gallery.tab.music,音乐,Music

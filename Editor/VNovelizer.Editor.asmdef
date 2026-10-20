@@ -9,6 +9,7 @@
         "Unity.ResourceManager",
         "Unity.Addressables",
         "Unity.Addressables.Editor",
+        "Unity.TextMeshPro",
         "Alchemy",
         "Alchemy.Editor"
     ],

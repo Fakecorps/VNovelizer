@@ -313,6 +313,19 @@ public class VNLocalizationWindow : EditorWindow
             EditorGUILayout.EndScrollView();
         }
 
+        if (result.OrphanSkipped.Count > 0)
+        {
+            EditorGUILayout.LabelField($"已跳过 {result.OrphanSkipped.Count} 个失效 key（未导入）", EditorStyles.boldLabel);
+            EditorGUILayout.HelpBox(
+                "这些翻译行对应的剧本行已删除/改动（如行 ID 或命令变更），译文仍保留在翻译 CSV 中" +
+                "（模板末尾），请人工把译文迁移到新 key 后删除旧行。",
+                MessageType.Info);
+            _resultScroll = EditorGUILayout.BeginScrollView(_resultScroll, GUILayout.Height(70));
+            foreach (var s in result.OrphanSkipped)
+                EditorGUILayout.LabelField("· " + s, EditorStyles.miniLabel);
+            EditorGUILayout.EndScrollView();
+        }
+
         if (result.Warnings.Count > 0)
         {
             EditorGUILayout.LabelField("警告", EditorStyles.boldLabel);

@@ -54,7 +54,7 @@ ui.mainmenu.start,              开始游戏,              Start Game
 | 命令文本 | `{script}.{lineID}.command.{name}.{同名序号}` | `Chapter1.1001.command.showprompt.0` |
 | choice 选项 | `{script}.{lineID}.command.choice.{i}.option.{j}` | `Chapter1.1001.command.choice.0.option.1` |
 | 选项链内命令 | `{script}.{lineID}.command.choice.{i}.option.{j}.command.{name}.{链内序号}` | `Chapter1.1001.command.choice.0.option.1.command.showprompt.0` |
-| UI | `ui.*`（手工清单 `ui.csv` 维护） | `ui.mainmenu.start` |
+| UI | `ui.*`（手工清单 `ui.csv` 维护，独立集合 `VNUI`） | `ui.mainmenu.start` |
 
 - 同名序号 = 该命令在行内的第几次出现（0 起）；进入段与 @Confirm: 出口段独立计数
 - 只有声明了「本地化文本」参数的命令参与（当前：`showprompt` 的 text、`choice` 的选项描述）
@@ -72,15 +72,24 @@ choice(@loc:ui.choice.rooftop|jump(C_100))
 
 翻译缺失时回退显示 key 的可读尾段（不会显示 `@loc:` 原样）。
 
-## 6. UI 本地化（P3）
+## 6. UI 本地化（开箱即送）
 
-- UI key 清单手工维护：`{TranslationFolder}/ui.csv`（格式同翻译表，`ID, Text_Origin, {locale}`）
-- 代码侧查询：`VNAPI.GetUiText("ui.mainmenu.start", "开始游戏")`
-- 语言切换（SettingsPanel）后自动全量刷新（`VNLocalizationService.LocaleChanged` 事件）
+包内模板 UI 预制体已预装官方 `LocalizeStringEvent`（表引用 `VNUI` + `ui.*` key），随包开箱即用，无需任何运行时挂载：
+
+1. 开启剧情本地化后，在 `Project Settings → VNovelizer → 四、剧情本地化` 点 **「导入本地化资源」**：
+   - 包内 `UI_Locale_en.csv`（英文译文现成）复制到翻译表目录
+   - 其余目标语言自动生成 `UI_Locale_{locale}.csv` 空译文模板（填译文即可用）
+   - 缺失的源/目标 Locale 资产**自动创建**，目标 Locale 的 fallback 链**自动指向源语言**
+   - 自动聚合生成 `VNUI` StringTableCollection
+2. **语言切换**：SettingsPanel 自动出现「语言」下拉（目标语言多于 1 种时），选择即时生效并持久化（`GlobalData.LanguageCode`）
+3. **未开启本地化**：UI 显示中文原文、零本地化痕迹、Console 零报错（官方组件在表缺失时静默保持原文；`LocalizationSettings` 资产由编辑器自动兜底创建）
+4. **译文缺失**：fallback 链自动回退中文原文，永不显示裸 key
+5. UI key 清单真源 = 包内 `Runtime/PackageDefault/VNovelizerRes/UI_Localization/UI_Locale_en.csv`；包开发者在新增静态文本后重跑 `VNovelizer → Localization → 装配 UI 本地化组件（开发用）` 同步 key（动态文本如页码/音量值/对话内容不参与装配）
 
 ## 7. 常见问题
 
 - **翻译没生效**：确认目标语言 Locale 已添加到 Project Settings → Localization；确认模板第三列已填；打开剧情本地化管理器查看最近导入结果
 - **key 冲突**：同语言多张表出现了同 key 不同值——后加载覆盖 + 管理器列出冲突文件，删掉其中一张的重复行
-- **改了剧本行号/ID**：key 会变，旧译文行保留在模板末尾（Text_Origin 为空），人工把译文搬过去即可
+- **未开本地化时面板报错/异常**：不应发生——`LocalizationSettings` 资产在编辑器加载时已自动兜底创建（缺失时组件会抛异常的唯一根因）；表缺失时组件静默保持原文
+- **改了剧本行号/ID**：key 会变，旧译文行保留在模板末尾（Text_Origin 为空），人工把译文搬过去即可。导入时这些失效的旧 key 会**自动跳过**（不写进 StringTable，译文仍留在 CSV 里不会丢），管理器会列出「已跳过的失效 key」清单
 - **运行时日志没有 "No translation found"**：本门面直接查表取值，缺失时静默走 fallback（设计如此）

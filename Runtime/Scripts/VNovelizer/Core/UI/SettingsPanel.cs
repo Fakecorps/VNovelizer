@@ -3,6 +3,12 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+#if VN_LOCALIZATION
+using UnityEngine.Localization;
+using UnityEngine.Localization.Components;
+using UnityEngine.Localization.Settings;
+using VNovelizer.Core.Localization;
+#endif
 
 /// <summary>
 /// 游戏设置面板
@@ -74,6 +80,16 @@ public class SettingsPanel : BasePanel
     
     private GlobalData globalData;
     private List<Resolution> availableResolutions = new List<Resolution>();
+
+#if VN_LOCALIZATION
+    // 【UI 本地化开箱即送】语言设置（本地化开启且目标语言>1 时激活）
+    private GameObject languagePage;      // 预制体自带的 LocalizationPage（可选；功能关闭时整页隐藏）
+    private GameObject languageGroup;     // 预制体 LocalizationGroup 或动态创建的组
+    private TMP_Dropdown languageDropdown;
+    private TextMeshProUGUI languageLabel;
+    private readonly List<string> languageCodes = new List<string>();
+    private bool languageFeatureActive;
+#endif
     
     protected override void Awake()
     {
@@ -174,7 +190,276 @@ public class SettingsPanel : BasePanel
 
         // 关闭按钮
         closeBtn = GetControl<Button>("CloseBtn");
+
+        // 语言设置：本地化开启且目标语言多于 1 种时，动态创建 LanguageGroup
+        // （复制 DisplayModeGroup 结构：Label + Dropdown，插入其父容器末尾，继承布局样式）
+        TryCreateLanguageGroup(displayRoot);
     }
+
+#if VN_LOCALIZATION
+    /// <summary>
+    /// 【UI 本地化开箱即送】语言组激活条件：
+    /// ① 项目开启了剧情本地化；② 目标语言列表多于 1 种（有可切换的语言）。
+    /// 优先使用预制体自带的 LocalizationPage &gt; LocalizationGroup（结构同 DisplayModeGroup：
+    /// Label + Dropdown）；无预制体页面时降级为动态复制 DisplayModeGroup 创建。
+    /// 未开启时面板零本地化痕迹（四态验收）：预制体页整页隐藏 / 动态组不创建。
+    /// </summary>
+    private void TryCreateLanguageGroup(Transform displayRoot)
+    {
+        var config = VNProjectConfig.Instance;
+        var targets = config != null ? config.GetTargetLocales() : null;
+        // 有目标语言即可切换（源语言始终作为第一个选项，可随时切回）
+        languageFeatureActive = VNLocalizationService.IsEnabled() &&
+                                targets != null && targets.Length > 0;
+
+        // 优先：预制体自带 LocalizationPage（覆写副本/模板中预置）
+        GameObject page = FindControlGroup("LocalizationPage");
+        if (page != null)
+        {
+            languagePage = page;
+            page.SetActive(languageFeatureActive); // 功能关闭时整页隐藏
+            if (!languageFeatureActive)
+                return;
+
+            GameObject group = FindControlGroupInParent(page.transform, "LocalizationGroup");
+            if (group != null)
+            {
+                languageGroup = group;
+                BindLanguageControls(group, targets);
+            }
+            return;
+        }
+
+        if (!languageFeatureActive)
+            return;
+
+        // 兜底：动态复制 DisplayModeGroup 结构（Label + Dropdown，继承布局样式）
+        GameObject template = displayModeGroup;
+        if (template == null)
+            return;
+
+        Transform parent = template.transform.parent;
+        if (parent == null)
+            return;
+
+        var go = Instantiate(template, parent);
+        go.name = "LanguageGroup";
+        languageGroup = go;
+        BindLanguageControls(go, targets);
+    }
+
+    /// <summary>
+    /// 绑定语言组控件：Label 本地化 + Dropdown 填充目标语言选项。
+    /// Label 已挂 LocalizeStringEvent（装配器预装）时由官方组件管理文本（切语言自动刷新），
+    /// 运行时不再手动设置；未挂时走 GetUi 手动设置并订阅 LocaleChanged 刷新。
+    /// Dropdown 监听在 BindEvents/UnbindEvents 中配对管理（防每次打开面板累积监听器）。
+    /// </summary>
+    private void BindLanguageControls(GameObject group, string[] targets)
+    {
+        var labelObj = group.transform.Find("Label");
+        if (labelObj != null)
+        {
+            languageLabel = labelObj.GetComponent<TextMeshProUGUI>();
+            if (languageLabel != null &&
+                languageLabel.GetComponent<LocalizeStringEvent>() == null)
+            {
+                RefreshLanguageLabel();
+                VNLocalizationService.LocaleChanged += OnLocaleChangedForLanguageLabel;
+            }
+        }
+
+        languageDropdown = group.GetComponentInChildren<TMP_Dropdown>(true);
+        if (languageDropdown != null)
+        {
+            // 选项 = 源语言（第一项，可随时切回）+ 目标语言（去重）
+            languageCodes.Clear();
+            var config = VNProjectConfig.Instance;
+            string source = config != null && !string.IsNullOrEmpty(config.SourceLocale)
+                ? config.SourceLocale
+                : "zh-Hans";
+            languageCodes.Add(source);
+            foreach (var code in targets)
+                if (!languageCodes.Exists(c => string.Equals(c, code, System.StringComparison.OrdinalIgnoreCase)))
+                    languageCodes.Add(code);
+
+            languageDropdown.ClearOptions();
+            var options = new List<string>();
+            foreach (var code in languageCodes)
+                options.Add(GetLocaleDisplayName(code));
+            languageDropdown.AddOptions(options);
+        }
+    }
+
+    /// <summary>语言 Label 文本（当前语言；切语言后经 LocaleChanged 事件重刷）。</summary>
+    private void RefreshLanguageLabel()
+    {
+        if (languageLabel != null)
+            languageLabel.text = VNLocalizationService.GetUi("ui.settings.language", "语言");
+    }
+
+    private void OnLocaleChangedForLanguageLabel()
+    {
+        RefreshLanguageLabel();
+    }
+
+    /// <summary>恢复语言下拉选中项（面板每次打开时调用；未保存过则显示当前 SelectedLocale）。</summary>
+    private void RestoreLanguageSelection()
+    {
+        if (languageDropdown == null || languageCodes.Count == 0)
+            return;
+
+        string saved = globalData != null ? (globalData.LanguageCode ?? "") : "";
+        int idx = languageCodes.FindIndex(c =>
+            string.Equals(c, saved, System.StringComparison.OrdinalIgnoreCase));
+        if (idx < 0)
+        {
+            var current = LocalizationSettings.SelectedLocale;
+            if (current != null)
+                idx = languageCodes.FindIndex(c =>
+                    string.Equals(c, current.Identifier.Code, System.StringComparison.OrdinalIgnoreCase));
+        }
+        if (idx < 0)
+            idx = 0;
+
+        languageDropdown.SetValueWithoutNotify(idx);
+        languageDropdown.RefreshShownValue();
+    }
+
+    /// <summary>语言切换：设置 SelectedLocale（官方组件自动刷新 + LocaleChanged 广播）+ 持久化。</summary>
+    private void OnLanguageChanged(int index)
+    {
+        if (index < 0 || index >= languageCodes.Count)
+            return;
+
+        string code = languageCodes[index];
+        var locale = LocalizationSettings.AvailableLocales.GetLocale(code);
+        if (locale == null)
+        {
+            Debug.LogWarning($"[SettingsPanel] 语言切换失败：未找到 Locale「{code}」，" +
+                             $"请先在 Project Settings → Localization 创建对应 Locale 资产。");
+            return;
+        }
+
+        LocalizationSettings.SelectedLocale = locale;
+        GlobalDataManager.GetInstance().UpdateLanguage(code);
+        Debug.Log($"[SettingsPanel] 语言切换：{code} → SelectedLocale = {locale.name}。" +
+                  $"当前界面文本将按 {code} 查询 VNUI/VNLocalization 表（缺译文时 fallback 回源语言）。");
+
+        // 【诊断】主动探测 VNUI 表加载结果，定位"切换后文本不变"：
+        // 加载失败 → Addressables/Play Mode Script 问题；条目 0 → 聚合问题；条目有值 → 组件刷新链问题。
+        StartCoroutine(DiagnoseVnuiTableAfterLocaleChange());
+    }
+
+    private System.Collections.IEnumerator DiagnoseVnuiTableAfterLocaleChange()
+    {
+        yield return null; // 等一帧让新 locale 的表开始加载
+
+        var op = LocalizationSettings.StringDatabase.GetTableAsync("VNUI");
+        yield return op;
+
+        if (op.Status == UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationStatus.Succeeded && op.Result != null)
+        {
+            var entry = op.Result.GetEntry("ui.settings.title");
+            Debug.Log($"[SettingsPanel][诊断] VNUI({LocalizationSettings.SelectedLocale.Identifier.Code}) 加载成功，" +
+                      $"条目数 {op.Result.Count}，ui.settings.title = " +
+                      $"{(entry != null ? entry.LocalizedValue : "<key 缺失>")}");
+        }
+        else
+        {
+            Debug.LogError($"[SettingsPanel][诊断] VNUI 表加载失败（{op.Status}）：{op.OperationException}\n" +
+                           "排查方向：① Addressables Groups 窗口顶部 Play Mode Script 是否为 Use Asset Database (fastest)；" +
+                           "② VNUI_*.asset 是否已注册 Addressables；③ Console 是否有 Localization/Addressables 警告。");
+        }
+
+        DiagnoseStringEventBindings();
+    }
+
+    /// <summary>
+    /// 【诊断·组件侧】数据侧（表/条目）正常但文字不变时，根因几乎都在组件绑定：
+    /// LocalizeStringEvent 的 OnUpdateString 若没有任何监听器（持久化 m_Calls 为空），
+    /// 译文拉到了也写不进 TMP。此处逐组件报告三态：持久绑定（装配器产物）/
+    /// 运行时自愈绑定（VNLocalizeStringAutoBinder）/ 未绑定（异常，需重跑装配）。
+    /// </summary>
+    private void DiagnoseStringEventBindings()
+    {
+        var stringEvents = GetComponentsInChildren<LocalizeStringEvent>(true);
+        int persistentBound = 0, healed = 0, unbound = 0;
+
+        foreach (var se in stringEvents)
+        {
+            if (se == null) continue;
+
+            string key = se.StringReference != null && !se.StringReference.IsEmpty
+                ? se.StringReference.TableEntryReference.Key
+                : "<空引用>";
+
+            if (se.OnUpdateString != null && se.OnUpdateString.GetPersistentEventCount() > 0)
+            {
+                persistentBound++;
+            }
+            else if (VNovelizer.Core.Localization.VNLocalizeStringAutoBinder.IsHealed(se))
+            {
+                healed++;
+            }
+            else
+            {
+                unbound++;
+                Debug.LogWarning($"[SettingsPanel][诊断] 未绑定的 LocalizeStringEvent：{se.name}（key={key}）——" +
+                                 "OnUpdateString 无监听器，译文不会写入 TMP。" +
+                                 "请重跑 VNovelizer → Localization → 装配 UI 本地化组件（开发工程）。");
+            }
+        }
+
+        Debug.Log($"[SettingsPanel][诊断] LocalizeStringEvent 组件共 {stringEvents.Length} 个：" +
+                  $"持久绑定 {persistentBound}，运行时自愈 {healed}，未绑定 {unbound}。");
+    }
+
+    /// <summary>语言代码 → 显示名（未知语言回退显示代码本身）。</summary>
+    private static string GetLocaleDisplayName(string code)
+    {
+        string key = (code ?? "").Replace('_', '-').ToLowerInvariant();
+        switch (key)
+        {
+            case "zh-cn":
+            case "zh-hans":
+            case "zh-sg":
+                return "简体中文";
+            case "zh-tw":
+            case "zh-hant":
+            case "zh-hk":
+                return "繁體中文";
+            case "zh": return "中文";
+            case "en":
+            case "en-us":
+                return "English";
+            case "ja":
+            case "ja-jp":
+                return "日本語";
+            case "ko":
+            case "ko-kr":
+                return "한국어";
+            case "fr":
+            case "fr-fr":
+                return "Français";
+            case "de":
+            case "de-de":
+                return "Deutsch";
+            case "es":
+            case "es-es":
+                return "Español";
+            case "pt":
+            case "pt-br":
+                return "Português";
+            case "ru":
+            case "ru-ru":
+                return "Русский";
+            case "it":
+            case "it-it":
+                return "Italiano";
+            default: return code ?? "";
+        }
+    }
+#endif
 
     /// <summary>
     /// 解析分组查找根节点：
@@ -319,6 +604,10 @@ public class SettingsPanel : BasePanel
             resolutionDropdown.onValueChanged.AddListener(OnResolutionChanged);
         if (closeBtn != null)
             closeBtn.onClick.AddListener(OnCloseBtnClick);
+#if VN_LOCALIZATION
+        if (languageDropdown != null)
+            languageDropdown.onValueChanged.AddListener(OnLanguageChanged);
+#endif
     }
     
     /// <summary>
@@ -350,6 +639,10 @@ public class SettingsPanel : BasePanel
         // 导致每次打开面板累积 3 个监听器，点一次关闭执行 3 次。
         if (closeBtn != null)
             closeBtn.onClick.RemoveListener(OnCloseBtnClick);
+#if VN_LOCALIZATION
+        if (languageDropdown != null)
+            languageDropdown.onValueChanged.RemoveListener(OnLanguageChanged);
+#endif
     }
     
     protected override void OnEnable()
@@ -471,6 +764,12 @@ public class SettingsPanel : BasePanel
             displayModeGroup.SetActive(enableDisplayMode);
         if (resolutionGroup != null)
             resolutionGroup.SetActive(enableResolution);
+
+#if VN_LOCALIZATION
+        // 语言页（预制体自带时）：功能激活才显示；动态创建的语言组随面板显隐，无需管理
+        if (languagePage != null)
+            languagePage.SetActive(languageFeatureActive);
+#endif
     }
     
     /// <summary>
@@ -544,7 +843,12 @@ public class SettingsPanel : BasePanel
         {
             SetupResolutionDropdown();
         }
-        
+
+#if VN_LOCALIZATION
+        // 语言设置：恢复上次保存的选择（SetValueWithoutNotify 不触发切换回调）
+        RestoreLanguageSelection();
+#endif
+
         // 重新绑定事件监听器
         BindEvents();
         
@@ -837,6 +1141,9 @@ public class SettingsPanel : BasePanel
 
     private void OnDestroy()
     {
+#if VN_LOCALIZATION
+        VNLocalizationService.LocaleChanged -= OnLocaleChangedForLanguageLabel;
+#endif
         // 面板被Destroy时，如果当前状态是Settings，需要恢复游戏状态
         if (GameStateManager.GetInstance() != null && 
             GameStateManager.GetInstance().CurrentState == GameState.Settings)

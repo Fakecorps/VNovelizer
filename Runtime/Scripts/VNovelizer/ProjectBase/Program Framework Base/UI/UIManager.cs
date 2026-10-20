@@ -365,6 +365,13 @@ public class UIManager : BaseManager<UIManager>
         go.transform.SetParent(null, false);
         if (spec.Persistent) UnityEngine.Object.DontDestroyOnLoad(go);
 
+#if VN_LOCALIZATION
+        // 【Fix-L10N-AutoBind】UI 本地化自愈：LocalizeStringEvent 缺失 OnUpdateString→TMP
+        // 绑定的存量预制体（旧装配器产物/用户自建副本）在此补运行时监听，切语言后文字正常刷新。
+        // 幂等：已有持久绑定的组件跳过（详见 VNLocalizeStringAutoBinder）。
+        VNovelizer.Core.Localization.VNLocalizeStringAutoBinder.HealPanel(go);
+#endif
+
         EnsureCanvasContract(go, spec);
 
         _panels[name] = panel;
