@@ -325,6 +325,50 @@ Config 现结构（用户可见路径字段 = 0）：
 - 顺手修复：`MusicManager` SoundObj 池键不匹配（取 `VNovelizerRes/...`、还 `Music/SoundObj`，
   池对象永远无法回收）——统一为 `VNUIPrefabKeys.SoundObj`。
 
+### 7.0.4 子文件夹支持（Voice/BGM/SFX/背景）+ 回收站 + 引用校验
+
+**目标：配音/音乐等大类别资源按章节组织——Excel 写 `Chapter01/Voice01` 直接命中，资源管理器提供完整的文件夹管理。**
+
+核心语义：**逻辑名 = 相对类别根的路径**（`'/'` 分隔、任意嵌套深度，兼容 Windows 反斜杠自动规范化）。
+运行时键空间与此前完全一致（`{类别前缀}/{逻辑名}` = `VNovelizerRes/Audio/Voice/Chapter01/Voice01`）——
+**存量项目零迁移**，此前已放进子目录的资源直接可用。
+
+资源管理器能力（背景/BGM/SFX/语音四个分页；Video 走 StreamingAssets 独立链路，不支持）：
+
+| 操作 | 入口 | 行为 |
+|------|------|------|
+| 浏览 | 面包屑 + 文件夹卡片 | 文件夹卡片双击进入、面包屑任意层级跳回；卡片显示尾段名（列表视图路径列显示完整逻辑名，照抄进 Excel） |
+| 新建文件夹 | 面包屑右侧按钮 / 空白处右键 | 写入 `_keep.txt` 占位防 Unity 删除空目录（.txt 已被注册器排除，资源管理器中完全隐形） |
+| 重命名文件夹 | 文件夹右键 | 物理目录 `MoveAsset`（GUID 全保留）+ 外部分配条目批量改地址前缀 |
+| 删除文件夹 | 文件夹右键 | 全部内容进回收站；外部分配条目仅移除分配（物理文件保留，可随回收站恢复） |
+| 移动文件 | 文件卡片拖到文件夹卡片 / 右键「移动到」子菜单 | 物理在类别文件夹内 → 物理移动；外部分配条目 → 只改地址 |
+| 导入落位 | 工具栏导入 / 外部拖放 | 落位到当前面包屑所在文件夹（也可直接拖到具体文件夹卡片） |
+| 搜索 | 工具栏搜索框 | 跨文件夹全类别范围平铺，显示完整逻辑名 |
+
+回收站（`<项目根>/.VNovelizerTrash/`，Assets 外 Unity 不导入）：
+
+- 删除 = 软删除：文件**连同 .meta** 移入回收站（GUID 不丢），JSON 清单记录原路径与原 Addressables 地址；
+- 恢复 = 移回原位置 + 按原地址重注册（引用关系完整，跨 Unity 重启有效）；
+- 仅手动清空，不自动过期；侧边栏底部「回收站」入口（数量徽标）。
+
+引用校验（防 Excel 静默失效）：
+
+- 删除/重命名/移入回收站前扫描全部剧本 CSV（Voice/BGM/背景列 + `playvoice`/`playbgm`/`playsfx`/`bgtrans` 命令参数），弹窗列出受影响行（可「查看详情」打开报告窗口），确认后才执行；
+- 设置菜单 / 空白处右键「检查缺失引用…」：报告引用了不存在资源的所有行。
+
+实现要点（编辑器）：
+
+- `RegisterAsset` 类别 Label 改按**已知类别最长前缀**派生（`ResolveCategoryForKey`）——
+  旧的"去最后一段"派生会把 `Voice/Chapter01/Voice01` 打成 `…_Voice_Chapter01` 子标签，类别枚举查不到；
+  每编辑器会话首次打开资源管理器时 `RelabelAllCategories()` 存量自愈（只重打 Label 不动地址）；
+- 未分配资产/文件夹模式的逻辑名 = 相对类别根路径（`ResourceAssetService.GetRelativeLogicalName`，
+  `ParamCandidateProvider` 同步——`playvoice` 等命令下拉自动出现完整逻辑名）；
+- `RenameAssignment` 放开斜杠（`ValidateLogicalName` 统一校验：无空层级/`..`/非法字符）；
+- 工作区同步保护手动分配地址：物理不在类别文件夹内的资产（拖放分配），同步不覆盖其地址
+  （`RegisterWorkspaceTree` 对未锚定资产传 `preserveManualAddress`）；
+- 服务层新增：`ResourceFolderService`（文件夹操作）、`ResourceTrashService`（回收站）、
+  `ScriptReferenceScanner`（引用扫描）+ `ResourceRefReportWindow`（报告窗口）、`ResourceTrashPanelView`（回收站面板）。
+
 ### 7.1 新项目（Addressables 模式）
 
 1. 安装 VNovelizer（Addressables 由 UPM 硬依赖自动安装）→ 首次自动弹出向导 → 一键初始化；

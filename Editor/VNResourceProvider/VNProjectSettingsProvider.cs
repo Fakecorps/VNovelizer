@@ -180,7 +180,7 @@ internal class VNProjectSettingsProvider : SettingsProvider
         bool newEnabled = EditorGUILayout.ToggleLeft(
             new GUIContent("启用剧情本地化",
                 "启用后剧情文本/说话人/命令/UI 走本地化表；关闭时保持 CSV 原文行为。\n" +
-                "开启后菜单 VNovelizer → 本地化 下的管理器/导入入口同步可用。"),
+                "开启后菜单 VNovelizer → 本地化 下的「剧情本地化管理器」同步可用。"),
             _config.EnableLocalization, EditorStyles.boldLabel);
         if (newEnabled != _config.EnableLocalization)
             _config.EnableLocalization = newEnabled;

@@ -217,21 +217,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             return result.Count > 0 ? result : null;
         }
 
+        /// <summary>【Fix-ScriptPicker】统一走 VNScriptCsvLocator：剧本输出目录权威，
+        /// 翻译表不再混入剧本名候选。</summary>
         private static List<string> GetScriptNames()
         {
-            var guids = AssetDatabase.FindAssets("t:TextAsset");
-            var result = new List<string>();
-
-            foreach (string guid in guids)
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (!path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) continue;
-                string name = System.IO.Path.GetFileNameWithoutExtension(path);
-                if (!result.Contains(name)) result.Add(name);
-            }
-
-            result.Sort();
-            return result.Count > 0 ? result : null;
+            return VNScriptCsvLocator.GetScriptNames();
         }
 
         private static List<string> GetSceneNames()
@@ -330,14 +320,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 }
             }
 
-            // 文件夹兜底（旧版模式 / 未分配资产）：逻辑名 = 文件名
+            // 文件夹兜底（旧版模式 / 未分配资产）：【子文件夹支持】逻辑名 = 相对类别根路径
+            // （与资源管理器显示一致，含子目录段，如 "Chapter01/Voice01"）
             string folder = ResourceAssetService.GetPathFromConfig(resType);
             if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
             {
                 string filter = UIElementBuilder.GetSearchFilter(resType);
                 foreach (string guid in AssetDatabase.FindAssets(filter, new[] { folder }))
                 {
-                    string name = Path.GetFileNameWithoutExtension(AssetDatabase.GUIDToAssetPath(guid));
+                    string name = ResourceAssetService.GetRelativeLogicalName(folder, AssetDatabase.GUIDToAssetPath(guid));
                     if (!string.IsNullOrEmpty(name) && !result.Contains(name)) result.Add(name);
                 }
             }
@@ -547,21 +538,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             return false;
         }
 
-        /// <summary>按剧本名（不含扩展名）定位 CSV 资产路径；找不到返回 null。</summary>
+        /// <summary>按剧本名（不含扩展名）定位 CSV 资产路径；找不到返回 null。
+        /// 【Fix-ScriptPicker】统一走 VNScriptCsvLocator（剧本输出目录权威，翻译表不混入）。</summary>
         private static string FindCsvPath(string scriptName)
         {
-            if (string.IsNullOrEmpty(scriptName)) return null;
-
-            var guids = AssetDatabase.FindAssets("t:TextAsset");
-            foreach (string guid in guids)
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (!path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.Equals(System.IO.Path.GetFileNameWithoutExtension(path), scriptName,
-                    StringComparison.Ordinal))
-                    return path;
-            }
-            return null;
+            return VNScriptCsvLocator.FindCsvPath(scriptName);
         }
     }
 }

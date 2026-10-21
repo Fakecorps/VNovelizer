@@ -318,6 +318,9 @@ namespace VNovelizer.Core.Theater
         /// 按 Texture2D 登记类型），按 Texture2D 加载并就地构造 Sprite。</summary>
         private IEnumerator LoadBackgroundSprite(string bgName, SpriteHolder holder)
         {
+            // 【子文件夹支持】规范化背景名：去空白 + 反斜杠统一为 '/'（Scene01\Beach → Scene01/Beach）
+            if (!string.IsNullOrEmpty(bgName)) bgName = bgName.Trim().Replace('\\', '/');
+
             string primary = BuildBackgroundKey(bgName);
             var opPrimary = VNResourceService.LoadAsync<Sprite>(primary);
             while (!opPrimary.IsDone) yield return null;

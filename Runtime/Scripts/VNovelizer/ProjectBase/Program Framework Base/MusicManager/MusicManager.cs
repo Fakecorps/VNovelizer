@@ -43,7 +43,8 @@ public class MusicManager : BaseManager<MusicManager>
         // 先规范化名称，防止空白字符串导致加载目录本身
         if (!string.IsNullOrEmpty(name))
         {
-            name = name.Trim();
+            // 【子文件夹支持】中间分隔符统一为 '/'（Chapter01\Theme01 → Chapter01/Theme01）
+            name = name.Trim().Replace('\\', '/');
         }
 
         if (string.IsNullOrEmpty(name))
@@ -125,6 +126,8 @@ public class MusicManager : BaseManager<MusicManager>
     // 播放音效
     public void PlaySFX(string name, bool isLoop, UnityAction<AudioSource> callBack = null)
     {
+        // 【子文件夹支持】规范化：去空白 + 反斜杠统一为 '/'
+        if (!string.IsNullOrEmpty(name)) name = name.Trim().Replace('\\', '/');
         string loadPath = VNProjectConfig.Instance.SFXResPath;
         ResourcesManager.GetInstance().LoadAsync<AudioClip>(loadPath +"/" + name, (clip) =>
         {

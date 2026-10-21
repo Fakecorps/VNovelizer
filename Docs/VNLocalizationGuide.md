@@ -26,9 +26,8 @@
    - 新增行自动补入（译文列留空）；原文变化只刷新 `Text_Origin`；**译文列永不动**
    - 行删除后旧行保留在模板末尾（译文不丢，人工清理）
 2. 翻译团队打开模板 CSV（Excel 可直接编辑），在第三列填译文，保存
-3. 保存即自动聚合进 Unity 本地化资产（无需任何手动步骤）；也可以菜单
-   `VNovelizer → 本地化 (Localization) → 导入翻译表 (Import Translation Tables)` 手动兜底
-   （未启用剧情本地化时该子菜单灰显）
+3. 保存即自动聚合进 Unity 本地化资产（无需任何手动步骤）；也可在
+   **剧情本地化管理器**标题栏点「立即导入翻译表」手动兜底
 4. `VNovelizer → 本地化 (Localization) → 剧情本地化管理器 (Story Localization Manager)`
    （与其他管理器统一的深色分栏风格）：
    左侧语言侧栏（全部剧本 / 单语言详情——每张表已译进度 + 定位/打开 / 缺失模板生成）、
@@ -89,7 +88,7 @@ choice(@loc:ui.choice.rooftop|jump(C_100))
 2. **语言切换**：SettingsPanel 自动出现「语言」下拉（目标语言多于 1 种时），选择即时生效并持久化（`GlobalData.LanguageCode`）
 3. **未开启本地化**：UI 显示中文原文、零本地化痕迹、Console 零报错（官方组件在表缺失时静默保持原文；`LocalizationSettings` 资产由编辑器自动兜底创建）
 4. **译文缺失**：fallback 链自动回退中文原文，永不显示裸 key
-5. UI key 清单真源 = 包内 `Runtime/PackageDefault/VNovelizerRes/UI_Localization/UI_Locale_en.csv`；包开发者在新增静态文本后重跑 `VNovelizer → 本地化 (Localization) → 装配 UI 本地化组件 (Assemble UI Localization)` 同步 key（动态文本如页码/音量值/对话内容不参与装配）
+5. UI key 清单真源 = 包内 `Runtime/PackageDefault/VNovelizerRes/UI_Localization/UI_Locale_en.csv`；普通用户无需手动装配（包内模板出厂已预装组件，运行时自动自愈补绑）。仅**包开发者**在新增静态文本后同步 key：工程 Scripting Define Symbols 加 `VN_DEV_TOOLS`，运行菜单 `VNovelizer → 装配 UI 本地化组件（开发用）`（动态文本如页码/音量值/对话内容不参与装配）
 
 ## 7. 常见问题
 

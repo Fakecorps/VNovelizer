@@ -41,7 +41,13 @@ public static class VNUiLocalizationAssembler
         public Dictionary<string, string> TextToKey = new Dictionary<string, string>();
     }
 
-    // 菜单入口统一注册在 VNLocalizationMenu（路径常量 + 未启用本地化时灰显 validate）
+    // 【2026-10-21 收进开发工具】普通用户无需此功能：包内模板出厂已预装 LocalizeStringEvent
+    //（开箱即用），旧版缺绑定由运行时 VNLocalizeStringAutoBinder 自动自愈。
+    // 包开发者（改包内预制体/同步 UI 翻译表 key）：Scripting Define Symbols 加 VN_DEV_TOOLS
+    // 后菜单出现，与其他开发工具一致。
+#if VN_DEV_TOOLS
+    [MenuItem("VNovelizer/装配 UI 本地化组件（开发用）", false, 230)]
+#endif
     public static void Assemble()
     {
         if (!EditorUtility.DisplayDialog("装配 UI 本地化组件",

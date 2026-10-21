@@ -77,22 +77,6 @@ public class VNTranslationImportPostprocessor : AssetPostprocessor
         VNTranslationAggregator.Aggregate();
     }
 
-    /// <summary>手动导入入口（菜单入口统一在 VNLocalizationMenu，未启用本地化时灰显）。</summary>
-    public static void ImportNow()
-    {
-        var result = VNTranslationAggregator.Aggregate();
-        if (result == null)
-            return;
-
-        string message = result.Success
-            ? $"导入完成。冲突 {result.Conflicts.Count} 处。"
-            : "导入失败。";
-        if (result.Warnings.Count > 0)
-        {
-            message += "\n\n警告：\n" + string.Join("\n", result.Warnings.Take(5));
-            if (result.Warnings.Count > 5)
-                message += $"\n…（共 {result.Warnings.Count} 条，详见 Console）";
-        }
-        EditorUtility.DisplayDialog("导入翻译表", message, "确定");
-    }
+    // 【2026-10-21】手动「导入翻译表」菜单已删除——管理器标题栏「立即导入翻译表」为唯一手动入口
+    //（自动导入仍由本 Postprocessor 保存即触发，不受影响）。
 }

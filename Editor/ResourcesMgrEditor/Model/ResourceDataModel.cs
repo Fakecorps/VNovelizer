@@ -54,6 +54,19 @@ public class ResTypeItem
     public int Index;
 }
 
+/// <summary>
+/// 文件夹卡片的数据记录（资源管理器内容区）。
+/// Path = 相对类别根的文件夹路径（"" = 根；如 "Chapter01"、"Chapter01/Sub"）。
+/// </summary>
+[Serializable]
+public class ResourceFolderInfo
+{
+    public string Path;         // 相对类别根的完整文件夹路径（无首尾 '/'）
+    public string Name;         // 显示名（最后一段）
+    public int ItemCount;       // 直接子文件数（不含子文件夹）
+    public int SubfolderCount;  // 直接子文件夹数
+}
+
 /// <summary>窗口持久化状态</summary>
 [Serializable]
 public class ResourceWindowState
@@ -65,4 +78,5 @@ public class ResourceWindowState
     public float cardSize = 120f;
     public bool showStatusBar = true;
     public string lastSelectedAssetPath = "";
+    public string currentFolder = ""; // 【子文件夹支持】当前浏览的文件夹（相对类别根，"" = 根）
 }

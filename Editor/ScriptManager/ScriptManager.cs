@@ -201,15 +201,10 @@ public class ScriptManagerWindow : EditorWindow
         VNovelizer.Editor.RowPerformanceEditor.RowPerfEditorWindow.OpenForRow(csvPath, lineId);
     }
 
+    /// <summary>【Fix-ScriptPicker】统一走 VNScriptCsvLocator（剧本输出目录权威，翻译表不混入）。</summary>
     private static string FindCsvPath(string scriptName)
     {
-        foreach (string guid in AssetDatabase.FindAssets("t:TextAsset"))
-        {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
-            if (!path.EndsWith(".csv", System.StringComparison.OrdinalIgnoreCase)) continue;
-            if (Path.GetFileNameWithoutExtension(path) == scriptName) return path;
-        }
-        return null;
+        return VNScriptCsvLocator.FindCsvPath(scriptName);
     }
 
     private void RefreshList()

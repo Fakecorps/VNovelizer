@@ -72,6 +72,10 @@ public class VoiceManager : BaseManager<VoiceManager>
         // 5. 规范化语音路径（移除前导/尾随空格和路径分隔符）
         voicePath = voicePath.Trim().TrimStart('/', '\\').TrimEnd('/', '\\');
 
+        // 【子文件夹支持】兼容 Windows 反斜杠输入（Chapter01\Voice01 → Chapter01/Voice01），
+        // 中间分隔符统一为 '/'，与 Addressables 地址 / Resources 键的斜杠空间一致
+        voicePath = voicePath.Replace('\\', '/');
+
         // 6. 移除扩展名（Resources.Load 不需要扩展名，会自动查找）
         // 如果路径包含扩展名，移除它
         if (voicePath.EndsWith(".mp3", System.StringComparison.OrdinalIgnoreCase) ||

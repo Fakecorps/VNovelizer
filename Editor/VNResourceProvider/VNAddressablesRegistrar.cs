@@ -258,9 +258,12 @@ public static class VNAddressablesRegistrar
 
             string assetPath = file.Replace('\\', '/');
             string relative = assetPath.Substring(VNProjectPaths.WorkspaceRoot.Length).TrimStart('/');
-            string resourceKey = BuildCategoryAnchoredKey(relative, categories);
+            string resourceKey = BuildCategoryAnchoredKey(relative, categories, out bool anchored);
 
-            if (RegisterAsset(settings, group, assetPath, resourceKey)) count++;
+            // anchored = false：物理上不在任何类别文件夹内（如 Assets/VNovelizer/Sounds/x.mp3）。
+            // 该类资产的地址可能是用户拖放分配的类别逻辑名（如 Voice/Chapter01/x）——
+            // 同步时保留手动分配的地址，只用物理推导兜底注册"从未分配过"的资产。
+            if (RegisterAsset(settings, group, assetPath, resourceKey, preserveManualAddress: !anchored)) count++;
         }
         return count;
     }
@@ -296,11 +299,64 @@ public static class VNAddressablesRegistrar
         return s;
     }
 
+    /// <summary>资源键是否命中已知类别（作为整体或以 类别+"/" 为前缀；大小写不敏感）</summary>
+    private static bool IsKnownCategory(string category)
+    {
+        if (string.IsNullOrEmpty(category)) return false;
+        foreach (var cat in GetKnownCategories())
+        {
+            if (string.Equals(cat, category, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 资源键 → 所属类别。【子文件夹支持】按已知类别最长前缀匹配，
+    /// 而非旧的"去掉最后一段"（旧规则会把 Voice/Chapter01/Voice01 派生成
+    /// …_Voice_Chapter01 子标签，导致 GetCategoryEntries 按 Voice 类标签精确过滤时查不到）。
+    /// 未命中任何已知类别时回退物理推导（去最后一段），保持非类别资产的原有行为。
+    /// </summary>
+    private static string ResolveCategoryForKey(string resourceKey)
+    {
+        if (string.IsNullOrEmpty(resourceKey)) return resourceKey;
+        string best = null;
+        foreach (var cat in GetKnownCategories())
+        {
+            if (string.IsNullOrEmpty(cat)) continue;
+            if (string.Equals(resourceKey, cat, StringComparison.OrdinalIgnoreCase) ||
+                resourceKey.StartsWith(cat + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                if (best == null || cat.Length > best.Length) best = cat;
+            }
+        }
+        return best ?? VNResourceKeys.KeyToCategory(resourceKey);
+    }
+
+    /// <summary>
+    /// 逻辑名校验（允许子文件夹路径，如 "Chapter01/Voice01"）。返回 null = 通过。
+    /// 供 RenameAssignment / AssignToCategory / 文件夹操作共用。
+    /// </summary>
+    public static string ValidateLogicalName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "名称不能为空";
+        name = name.Replace('\\', '/');
+        if (name.Contains("//")) return "路径不能包含空层级（//）";
+        if (name.Contains("..")) return "路径不能包含 ..";
+        foreach (var seg in name.Split('/'))
+        {
+            if (string.IsNullOrEmpty(seg)) return "路径不能包含空层级";
+            foreach (char c in Path.GetInvalidFileNameChars())
+                if (seg.IndexOf(c) >= 0) return $"层级名称包含非法字符「{c}」: {seg}";
+        }
+        return null;
+    }
+
     /// <summary>
     /// 工作区相对路径 → 类别锚定资源键。逐段宽松匹配（单复数/大小写不敏感）已知类别，
     /// 命中则地址 = 类别原样路径 + 剩余目录段 + 文件名（去扩展名）；未命中按物理路径推导兜底。
+    /// anchored = 是否物理上位于某个已知类别文件夹内（子文件夹路径由此自然进入地址）。
     /// </summary>
-    private static string BuildCategoryAnchoredKey(string relativePath, List<string> categories)
+    private static string BuildCategoryAnchoredKey(string relativePath, List<string> categories, out bool anchored)
     {
         string[] segments = relativePath.Split('/');
         string fileName = segments[segments.Length - 1];
@@ -332,7 +388,8 @@ public static class VNAddressablesRegistrar
                 }
                 if (!match) continue;
 
-                // 命中：地址 = 类别原样路径 + 剩余目录段（保留用户命名）+ 文件名
+                // 命中：地址 = 类别原样路径 + 剩余目录段（保留用户命名，子文件夹路径由此进入地址）+ 文件名
+                anchored = true;
                 var parts = new List<string> { cat };
                 parts.AddRange(rest);
                 parts.Add(fileNameNoExt);
@@ -341,6 +398,7 @@ public static class VNAddressablesRegistrar
         }
 
         // 未命中任何类别：物理路径推导（RootPrefix + 相对路径）——保持可寻址兜底
+        anchored = false;
         return $"{VNResourceKeys.RootPrefix}/{relativePath.Substring(0, relativePath.Length - ext.Length)}";
     }
 
@@ -368,8 +426,13 @@ public static class VNAddressablesRegistrar
         return count;
     }
 
-    /// <summary>注册单个资产（设置地址与类别 Label）。已被用户归入其他组的条目跳过。</summary>
-    private static bool RegisterAsset(AddressableAssetSettings settings, AddressableAssetGroup group, string assetPath, string resourceKey)
+    /// <summary>
+    /// 注册单个资产（设置地址与类别 Label）。已被用户归入其他组的条目跳过。
+    /// preserveManualAddress：物理位置不在类别文件夹内的资产，若已有手动分配的类别地址
+    /// （拖放分配 / 重命名产生），同步时不覆盖该地址（物理移动语义与手动分配语义解耦）。
+    /// </summary>
+    private static bool RegisterAsset(AddressableAssetSettings settings, AddressableAssetGroup group,
+        string assetPath, string resourceKey, bool preserveManualAddress = false)
     {
         string guid = AssetDatabase.AssetPathToGUID(assetPath);
         if (string.IsNullOrEmpty(guid))
@@ -393,16 +456,73 @@ public static class VNAddressablesRegistrar
         var entry = settings.CreateOrMoveEntry(guid, group);
         if (entry == null) return false;
 
-        entry.SetAddress(resourceKey);
+        // 手动分配地址保护：当前地址是已知类别的逻辑名（非物理推导兜底键）时保留不动
+        bool keepManual = preserveManualAddress
+            && entry.address != null
+            && !string.Equals(entry.address, resourceKey, StringComparison.Ordinal)
+            && IsKnownCategory(ResolveCategoryForKey(entry.address));
 
-        string category = VNResourceKeys.KeyToCategory(resourceKey);
+        string effectiveKey = resourceKey;
+        if (keepManual)
+        {
+            effectiveKey = entry.address;
+        }
+        else
+        {
+            entry.SetAddress(resourceKey);
+        }
+
+        // 【子文件夹支持】Label 按已知类别最长前缀派生：Voice/Chapter01/Voice01 归属 Voice 类，
+        // 而非派生出 …_Voice_Chapter01 子标签（旧规则会让类别枚举查不到子目录条目）
+        string category = ResolveCategoryForKey(effectiveKey);
         string label = VNResourceKeys.CategoryToLabel(category);
         if (!string.IsNullOrEmpty(label))
             entry.SetLabel(label, true);
-        // 清掉该资产残留的旧类别标签（地址曾随配置/目录变迁漂移过时，旧 Label 会永久残留）
+        // 清掉该资产残留的旧类别标签（地址曾随配置/目录变迁漂移过时，旧 Label 会永久残留；
+        // 也顺带清理旧派生规则产生的 …_Chapter01 形态子标签）
         CleanupStaleLabels(entry, category);
 
         return true;
+    }
+
+    /// <summary>
+    /// 重打全组条目的类别 Label（只改 Label，不动地址）。
+    /// 子目录 Label 派生规则升级后，存量条目带着旧派生标签（…_Chapter01）在类别枚举中查不到——
+    /// 编辑器会话内首次需要时调用一次即可自愈（幂等）。
+    /// </summary>
+    public static int RelabelAllCategories()
+    {
+        if (Application.isPlaying) return 0;
+        if (!IsManagedMode) return 0;
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        var group = settings.FindGroup(VNResourceKeys.GroupName);
+        if (group == null) return 0;
+
+        int changed = 0;
+        foreach (var entry in group.entries)
+        {
+            if (entry == null || string.IsNullOrEmpty(entry.address)) continue;
+            string category = ResolveCategoryForKey(entry.address);
+            string label = VNResourceKeys.CategoryToLabel(category);
+            if (string.IsNullOrEmpty(label)) continue;
+
+            var before = new HashSet<string>(entry.labels);
+            if (!entry.labels.Contains(label))
+            {
+                entry.SetLabel(label, true);
+                changed++;
+            }
+            CleanupStaleLabels(entry, category);
+            if (!before.SetEquals(entry.labels)) changed++;
+        }
+
+        if (changed > 0)
+        {
+            AssetDatabase.SaveAssets();
+            VNResourceService.Reset();
+            Debug.Log($"[VNAddressablesRegistrar] 类别标签自愈完成：{changed} 处已按新派生规则修正");
+        }
+        return changed;
     }
 
     // ==================== 拖放分配（资源管理器工作流，见 Docs/VNResourceProviderRefactoring.md） ====================
@@ -468,9 +588,15 @@ public static class VNAddressablesRegistrar
         // 图片导入设置自动修正：LoadAsync<Sprite> 需要 Sprite 类型，替用户省掉头号坑
         if (type == ResType.Background) EnsureSpriteImport(assetPath);
 
-        // 逻辑名（默认文件名去扩展名）
+        // 逻辑名（默认文件名去扩展名）。允许子文件夹路径（"Chapter01/Voice01"），反斜杠统一为 '/'
         if (string.IsNullOrEmpty(logicalName))
             logicalName = Path.GetFileNameWithoutExtension(assetPath);
+        else
+        {
+            logicalName = logicalName.Trim().Trim('\\').Replace('\\', '/').Trim('/');
+            string invalidError = ValidateLogicalName(logicalName);
+            if (invalidError != null) return invalidError;
+        }
 
         var settings = AddressableAssetSettingsDefaultObject.GetSettings(true);
         var group = EnsureGroup(settings);
@@ -517,11 +643,14 @@ public static class VNAddressablesRegistrar
         return true;
     }
 
-    /// <summary>重命名逻辑名（改地址尾段，不动文件名）。返回 null 表示成功，否则为错误信息。</summary>
+    /// <summary>重命名逻辑名（改地址尾段，不动文件名；支持子文件夹路径如 "Chapter01/Voice01"）。返回 null 表示成功，否则为错误信息。</summary>
     public static string RenameAssignment(string assetPath, string newLogicalName)
     {
         if (string.IsNullOrEmpty(newLogicalName)) return "名称不能为空";
-        if (newLogicalName.Contains("/")) return "名称不能包含 '/'";
+        // 【子文件夹支持】允许斜杠路径；反斜杠统一为 '/'，去首尾分隔符
+        newLogicalName = newLogicalName.Trim().Trim('\\').Replace('\\', '/').Trim('/');
+        string invalidError = ValidateLogicalName(newLogicalName);
+        if (invalidError != null) return invalidError;
 
         if (!IsManagedMode) return "当前不是 Addressables 托管模式";
         var settings = AddressableAssetSettingsDefaultObject.Settings;
@@ -530,7 +659,11 @@ public static class VNAddressablesRegistrar
         if (entry == null || entry.address == null || !entry.address.Contains("/"))
             return "该资源未被分配逻辑名";
 
-        string category = entry.address.Substring(0, entry.address.LastIndexOf('/'));
+        // 【子文件夹支持】类别按已知类别最长前缀解析：Voice/Chapter01/Voice01 的类别是 Voice，
+        // 不能再用"去最后一段"（会把 Chapter01 当类别，导致改名结果错挂到 Chapter01/ 之下）
+        string category = ResolveCategoryForKey(entry.address);
+        if (string.IsNullOrEmpty(category) || !entry.address.StartsWith(category + "/", StringComparison.Ordinal))
+            category = entry.address.Substring(0, entry.address.LastIndexOf('/'));
         string newAddress = $"{category}/{newLogicalName}";
 
         // 同类别重名检测
@@ -541,6 +674,8 @@ public static class VNAddressablesRegistrar
         }
 
         entry.SetAddress(newAddress);
+        // 类别未变时 Label 不变；防御性重打一次（幂等）
+        CleanupStaleLabels(entry, category);
         AssetDatabase.SaveAssets();
         VNResourceService.Reset();
         return null;

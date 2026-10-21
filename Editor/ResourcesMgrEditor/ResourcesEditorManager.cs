@@ -43,7 +43,8 @@ public class ResourcesEditorManager : AlchemyEditorWindow
             sortMode = sortMode,
             cardSize = cardSize,
             showStatusBar = showStatusBar,
-            lastSelectedAssetPath = lastSelectedAssetPath
+            lastSelectedAssetPath = lastSelectedAssetPath,
+            currentFolder = currentFolder
         };
 
         var root = rootVisualElement;
@@ -60,6 +61,7 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         var content = new ResourceContentView();
         var statusBar = new ResourceStatusBarView();
         var audioPlayer = new AudioPlayerView();
+        var trashPanel = new ResourceTrashPanelView(); // 【子文件夹支持】回收站面板
         _audioPlayerView = audioPlayer;
 
         // 2.5 标题栏（统一 Gallery Editor 风格）
@@ -75,6 +77,7 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         rightContainer.style.flexGrow = 1;
         rightContainer.style.backgroundColor = ResourceStyles.Bg;
         rightContainer.Add(content.Root);
+        rightContainer.Add(trashPanel.Root);
         rightContainer.Add(audioPlayer.Root);
         splitView.Add(sidebar.Root);
         splitView.Add(rightContainer);
@@ -84,7 +87,7 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         if (_state.showStatusBar) root.Add(statusBar.Root);
 
         // 5. 创建 Presenter 并初始化
-        _presenter = new ResourceManagerPresenter(toolbar, sidebar, content, statusBar, audioPlayer);
+        _presenter = new ResourceManagerPresenter(toolbar, sidebar, content, statusBar, audioPlayer, trashPanel);
         _presenter.OnStatusBarToggled += () =>
         {
             // 重新构建整个窗口以应用状态栏显示变化
@@ -92,7 +95,8 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         };
         _presenter.Initialize(_state);
 
-        // 6. 拖放支持（双模式：Project 窗口资产 → 拖放分配；OS 外部文件 → 导入复制）
+        // 6. 拖放支持（双模式：Project 窗口资产 → 拖放分配；OS 外部文件 → 导入复制；
+        //    落位到当前浏览的文件夹）
         rightContainer.RegisterCallback<DragUpdatedEvent>(evt =>
         {
             // Project 窗口拖入的资产用 Link 光标（分配语义，不复制文件）；外部文件用 Copy
@@ -190,6 +194,7 @@ public class ResourcesEditorManager : AlchemyEditorWindow
     [SerializeField] private float cardSize = 120f;
     [SerializeField] private bool showStatusBar = true;
     [SerializeField] private string lastSelectedAssetPath = "";
+    [SerializeField] private string currentFolder = "";
 
     /// <summary>窗口失焦前保存状态</summary>
     private void OnDisable()
@@ -204,6 +209,7 @@ public class ResourcesEditorManager : AlchemyEditorWindow
             cardSize = s.cardSize;
             showStatusBar = s.showStatusBar;
             lastSelectedAssetPath = s.lastSelectedAssetPath;
+            currentFolder = s.currentFolder;
         }
         AudioPreviewService.Stop();
         EditorUpdateService.UnregisterCallback();

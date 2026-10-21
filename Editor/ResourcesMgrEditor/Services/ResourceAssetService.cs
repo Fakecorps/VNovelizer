@@ -93,13 +93,15 @@ public static class ResourceAssetService
                 {
                     string assetPath = AssetDatabase.GUIDToAssetPath(guid);
                     if (assignedPaths.Contains(assetPath)) continue;
-                    string fileName = Path.GetFileNameWithoutExtension(assetPath);
-                    if (!string.IsNullOrEmpty(kw) && !fileName.ToLower().Contains(kw)) continue;
+                    // 【子文件夹支持】未分配资产的逻辑名 = 相对类别根的路径（去扩展名），
+                    // 与 Excel 中应填写的名字一致（旧逻辑只取裸文件名，会丢掉子目录段）
+                    string logicalName = GetRelativeLogicalName(folderPath, assetPath);
+                    if (!string.IsNullOrEmpty(kw) && !logicalName.ToLower().Contains(kw)) continue;
                     var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
                     if (asset == null) continue;
                     string fullPath = Path.Combine(Directory.GetCurrentDirectory(), assetPath);
-                    var item = BuildItem(asset, fileName, assetPath, fullPath);
-                    item.LogicalName = fileName; // 未分配：逻辑名 = 文件名（文件夹兜底语义）
+                    var item = BuildItem(asset, Path.GetFileNameWithoutExtension(assetPath), assetPath, fullPath);
+                    item.LogicalName = logicalName;
                     result.Add(item);
                 }
             }
@@ -115,16 +117,100 @@ public static class ResourceAssetService
         foreach (var guid in guids)
         {
             string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-            string fileName = Path.GetFileNameWithoutExtension(assetPath);
-            if (!string.IsNullOrEmpty(kw) && !fileName.ToLower().Contains(kw)) continue;
+            // 【子文件夹支持】文件夹模式逻辑名同样改为相对路径（旧逻辑只取裸文件名）
+            string logicalName = GetRelativeLogicalName(path, assetPath);
+            if (!string.IsNullOrEmpty(kw) && !logicalName.ToLower().Contains(kw)) continue;
             var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
             if (asset == null) continue;
             string fullPath = Path.Combine(Directory.GetCurrentDirectory(), assetPath);
-            var item = BuildItem(asset, fileName, assetPath, fullPath);
-            item.LogicalName = fileName; // 文件夹模式：逻辑名 = 文件名
+            var item = BuildItem(asset, Path.GetFileNameWithoutExtension(assetPath), assetPath, fullPath);
+            item.LogicalName = logicalName; // 文件夹模式：逻辑名 = 相对路径
             result.Add(item);
         }
 
+        return result;
+    }
+
+    /// <summary>
+    /// 类别文件夹内的资产路径 → 相对类别根的逻辑名（去扩展名、'/' 分隔）。
+    /// 资产不在该文件夹下时回退裸文件名（防御，理论上不会发生——调用方均以该文件夹为扫描根）。
+    /// </summary>
+    public static string GetRelativeLogicalName(string categoryFolderPath, string assetPath)
+    {
+        string fileName = Path.GetFileNameWithoutExtension(assetPath);
+        if (string.IsNullOrEmpty(categoryFolderPath)) return fileName;
+        string prefix = categoryFolderPath.Replace('\\', '/').TrimEnd('/') + "/";
+        if (assetPath != null && assetPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            string rel = assetPath.Substring(prefix.Length).TrimEnd('/');
+            return rel;
+        }
+        return fileName;
+    }
+
+    /// <summary>
+    /// 【子文件夹支持】枚举当前文件夹下的直接子文件夹（逻辑名派生 ∪ 物理子目录）：
+    /// - 逻辑名派生：托管条目 / 文件夹兜底条目的逻辑名按 '/' 拆层——
+    ///   覆盖"拖放分配到子文件夹逻辑名"的外部资产（物理位置无关）；
+    /// - 物理子目录：覆盖空文件夹（只含 _keep.txt 等被排除文件的目录，无条目可派生）。
+    /// 返回的 ResourceFolderInfo 已按名称排序。
+    /// </summary>
+    public static List<ResourceFolderInfo> ListSubfolders(ResType type, string currentFolder)
+    {
+        var result = new List<ResourceFolderInfo>();
+        string folder = (currentFolder ?? "").Trim().Trim('/').Replace('\\', '/').Trim('/');
+        string prefix = folder.Length == 0 ? "" : folder + "/";
+        var subfolders = new Dictionary<string, ResourceFolderInfo>(StringComparer.OrdinalIgnoreCase);
+
+        // 1) 从全部条目的逻辑名派生（含托管 + 文件夹兜底双模式）
+        foreach (var item in LoadAssets(type, null))
+        {
+            string ln = item.LogicalName ?? item.Name;
+            if (string.IsNullOrEmpty(ln)) continue;
+            if (!ln.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            string rest = ln.Substring(prefix.Length);
+            int slash = rest.IndexOf('/');
+            if (slash <= 0) continue; // 当前层文件（slash == -1）或异常空段（slash == 0）
+
+            string name = rest.Substring(0, slash);
+            if (!subfolders.TryGetValue(name, out var info))
+            {
+                info = new ResourceFolderInfo
+                {
+                    Path = prefix + name,
+                    Name = name,
+                    ItemCount = 0,
+                    SubfolderCount = 0,
+                };
+                subfolders.Add(name, info);
+            }
+            // 更深层级计入"子文件夹"存在性
+            string after = rest.Substring(slash + 1);
+            if (after.IndexOf('/') >= 0) info.SubfolderCount++;
+            else if (after.Length > 0) info.ItemCount++;
+        }
+
+        // 2) 物理子目录（覆盖空文件夹；与逻辑名派生去重合并）
+        string root = GetPathFromConfig(type);
+        if (!string.IsNullOrEmpty(root))
+        {
+            string dir = folder.Length == 0 ? root : root + "/" + folder;
+            if (Directory.Exists(dir))
+            {
+                foreach (var sub in Directory.GetDirectories(dir))
+                {
+                    string name = Path.GetFileName(sub);
+                    if (!subfolders.TryGetValue(name, out var info))
+                    {
+                        info = new ResourceFolderInfo { Path = prefix + name, Name = name };
+                        subfolders.Add(name, info);
+                    }
+                }
+            }
+        }
+
+        result.AddRange(subfolders.Values);
+        result.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
         return result;
     }
 

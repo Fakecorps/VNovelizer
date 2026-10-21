@@ -10,8 +10,8 @@ using UnityEngine;
 /// </summary>
 public static class ResourceImportService
 {
-    /// <summary>导入单个文件到目标分类路径</summary>
-    public static ImportResult ImportSingleFile(ResType type, string srcPath)
+    /// <summary>导入单个文件到目标分类路径（targetSubfolder = 相对类别根的子文件夹，null/空 = 类别根）</summary>
+    public static ImportResult ImportSingleFile(ResType type, string srcPath, string targetSubfolder = null)
     {
         string ext = Path.GetExtension(srcPath).ToLower().Replace(".", "");
         string[] allowed = UIElementBuilder.GetExtensionsList(type);
@@ -22,9 +22,15 @@ public static class ResourceImportService
         if (string.IsNullOrEmpty(targetAssetPath))
             return ImportResult.Failed("未配置目标路径");
 
+        // 【子文件夹支持】落位到当前浏览的子文件夹（自动逐级创建目录）
+        string sub = (targetSubfolder ?? "").Trim().Trim('/').Replace('\\', '/').Trim();
         string fileName = Path.GetFileName(srcPath);
         string projectRoot = Path.GetDirectoryName(Application.dataPath);
-        string destPath = Path.Combine(projectRoot, targetAssetPath, fileName);
+        string destDir = string.IsNullOrEmpty(sub)
+            ? Path.Combine(projectRoot, targetAssetPath)
+            : Path.Combine(projectRoot, targetAssetPath, sub.Replace('/', Path.DirectorySeparatorChar));
+        if (!string.IsNullOrEmpty(sub)) Directory.CreateDirectory(destDir);
+        string destPath = Path.Combine(destDir, fileName);
 
         if (File.Exists(destPath))
         {

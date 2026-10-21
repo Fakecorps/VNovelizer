@@ -153,17 +153,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             Repaint();
         }
 
+        /// <summary>【Fix-ScriptPicker】统一走 VNScriptCsvLocator：剧本输出目录顶层 CSV，
+        /// 翻译表不再被当作剧本扫描迁移。</summary>
         private static List<string> FindScriptCsvPaths()
         {
-            var result = new List<string>();
-            foreach (string guid in AssetDatabase.FindAssets("t:TextAsset"))
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
-                    result.Add(path);
-            }
-            result.Sort();
-            return result;
+            return VNScriptCsvLocator.GetAllCsvPaths();
         }
 
         /// <summary>
