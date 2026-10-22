@@ -54,6 +54,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 case VNCommandCategory.System:      return "vn-node--cat-system";
                 case VNCommandCategory.Performance: return "vn-node--cat-performance";
+                case VNCommandCategory.VFX:         return "vn-node--cat-vfx";
                 case VNCommandCategory.Flow:        return "vn-node--cat-flow";
                 case VNCommandCategory.Logic:       return "vn-node--cat-logic";
                 case VNCommandCategory.Audio:       return "vn-node--cat-audio";

@@ -280,6 +280,7 @@ public static class VNAddressablesRegistrar
         Add(config != null ? config.CharacterResPath : "VNovelizerRes/Characters");
         Add(config != null ? config.ParticalEffectPath : "VNovelizerRes/VFX/Partical");
         Add(config != null ? config.AnimationPath : "VNovelizerRes/VFX/Animation");
+        Add(config != null ? config.FilterResPath : "VNovelizerRes/VFX/Filters");
         Add(config != null ? config.BgmResPath : "VNovelizerRes/Audio/Music/BGM");
         Add(config != null ? config.SFXResPath : "VNovelizerRes/Audio/SFX");
         Add(config != null ? config.VoiceResPath : "VNovelizerRes/Audio/Voice");

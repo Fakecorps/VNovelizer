@@ -110,6 +110,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 case VNParamType.ParticleName:
                     return GetVfxNames(false);
 
+                case VNParamType.FilterName:
+                    return GetFilterIds();
+
+                case VNParamType.WeatherParticleName:
+                    return GetWeatherParticleIds();
+
                 case VNParamType.GalleryCgName:
                     return GetCgGalleryNames();
 
@@ -124,6 +130,40 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 default:
                     return null;
             }
+        }
+
+        /// <summary>
+        /// 滤镜名候选：内置 7 款（纯静态读取，不触发运行时资源链）+ 工程内全部
+        /// VNFilterDefinition 预设资产（AssetDatabase 扫描，覆盖 Addressables 注册的
+        /// 用户预设——与 GetCharacterIds 同惯例，编辑模式不触碰运行时提供者链）。
+        /// </summary>
+        public static List<string> GetFilterIds()
+        {
+            var result = new List<string>();
+            var builtins = VNovelizer.Core.Filters.VNFilterLibrary.GetBuiltinFilterIds();
+            if (builtins != null) result.AddRange(builtins);
+
+            var guids = AssetDatabase.FindAssets("t:VNFilterDefinition");
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                var def = AssetDatabase.LoadAssetAtPath<VNovelizer.Core.Filters.VNFilterDefinition>(path);
+                if (def == null || string.IsNullOrEmpty(def.FilterId)) continue;
+
+                string id = def.FilterId.Trim();
+                if (id.Length > 0 && !result.Contains(id)) result.Add(id);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 天气粒子名候选（unsetparticle 的 name 参数下拉）：rain/snow/all。
+        /// 纯静态列表，不依赖任何资源环境（与内置滤镜候选同惯例）。
+        /// </summary>
+        public static List<string> GetWeatherParticleIds()
+        {
+            return new List<string> { "rain", "snow", "all" };
         }
 
         /// <summary>

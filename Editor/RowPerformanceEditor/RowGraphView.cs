@@ -67,6 +67,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>拖拽悬停提示</summary>
         private Label _dragHint;
 
+        /// <summary>
+        /// 拖拽幽灵预览框（Fix-DropLane 2026-10-21）：实时显示落点位置与将落入的泳道。
+        /// 用户反馈"节点一拖出来就是绿色的、连不上"——落点低于两泳道中线即被判定为
+        /// 出口段（绿色 confirm 配色），与进入段节点跨泳道无法连线；此前拖动过程中
+        /// 没有任何泳道预览，用户无从预知。幽灵框颜色 = 目标泳道配色，所见即所得。
+        /// </summary>
+        private VisualElement _dragGhost;
+        private Label _dragGhostLabel;
+
         public RowGraphView()
         {
             AddToClassList("vn-graph");
@@ -94,19 +103,42 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _dragHint.style.display = DisplayStyle.None;
             _dragHint.pickingMode = PickingMode.Ignore;
             Add(_dragHint);
+
+            // 幽灵预览框放在 contentViewContainer（跟随缩放/平移，与真实落点重合）
+            _dragGhost = new VisualElement();
+            _dragGhost.AddToClassList("vn-drag-ghost");
+            _dragGhost.pickingMode = PickingMode.Ignore;
+            _dragGhostLabel = new Label("进入段");
+            _dragGhostLabel.AddToClassList("vn-drag-ghost-label");
+            _dragGhost.Add(_dragGhostLabel);
+            _dragGhost.style.display = DisplayStyle.None;
+            contentViewContainer.Add(_dragGhost);
         }
 
         // ---------------- 拖拽接收 ----------------
 
         private void OnDragUpdated(DragUpdatedEvent evt)
         {
-            if (CommandPalette.TryGetDragCommand(out _))
-            {
-                DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
-                _dragHint.style.display = DisplayStyle.Flex;
-                _dragHint.style.left = evt.mousePosition.x + 12;
-                _dragHint.style.top = evt.mousePosition.y + 12;
-            }
+            if (!CommandPalette.TryGetDragCommand(out _)) return;
+
+            DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+
+            Vector2 canvasPos = contentViewContainer.WorldToLocal(evt.mousePosition);
+            bool isConfirm = IsConfirmDropY(canvasPos.y);
+
+            // Fix-DropLane：幽灵预览框跟随落点，配色/文本与目标泳道一致（所见即所得），
+            // 用户在松手前就能看出节点会落进进入段（蓝灰）还是出口段（绿）。
+            _dragGhost.style.left = canvasPos.x;
+            _dragGhost.style.top = canvasPos.y;
+            _dragGhost.EnableInClassList("vn-drag-ghost--confirm", isConfirm);
+            _dragGhost.EnableInClassList("vn-drag-ghost--entry", !isConfirm);
+            _dragGhostLabel.text = isConfirm ? "出口段 @Confirm" : "进入段";
+            _dragGhost.style.display = DisplayStyle.Flex;
+
+            _dragHint.text = isConfirm ? "松开创建到【出口段】" : "松开创建到【进入段】";
+            _dragHint.style.display = DisplayStyle.Flex;
+            _dragHint.style.left = evt.mousePosition.x + 12;
+            _dragHint.style.top = evt.mousePosition.y + 12;
         }
 
         private void OnDragPerform(DragPerformEvent evt)
@@ -114,19 +146,26 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (!CommandPalette.TryGetDragCommand(out string commandName)) return;
 
             Vector2 canvasPos = contentViewContainer.WorldToLocal(evt.mousePosition);
-            // 上半区=进入段，下半区=出口段
-            bool isConfirm = canvasPos.y >
-                             (ChainAutoLayout.EntryLaneY + ChainAutoLayout.ConfirmLaneY) / 2f;
+            // 上半区=进入段，下半区=出口段（与幽灵预览框的判定一致）
+            bool isConfirm = IsConfirmDropY(canvasPos.y);
 
             OnRequestCreateNodeAt?.Invoke(commandName, isConfirm, canvasPos);
             CommandPalette.ClearDragData();
             _dragHint.style.display = DisplayStyle.None;
+            _dragGhost.style.display = DisplayStyle.None;
             evt.StopPropagation();
         }
 
         private void OnDragExited(DragExitedEvent evt)
         {
             _dragHint.style.display = DisplayStyle.None;
+            _dragGhost.style.display = DisplayStyle.None;
+        }
+
+        /// <summary>拖放落点的泳道判定（上半区=进入段，下半区=出口段）</summary>
+        private static bool IsConfirmDropY(float y)
+        {
+            return y > (ChainAutoLayout.EntryLaneY + ChainAutoLayout.ConfirmLaneY) / 2f;
         }
 
         // ---------------- 图重建 ----------------
@@ -253,6 +292,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 view.SetPosition(new Rect(pos, new Vector2(0f, 0f)));
                 AddElement(view);
+                // Fix-Connect-2026-10-21：节点构造期的 RefreshPorts 发生在 owner 挂接之前
+                // （无效），入图后补调一次，确保端口注册进 GraphView 内部列表（拖出线
+                // 的 EdgeConnector 命中检测等 Unity 内建路径依赖该列表）。
+                view.RefreshPorts();
                 _nodeViews[NodeViewKey(isConfirm, node.Id)] = view;
             }
 
@@ -368,20 +411,38 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var startView = startPort.node as VNNodeViewBase;
             if (startView == null) return compatible;
 
-            // R11：choice 的选项端口不在 input/outputContainer 中（跟随选项行定位），
-            // 且输入端口在 titleContainer 内（#top 高度塌陷问题的修复，见 ChoiceNodeView）——
-            // 两者都不依赖 GraphView.ports 的收集范围，全部显式并入枚举。
-            ports.ForEach(port => CheckPort(startPort, startView, port, compatible));
+            // Fix-Connect-2026-10-21：不再依赖 GraphView.ports（m_Ports）。该列表由
+            // Node.RefreshPorts() 在 owner 已挂接时注册，注册时机敏感——一旦丢失，
+            // 拖线时所有目标端口都不高亮、连线完全失效（用户反馈：有的能连有的不能连，
+            // 目标端口完全不高亮，Console 无报错，特定图稳定复现）。
+            // 改为直接遍历画布节点收集端口：标准端口走 InputPort/OutputPort，
+            // Fork/Join 的额外端口走 MultiPorts，choice 的选项端口不在 input/outputContainer
+            // （跟随选项行定位）且输入端口在 titleContainer，同样靠节点字段显式收集——
+            // 枚举结果与端口注册状态彻底解耦。
+            var seen = new HashSet<Port>();
             foreach (var n in nodes.ToList())
             {
-                if (!(n is ChoiceNodeView cv)) continue;
-                if (cv.InputPort != null)
-                    CheckPort(startPort, startView, cv.InputPort, compatible);
-                foreach (var p in cv.AllOutputPorts)
-                    CheckPort(startPort, startView, p, compatible);
+                if (!(n is VNNodeViewBase vn)) continue;
+
+                if (vn is ChoiceNodeView cv)
+                {
+                    CollectPort(cv.InputPort);
+                    foreach (var p in cv.AllOutputPorts) CollectPort(p);
+                    continue;
+                }
+
+                CollectPort(vn.InputPort);
+                CollectPort(vn.OutputPort);
+                foreach (var p in vn.MultiPorts) CollectPort(p);
             }
 
             return compatible;
+
+            void CollectPort(Port port)
+            {
+                if (port == null || !seen.Add(port)) return;
+                CheckPort(startPort, startView, port, compatible);
+            }
         }
 
         private static void CheckPort(Port startPort, VNNodeViewBase startView,
@@ -841,6 +902,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             templateView.SetPosition(new Rect(
                 templateX, templateY, 0f, 0f));
             AddElement(templateView);
+            templateView.RefreshPorts();
             _nodeViews[NodeViewKey(isConfirm, templateId)] = templateView;
 
             // 视图连线：entry → nextline → exit（模板边不可删）
@@ -1250,6 +1312,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             view.SetPosition(new Rect(canvasPosition, new Vector2(0f, 0f)));
 
             AddElement(view);
+            view.RefreshPorts();
             _nodeViews[NodeViewKey(isConfirm, id)] = view;
 
             if (notifyChange) OnGraphChanged?.Invoke();
@@ -1274,6 +1337,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             view.SetPosition(new Rect(canvasPosition, new Vector2(0f, 0f)));
 
             AddElement(view);
+            view.RefreshPorts();
             _nodeViews[NodeViewKey(isConfirm, id)] = view;
 
             // 主延续边自动连 End 哨兵（默认出口；多 choice 合并展示时用户可改连另一 choice）
@@ -1562,7 +1626,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 canvasPosition + new Vector2(300f, 0f), new Vector2(0f, 0f)));
 
             AddElement(forkView);
+            forkView.RefreshPorts();
             AddElement(joinView);
+            joinView.RefreshPorts();
             _nodeViews[NodeViewKey(isConfirm, forkId)] = forkView;
             _nodeViews[NodeViewKey(isConfirm, joinId)] = joinView;
 

@@ -765,6 +765,12 @@ namespace VNovelizer.Core.Theater
             _states.Clear();
             _freeChars.Clear(); // 自由角色注册表随清场一并作废
 
+            // 全屏滤镜随剧场清场一并复位（回到主菜单/结束演出；无激活滤镜时 no-op）
+            VNovelizer.Core.Filters.ScreenFilterManager.ResetAllFilters();
+
+            // 天气粒子随剧场清场一并复位（回到主菜单/结束演出；无激活天气时 no-op）
+            VNovelizer.Core.Weather.WeatherParticleManager.ResetAll();
+
             Camera.Reset();
             SceneCameraManager.GetInstance().ResetCamera();
         }

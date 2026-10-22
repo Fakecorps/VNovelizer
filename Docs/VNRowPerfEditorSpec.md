@@ -336,7 +336,7 @@ ParseFrom(node, stopAt):
 
 | 文件 | 内容 |
 |------|------|
-| `VNParamType.cs` | `VNParamType` 枚举（24 项，含动态取值域标记）+ `VNCommandCategory` 枚举（6 项） |
+| `VNParamType.cs` | `VNParamType` 枚举（24 项，含动态取值域标记）+ `VNCommandCategory` 枚举（7 项，含 VFX 视效命令） |
 | `VNCommandMetaAttribute.cs` | `[VNCommandMeta(Category, Description)]`，可选 `ArgSeparator` / `VariadicArgs` / `Planned` |
 | `VNParamAttribute.cs` | `[VNParam(Index, Name, Type)]`，可选 `Options` / `Min` / `Max` / `Default` / `Optional` / `ImplicitBinding` / `BoundColumn` / `InlineForbidden` |
 | `CommandMetaReader.cs` | 反射读取器（带缓存）+ `VNCommandInfo` / `VNParamInfo` 投影类 |

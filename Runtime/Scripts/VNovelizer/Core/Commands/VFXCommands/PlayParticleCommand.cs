@@ -8,10 +8,10 @@ namespace VNovelizer.Core.Commands
     /// <summary>
     /// 通用粒子播放命令
     /// 格式：playparticle(特效名)
-    /// 示例：playparticle(Snow)
+    /// 示例：playparticle(Petal)
     /// </summary>
     [VNCommandMeta(VNCommandCategory.Performance,
-        "播放常驻粒子特效（雪/雨/花瓣等；同名特效自动去重不叠加）")]
+        "播放常驻粒子特效（花瓣等；同名特效自动去重不叠加；雪/雨请用 particle_snow/particle_rain）")]
     public class PlayParticleCommand : VNCommand
     {
         [VNParam(0, "effect", VNParamType.ParticleName,
@@ -19,7 +19,7 @@ namespace VNovelizer.Core.Commands
         public override string CommandName { get { return "playparticle"; } }
 
         // 【Fix-15】"请求中"占位集合：GetObj 是异步回调，同名去重检查若只在回调外做，
-        // 并行触发（连续两行 playparticle(Snow)/读档双重恢复）时两次调用都通过检查 → 粒子叠加。
+        // 并行触发（连续两行 playparticle(Petal)/读档双重恢复）时两次调用都通过检查 → 粒子叠加。
         private static readonly HashSet<string> _pendingRequests = new HashSet<string>();
 
         public override bool Execute(string args)
@@ -99,7 +99,8 @@ namespace VNovelizer.Core.Commands
         {
             if (!string.IsNullOrEmpty(args))
             {
-                VNAPI.RegisterEffect(args.Trim());
+                string effectName = args.Trim();
+                VNAPI.RegisterEffect(effectName);
             }
         }
     }

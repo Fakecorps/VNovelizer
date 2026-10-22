@@ -426,6 +426,10 @@
     background-color: #5C5480;
 }
 
+.vn-node--cat-vfx > #title {
+    background-color: #2E7078;
+}
+
 .vn-node--cat-flow > #title {
     background-color: #8A5420;
 }
@@ -456,6 +460,7 @@
 
 .vn-accent-system      { background-color: #4A90D9; }
 .vn-accent-performance { background-color: #9C94B2; }
+.vn-accent-vfx         { background-color: #4BB5BC; }
 .vn-accent-flow        { background-color: #CC7A29; }
 .vn-accent-logic       { background-color: #5FA88A; }
 .vn-accent-audio       { background-color: #C87FA8; }
@@ -1506,6 +1511,35 @@
     -unity-font-style: bold;
     border-radius: 4px;
     /* Unity USS 不支持 pointer-events: none；用 picking-mode 在 C# 层设置 */
+}
+
+/* Fix-DropLane 2026-10-21：拖拽幽灵预览框——落点位置实时预览，
+   配色 = 目标泳道配色（进入段蓝灰 / 出口段绿），所见即所得 */
+.vn-drag-ghost {
+    position: absolute;
+    width: 200px;
+    height: 56px;
+    border-radius: 6px;
+    border-width: 2px;
+    align-items: center;
+    justify-content: center;
+}
+
+.vn-drag-ghost--entry {
+    border-color: #6A9AD0;
+    background-color: rgba(74, 122, 170, 0.28);
+}
+
+.vn-drag-ghost--confirm {
+    border-color: #5A8A3E;
+    background-color: rgba(90, 138, 62, 0.32);
+}
+
+.vn-drag-ghost-label {
+    color: #E8E8E8;
+    font-size: 12px;
+    -unity-font-style: bold;
+    white-space: nowrap;
 }
 
 /* 框选矩形（自实现 DragBoxSelector 绘制） */

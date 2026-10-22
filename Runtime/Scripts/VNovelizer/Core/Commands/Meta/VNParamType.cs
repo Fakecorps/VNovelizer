@@ -115,6 +115,12 @@ namespace VNovelizer.Core.Commands.Meta
 
         /// <summary>场景回想条目名（候选来自画廊编辑器场景登记项）</summary>
         GallerySceneName,
+
+        /// <summary>画面滤镜名（候选来自 VNFilterLibrary：内置 7 款 + 用户自定义滤镜预设）</summary>
+        FilterName,
+
+        /// <summary>天气粒子名（候选：rain/snow/all；unsetparticle 的 name 参数）</summary>
+        WeatherParticleName,
     }
 
     /// <summary>
@@ -139,5 +145,8 @@ namespace VNovelizer.Core.Commands.Meta
 
         /// <summary>其他 / 未分类</summary>
         Misc,
+
+        /// <summary>视效命令：画面滤镜族（filter_vhs / filter_fisheye 等，青绿色带）</summary>
+        VFX,
     }
 }

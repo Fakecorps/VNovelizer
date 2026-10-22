@@ -86,7 +86,8 @@ namespace VNovelizer.Core.Commands
         {
             if (!string.IsNullOrEmpty(args))
             {
-                VNAPI.UnregisterEffect(args.Trim());
+                string effectName = args.Trim();
+                VNAPI.UnregisterEffect(effectName);
             }
         }
     }

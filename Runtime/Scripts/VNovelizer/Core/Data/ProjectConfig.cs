@@ -123,6 +123,9 @@ public class VNProjectConfig : ScriptableObject
     [Order(150), BoxGroup("二、资源默认地址（引擎内部，勿改）"), ReadOnly, LabelText("动画")]
     public string AnimationPath = "VNovelizerRes/VFX/Animation";
 
+    [Order(155), BoxGroup("二、资源默认地址（引擎内部，勿改）"), ReadOnly, LabelText("画面滤镜预设")]
+    public string FilterResPath = "VNovelizerRes/VFX/Filters";
+
     [Order(160), BoxGroup("二、资源默认地址（引擎内部，勿改）"), ReadOnly, LabelText("BGM（背景音乐）")]
     public string BgmResPath = "VNovelizerRes/Audio/Music/BGM";
 

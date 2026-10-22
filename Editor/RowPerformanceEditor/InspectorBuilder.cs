@@ -315,6 +315,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 case VNCommandCategory.System:      return "系统命令";
                 case VNCommandCategory.Performance: return "演出";
+                case VNCommandCategory.VFX:         return "视效";
                 case VNCommandCategory.Flow:        return "流程";
                 case VNCommandCategory.Logic:       return "逻辑";
                 case VNCommandCategory.Audio:       return "音频";
@@ -948,6 +949,29 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             var candidates = ResolveCandidates(view, info, param, index);
 
+            // 【滤镜下拉改造 2026-10-21】FilterName 渲染为纯下拉选择（不自由输入）：
+            // 候选 = 内置 7 款 + 用户自定义预设；unsetfilter 额外在最前插入 all（关闭全部）。
+            // 候选恒不应为空（内置 7 款不依赖资源环境）；候选链任何一环异常/为空时直接取内置列表，
+            // 保证下拉必然出现。
+            if (param.Type == VNParamType.FilterName)
+            {
+                if (candidates == null || candidates.Count == 0)
+                    candidates = ParamCandidateProvider.GetFilterIds();
+                if (IsUnsetFilterCommand(view))
+                {
+                    if (candidates == null) candidates = new List<string>();
+                    if (!candidates.Contains("all")) candidates.Insert(0, "all");
+                }
+            }
+
+            // 【天气粒子 2026-10-22】WeatherParticleName 渲染为纯下拉选择（不自由输入）：
+            // 候选 = rain/snow/all（unsetparticle 专用），静态列表不依赖资源环境。
+            if (param.Type == VNParamType.WeatherParticleName)
+            {
+                if (candidates == null || candidates.Count == 0)
+                    candidates = ParamCandidateProvider.GetWeatherParticleIds();
+            }
+
             VisualElement field;
 
             if (candidates != null && candidates.Count > 0)
@@ -1099,6 +1123,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             row.Add(text);
             return row;
+        }
+
+        /// <summary>当前节点是否为 unsetfilter 命令（其滤镜名下拉需额外提供 all 选项）</summary>
+        private static bool IsUnsetFilterCommand(CommandNodeView view)
+        {
+            return view != null && view.Data != null &&
+                   string.Equals(view.Data.CommandName, "unsetfilter", StringComparison.OrdinalIgnoreCase);
         }
 
         private List<string> ResolveCandidates(CommandNodeView view, VNCommandInfo info,

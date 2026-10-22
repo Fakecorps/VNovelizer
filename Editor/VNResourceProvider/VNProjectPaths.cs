@@ -38,6 +38,7 @@ public static class VNProjectPaths
     public static string VoiceFolder => CategoryFolder("Audio/Voice");
     public static string ParticalFolder => CategoryFolder("VFX/Partical");
     public static string AnimationFolder => CategoryFolder("VFX/Animation");
+    public static string FiltersFolder => CategoryFolder("VFX/Filters");
 
     /// <summary>画廊数据容器文件夹（mode: "CG" / "Music" / "Scene"）</summary>
     public static string GalleryFolder(string mode) => CategoryFolder("GalleryContent/" + mode);
@@ -75,6 +76,7 @@ public static class VNProjectPaths
             WorkspaceRoot + "/VFX",
             WorkspaceRoot + "/VFX/Partical",
             WorkspaceRoot + "/VFX/Animation",
+            WorkspaceRoot + "/VFX/Filters",
             WorkspaceRoot + "/GalleryContent",
             WorkspaceRoot + "/GalleryContent/CG",
             WorkspaceRoot + "/GalleryContent/Music",

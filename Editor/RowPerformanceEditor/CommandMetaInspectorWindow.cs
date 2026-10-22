@@ -183,6 +183,7 @@ namespace VNovelizer.Editor
             {
                 case VNCommandCategory.System:      return "系统命令（数据列隐式驱动）";
                 case VNCommandCategory.Performance: return "演出命令";
+                case VNCommandCategory.VFX:         return "视效命令";
                 case VNCommandCategory.Flow:        return "流程命令（仅可置于链尾）";
                 case VNCommandCategory.Logic:       return "逻辑与变量";
                 case VNCommandCategory.Audio:       return "音频";

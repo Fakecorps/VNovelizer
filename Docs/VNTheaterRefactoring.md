@@ -256,7 +256,7 @@ public class CameraState
 | `playparticle` / `stopparticle` | ~~UIParticle + effectLayer~~ | 世界空间 `ParticleSystem` |
 | `playanim` | ~~帧动画 Image 序列~~ | 世界空间 quad 序列 |
 | `playvideo` | ~~RawImage~~ | 世界空间 quad + VideoPlayer |
-| 全屏滤镜/模糊/暗角 | 无 | 相机后处理组件 + `camerafx` |
+| 全屏滤镜（鱼眼/VHS/反色/黑白/暗角/像素化/色差） | 无 | 逐滤镜命令 `filter_vhs` / `filter_fisheye` / `filter_invert` / `filter_grayscale` / `filter_vignette` / `filter_pixelate` / `filter_chromatic` + `unsetfilter` + `ScreenFilterManager`（RT 捕获 + 全屏 RawImage 滤镜层，见 Docs/VNScreenFilterSystem.md） |
 
 ---
 

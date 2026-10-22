@@ -66,12 +66,36 @@ showprompt,"showprompt(text, duration, inEase, outEase)","text: 提示文字内�
 duration: 停留秒数（可选，默认 2）
 inEase: 浮入曲线（可选；缺省=OutQuad 淡入+OutBack 回弹位移；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
 outEase: 浮出曲线（可选；缺省 InQuad。候选：Linear/Out*，含「无」空选）",屏幕提示文字（浮动显示后自动消失）,"showprompt(获得钥匙, 2.0) 或 showprompt(获得钥匙, 2.0, OutBack, InQuad)",,,,,,,,,,,,,,,
-playparticle,playparticle(effect),effect: 特效资源名（Particle 特效目录下的预制体）,播放常驻粒子特效（雪/雨/花瓣等；同名特效自动去重不叠加）,playparticle(RainEffect),,,,,,,,,,,,,,,
-stopparticle,stopparticle(effect),effect: 特效资源名（与 playparticle 参数一致）,停止粒子特效并延迟回收（停止发射，已发射粒子 5 秒飘完）,stopparticle(SnowEffect),,,,,,,,,,,,,,,
+playparticle,playparticle(effect),effect: 特效资源名（Particle 特效目录下的预制体）,播放常驻粒子特效（花瓣等；同名特效自动去重不叠加）,playparticle(Petal),,,,,,,,,,,,,,,
+stopparticle,stopparticle(effect),effect: 特效资源名（与 playparticle 参数一致）,停止粒子特效并延迟回收（停止发射，已发射粒子 5 秒飘完）,stopparticle(Petal),,,,,,,,,,,,,,,
 playanim,"playanim(anim, pos, loop)","anim: 动画资源名（Animation 目录下的预制体）
 pos: 显示位置（可选，默认 M）：L/ML/M/MR/R 槽位跟随、M(x,y) 槽位偏移、(x,y) 绝对坐标
 loop: 填 loop 则循环播放（用 stopanim 回收）",播放 Animator 动画特效（挂在特效层；loop 结尾缀名表循环播放）,"playanim(sparkle, M(10,-20), loop)",,,,,,,,,,,,,,,
 stopanim,stopanim(anim),anim: 动画资源名（与 playanim 第一个参数一致）,停止并回收 playanim 播放的动画,stopanim(sparkle),,,,,,,,,,,,,,,
+filter_vhs,"filter_vhs(intensity, duration)","intensity: 故障强度 0~1（可选，缺省 0.6）
+duration: 渐变秒数（可选，缺省用预设默认时长 0.5；0 = 立即生效）",VHS 模拟滤镜（行带抖动+色差+扫描线+胶片颗粒；只作用于剧场画面）,"filter_vhs(0.8, 1.5)",,,,,,,,,,,,,,,
+filter_fisheye,"filter_fisheye(strength, duration)","strength: 桶形畸变强度 0~2（可选，缺省 0.6）
+duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",鱼眼滤镜（桶形畸变；只作用于剧场画面）,"filter_fisheye(0.9)",,,,,,,,,,,,,,,
+filter_invert,"filter_invert(amount, duration)","amount: 反色量 0~1（可选，缺省 1 = 完全反色）
+duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",反色滤镜（只作用于剧场画面）,"filter_invert(0.5, 1)",,,,,,,,,,,,,,,
+filter_grayscale,"filter_grayscale(amount, duration)","amount: 去色量 0~1（可选，缺省 1 = 完全黑白）
+duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",黑白滤镜（Rec.709 亮度加权；只作用于剧场画面）,"filter_grayscale(1, 2)",,,,,,,,,,,,,,,
+filter_vignette,"filter_vignette(strength, radius, softness, duration)","strength: 暗角强度 0~1（可选，缺省 0.8）
+radius: 起点半径 0~1.5（可选，缺省 0.85）
+softness: 过渡柔和度 0.01~1（可选，缺省 0.4）
+duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",暗角滤镜（颜色恒为预设默认黑；只作用于剧场画面）,"filter_vignette(0.9, 0.8, 0.3, 1.5)",,,,,,,,,,,,,,,
+filter_pixelate,"filter_pixelate(pixelCount, duration)","pixelCount: 横向分块数 2~512（可选，缺省 96；越小越马赛克，分辨率无关）
+duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",像素化滤镜（只作用于剧场画面）,"filter_pixelate(16)",,,,,,,,,,,,,,,
+filter_chromatic,"filter_chromatic(amount, duration)","amount: RGB 径向色散量 0~0.05（可选，缺省 0.012）
+duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",色差滤镜（中心无色差、边缘最强；只作用于剧场画面）,"filter_chromatic(0.02, 1)",,,,,,,,,,,,,,,
+particle_snow,"particle_snow(intensity, duration)","intensity: 雪量 0~1（可选，缺省 0.6）
+duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",下雪天气粒子（代码生成粒子系统，位于特效层：剧场画面之上、对话框之下）,"particle_snow(0.8, 1.5)",,,,,,,,,,,,,,,
+particle_rain,"particle_rain(intensity, duration)","intensity: 雨量 0~1（可选，缺省 0.6）
+duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",下雨天气粒子（代码生成雨丝粒子，带 ≈10° 风斜；位于特效层）,"particle_rain(0.9, 1)",,,,,,,,,,,,,,,
+unsetparticle,"unsetparticle(name, duration)","name: 天气名（图编辑器下拉选择：rain/snow；all = 关闭全部天气粒子）
+duration: 衰减秒数（可选，缺省 0.5；0 = 立即移除）",关闭天气粒子（密度渐变衰减后移除；未激活时静默）,"unsetparticle(rain) 或 unsetparticle(all)",,,,,,,,,,,,,,,
+unsetfilter,"unsetfilter(name, duration)","name: 滤镜名（图编辑器下拉选择：内置 + 自定义预设；all = 关闭全部滤镜）
+duration: 淡出秒数（可选，缺省用预设默认时长 0.5；0 = 立即移除）",关闭画面滤镜（权重淡出后移除，画面恢复原始；未激活时静默）,"unsetfilter(vhs) 或 unsetfilter(all)",,,,,,,,,,,,,,,
 fadeBlackIn,fadeBlackIn(duration),duration: 淡入秒数（0.05-10）,黑幕淡入（阻塞至淡入完成；配合 fadeBlackOut 使用）,fadeBlackIn(0.5),,,,,,,,,,,,,,,
 fadeBlackOut,fadeBlackOut(duration),duration: 淡出秒数（0.05-10）,黑幕淡出（阻塞至淡出完成；配合 fadeBlackIn 使用）,fadeBlackOut(0.5),,,,,,,,,,,,,,,
 t_color,"t_color(r, g, b)","r: 红（0-255）

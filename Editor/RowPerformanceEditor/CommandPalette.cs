@@ -135,6 +135,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 VNCommandCategory.System,
                 VNCommandCategory.Performance,
+                VNCommandCategory.VFX,
                 VNCommandCategory.Audio,
                 VNCommandCategory.Logic,
                 VNCommandCategory.Flow,
@@ -299,6 +300,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 case VNCommandCategory.System:      return new Color(0.29f, 0.56f, 0.85f);
                 case VNCommandCategory.Performance: return new Color(0.61f, 0.58f, 0.70f);
+                case VNCommandCategory.VFX:         return new Color(0.30f, 0.70f, 0.74f);
                 case VNCommandCategory.Flow:        return new Color(0.80f, 0.48f, 0.16f);
                 case VNCommandCategory.Logic:       return new Color(0.37f, 0.66f, 0.54f);
                 case VNCommandCategory.Audio:       return new Color(0.78f, 0.50f, 0.66f);
@@ -312,6 +314,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 case VNCommandCategory.System:      return "系统命令";
                 case VNCommandCategory.Performance: return "演出命令";
+                case VNCommandCategory.VFX:         return "视效命令";
                 case VNCommandCategory.Flow:        return "流程命令(仅链尾)";
                 case VNCommandCategory.Logic:       return "逻辑与变量";
                 case VNCommandCategory.Audio:       return "音频";
