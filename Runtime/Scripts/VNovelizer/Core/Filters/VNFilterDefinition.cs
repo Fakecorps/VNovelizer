@@ -54,24 +54,15 @@ namespace VNovelizer.Core.Filters
     }
 
     /// <summary>
-    /// 画面滤镜预设（ScreenFilterSystem 的扩展资产）。
+    /// 画面滤镜预设资产（历史遗留，2026-10-23 起不再被自动扫描）。
     ///
     /// <para>
-    /// 滤镜 = Shader + 参数默认值。内置 7 款由 <see cref="VNFilterLibrary"/> 代码注册，
-    /// 用户可用 CreateAssetMenu 自建预设资产（新预设会经 Addressables 类别自动被加载）。
-    /// 注意：2026-10-21 起命令层已移除通用 <c>setfilter</c>——内置滤镜使用逐滤镜命令
-    /// （filter_vhs / filter_fisheye 等，可调参数），<c>unsetfilter</c> 的 name 下拉仍会
-    /// 列出本预设供关闭。
-    /// </para>
-    ///
-    /// <para>
-    /// <b>Shader 契约（必须遵守，见 Docs/VNScreenFilterSystem.md）</b>：
-    /// ① 采样输入纹理 <c>_MainTex</c>；② 实现全局混合权重 <c>_Weight</c>（0=无效果，1=满效果，
-    /// 管理器每帧写入，滤镜命令的渐变/中断都依赖它）；③ 圆形效果可用 <c>_Aspect</c>
-    /// （屏幕宽高比，管理器每帧写入）；④ Built-in 兼容写法（无 RenderPipeline tag）。
+    /// VFX 注册表扩展后，滤镜的唯一入口是 VNProjectConfig.VFXFilterRegistry
+    /// （Project Settings → VNovelizer → VFX），本类保留仅为防止旧工程中的预设资产
+    /// 出现 Missing Script（不再提供 CreateAssetMenu，也不再被 VNFilterLibrary 扫描加载）。
+    /// 新建自定义滤镜请直接在 VFX 设置页的滤镜注册表拖入 Shader，经 filtercustom 命令使用。
     /// </para>
     /// </summary>
-    [CreateAssetMenu(fileName = "VNFilterDefinition", menuName = "VNovelizer/画面滤镜预设")]
     public class VNFilterDefinition : ScriptableObject
     {
         /// <summary>滤镜逻辑名（unsetfilter 命令引用；大小写不敏感唯一；不支持逗号/括号/空格）</summary>

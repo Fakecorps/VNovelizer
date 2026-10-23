@@ -8,25 +8,26 @@ using VNovelizer.Core.Weather;
 namespace VNovelizer.Core.Commands
 {
     /// <summary>
-    /// 关闭天气粒子命令：unsetparticle(name[, duration])
+    /// 关闭粒子特效命令：unsetparticle(name[, duration])（唯一生命周期命令，VFX 注册表扩展 2026-10-23）
     ///
     /// <para>
-    /// name = 天气名（rain/snow）；特殊值 <c>all</c> = 关闭全部天气粒子。
-    /// duration = 密度衰减秒数（可选；缺省 0.5，0 = 立即移除）。
-    /// 密度渐变衰减到 0 后销毁粒子系统；未激活时幂等静默。
+    /// name = VFX 注册表粒子条目名（内置 rain/snow 或自定义 Prefab 条目；
+    /// 下拉候选 = 注册表启用条目 + all）；特殊值 <c>all</c> = 关闭全部粒子特效。
+    /// duration = 强度衰减秒数（可选；缺省 = 注册表条目默认时长，0 = 立即移除）。
+    /// 强度渐变衰减到 0 后销毁粒子系统；未激活时幂等静默。
     /// </para>
     ///
     /// <para>语义：Execute/Simulate/Interrupt = 立即移除（快进/中断画面一致）；
     /// ExecuteAsync 等待衰减时长后返回（保持 &amp; 时序）。</para>
     /// </summary>
     [VNCommandMeta(VNCommandCategory.VFX,
-        "关闭天气粒子（密度渐变衰减后移除）；name=all 关闭全部天气粒子")]
+        "关闭粒子特效（强度渐变衰减后移除）；name=all 关闭全部粒子特效")]
     public class UnsetParticleCommand : VNCommand
     {
         [VNParam(0, "name", VNParamType.WeatherParticleName,
-            Description = "天气名（rain/snow；all = 关闭全部）")]
+            Description = "注册表粒子条目名（内置 rain/snow 或自定义条目；all = 关闭全部）")]
         [VNParam(1, "duration", VNParamType.Float, Min = 0f, Max = 10f, Optional = true,
-            Description = "衰减秒数（缺省 = 0.5；0 = 立即移除）")]
+            Description = "衰减秒数（缺省 = 注册表条目默认时长；0 = 立即移除）")]
         public override string CommandName { get { return "unsetparticle"; } }
 
         // 多实例并行支持：衰减等待中的天气名清单（Interrupt 时逐个立即移除）
@@ -47,7 +48,7 @@ namespace VNovelizer.Core.Commands
             if (string.IsNullOrEmpty(name)) yield break;
 
             float duration = ParseDuration(args);
-            if (duration < 0f) duration = 0.5f;
+            if (duration < 0f) duration = WeatherParticleManager.GetDefaultDuration(name);
 
             WeatherParticleManager.EnsureInstance();
             _pending.Add(name);

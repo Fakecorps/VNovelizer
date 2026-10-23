@@ -253,7 +253,7 @@ public class CameraState
 
 | 现有特效 | 旧实现（淘汰） | 新实现 |
 |---|---|---|
-| `playparticle` / `stopparticle` | ~~UIParticle + effectLayer~~ | 世界空间 `ParticleSystem` |
+| `playparticle` / `stopparticle` | ~~UIParticle + effectLayer~~ | 世界空间 `ParticleSystem`（**2026-10-23 VFX 注册表扩展已删除，见 VNScreenFilterSystem.md**） |
 | `playanim` | ~~帧动画 Image 序列~~ | 世界空间 quad 序列 |
 | `playvideo` | ~~RawImage~~ | 世界空间 quad + VideoPlayer |
 | 全屏滤镜（鱼眼/VHS/反色/黑白/暗角/像素化/色差） | 无 | 逐滤镜命令 `filter_vhs` / `filter_fisheye` / `filter_invert` / `filter_grayscale` / `filter_vignette` / `filter_pixelate` / `filter_chromatic` + `unsetfilter` + `ScreenFilterManager`（RT 捕获 + 全屏 RawImage 滤镜层，见 Docs/VNScreenFilterSystem.md） |
@@ -372,7 +372,7 @@ public GameObject customSceneCameraPrefab;   // 自定义场景相机（预挂�
 
 | 任务 | 说明 |
 |---|---|
-| `playparticle/stopparticle` | 世界空间 `ParticleSystem` + 内置特效预制体更新（B5） |
+| `playparticle/stopparticle` | 世界空间 `ParticleSystem` + 内置特效预制体更新（B5）——**2026-10-23 已删除，粒子特效改走 VFX 注册表 + particlecustom** |
 | `playanim` | 世界空间 quad 帧序列 |
 | `playvideo` | 世界空间 quad + VideoPlayer |
 

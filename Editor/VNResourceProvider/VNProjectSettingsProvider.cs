@@ -22,7 +22,7 @@ internal class VNProjectSettingsProvider : SettingsProvider
     private Editor _editor;
     private VNProjectConfig _config;
 
-    private enum SubPage { Resources, Localization, Security, Theater, UIPrefabs }
+    private enum SubPage { Resources, Localization, Security, Theater, UIPrefabs, Vfx }
     private SubPage _currentPage = SubPage.Resources;
 
     private static readonly string[] PageLabels =
@@ -31,7 +31,8 @@ internal class VNProjectSettingsProvider : SettingsProvider
         "本地化 / Localization",
         "加密 / Security",
         "剧场 / Theater",
-        "UI 模板 / UI Prefabs"
+        "UI 模板 / UI Prefabs",
+        "VFX / VFX"
     };
 
     private VNProjectSettingsProvider(string path, SettingsScope scope = SettingsScope.Project)
@@ -132,6 +133,7 @@ internal class VNProjectSettingsProvider : SettingsProvider
             case SubPage.Security:     DrawSecurityPage();     break;
             case SubPage.Theater:      DrawTheaterPage();      break;
             case SubPage.UIPrefabs:    DrawUIPrefabsPage();    break;
+            case SubPage.Vfx:          DrawVfxPage();          break;
         }
 
         if (EditorGUI.EndChangeCheck())
@@ -161,7 +163,7 @@ internal class VNProjectSettingsProvider : SettingsProvider
             MessageType.Info);
         DrawFields(
             "VNScriptResPath", "BackgroundResPath", "VideoResPath", "CharacterResPath",
-            "ParticalEffectPath", "AnimationPath",
+            "ParticalEffectPath", "AnimationPath", "FilterResPath", "ParticleResPath",
             "BgmResPath", "SFXResPath", "VoiceResPath");
     }
 
@@ -653,6 +655,234 @@ internal class VNProjectSettingsProvider : SettingsProvider
         }
     }
 
+    // ==================== 八、VFX 特效注册表 ====================
+
+    /// <summary>
+    /// VFX 页：滤镜注册表 + 粒子注册表（手动真源，唯一入口）。
+    /// 【2026-10-23 减法重构】删除一切自动预填/自愈调度——本页只渲染列表，
+    /// 内置条目由下方显式按钮恢复，其余全部由用户手动增删改。
+    /// </summary>
+    private void DrawVfxPage()
+    {
+        EditorGUILayout.LabelField("特效注册表（VFX Registry）", EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox(
+            "注册表是滤镜/粒子特效的<b>唯一入口</b>：只有列在这里的条目才能被命令使用。\n" +
+            "· 滤镜条目：id + Shader（拖入即可用）。\n" +
+            "· 粒子条目：id + Prefab（需挂 VN_Particle 组件）。\n" +
+            "· 自定义条目经 filtercustom(id,…) / particlecustom(id,…) 使用；\n" +
+            "  filter_vhs 等内置专用命令依赖同名注册表条目（删除后命令会警告\u201c未注册\u201d）。\n" +
+            "· 注册表为空时点下方按钮恢复内置条目（唯一入口，绝不自动补填）。",
+            MessageType.Info);
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("恢复内置条目（7 滤镜 + rain/snow）", GUILayout.Width(240)))
+            {
+                VNVfxRegistryPrefiller.RestoreBuiltins(_config);
+                EditorUtility.SetDirty(_config);
+            }
+        }
+
+        EditorGUILayout.Space(6);
+        DrawFilterRegistrySection();
+        EditorGUILayout.Space(8);
+        DrawParticleRegistrySection();
+    }
+
+    /// <summary>滤镜注册表列表：启用开关 + id + 显示名 + Shader + 默认时长 + 删除</summary>
+    private void DrawFilterRegistrySection()
+    {
+        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+        EditorGUILayout.LabelField("滤镜注册表", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("filter_vhs / filter_fisheye / …（内置专用）与 filtercustom(id,…) 均按本表解析 id。",
+            EditorStyles.miniLabel);
+
+        var so = new SerializedObject(_config);
+        so.Update();
+        var list = so.FindProperty("VFXFilterRegistry");
+        if (list == null)
+        {
+            EditorGUILayout.EndVertical();
+            return;
+        }
+
+        int deleteIndex = -1;
+        for (int i = 0; i < list.arraySize; i++)
+        {
+            var item = list.GetArrayElementAtIndex(i);
+            var idProp = item.FindPropertyRelative("Id");
+            var nameProp = item.FindPropertyRelative("DisplayName");
+            var shaderProp = item.FindPropertyRelative("Shader");
+            var durationProp = item.FindPropertyRelative("DefaultDuration");
+            var enabledProp = item.FindPropertyRelative("Enabled");
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PropertyField(enabledProp, GUIContent.none, GUILayout.Width(18));
+            EditorGUILayout.LabelField("id", EditorStyles.miniLabel, GUILayout.Width(20));
+            EditorGUILayout.PropertyField(idProp, GUIContent.none, GUILayout.MinWidth(70));
+            EditorGUILayout.LabelField("显示名", EditorStyles.miniLabel, GUILayout.Width(36));
+            EditorGUILayout.PropertyField(nameProp, GUIContent.none, GUILayout.MinWidth(60));
+            EditorGUILayout.LabelField("Shader", EditorStyles.miniLabel, GUILayout.Width(40));
+            EditorGUILayout.PropertyField(shaderProp, GUIContent.none, GUILayout.MinWidth(120));
+            EditorGUILayout.LabelField("时长", EditorStyles.miniLabel, GUILayout.Width(28));
+            EditorGUILayout.PropertyField(durationProp, GUIContent.none, GUILayout.Width(44));
+            if (GUILayout.Button("−", GUILayout.Width(24))) deleteIndex = i;
+            EditorGUILayout.EndHorizontal();
+        }
+
+        if (deleteIndex >= 0)
+        {
+            string deletedId = list.GetArrayElementAtIndex(deleteIndex).FindPropertyRelative("Id")?.stringValue ?? "";
+            list.DeleteArrayElementAtIndex(deleteIndex);
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(_config);
+            if (!string.IsNullOrEmpty(deletedId))
+                Debug.Log($"[VNovelizer] 已从 VFX 滤镜注册表删除条目 '{deletedId}'（对应命令将警告未注册）");
+        }
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("＋ 添加滤镜条目", GUILayout.Width(130)))
+            {
+                int n = list.arraySize;
+                list.arraySize = n + 1;
+                var item = list.GetArrayElementAtIndex(n);
+                item.FindPropertyRelative("Id").stringValue = UniqueId(list, "filter_custom", n);
+                item.FindPropertyRelative("DisplayName").stringValue = "";
+                item.FindPropertyRelative("Shader").objectReferenceValue = null;
+                item.FindPropertyRelative("DefaultDuration").floatValue = 0.5f;
+                item.FindPropertyRelative("Enabled").boolValue = true;
+                so.ApplyModifiedProperties();
+                EditorUtility.SetDirty(_config);
+            }
+        }
+
+        // 重复 id 校验提示
+        DrawDuplicateIdWarning(list);
+
+        so.ApplyModifiedProperties();
+        EditorGUILayout.EndVertical();
+    }
+
+    /// <summary>粒子注册表列表：启用开关 + id + 显示名 + Prefab + 默认时长 + 删除 + 从模板创建</summary>
+    private void DrawParticleRegistrySection()
+    {
+        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+        EditorGUILayout.LabelField("粒子注册表", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("particle_rain / particle_snow / particlecustom(id,…) 均按本表解析 id；unsetparticle 是唯一生命周期命令。",
+            EditorStyles.miniLabel);
+
+        var so = new SerializedObject(_config);
+        so.Update();
+        var list = so.FindProperty("VFXParticleRegistry");
+        if (list == null)
+        {
+            EditorGUILayout.EndVertical();
+            return;
+        }
+
+        int deleteIndex = -1;
+        for (int i = 0; i < list.arraySize; i++)
+        {
+            var item = list.GetArrayElementAtIndex(i);
+            var idProp = item.FindPropertyRelative("Id");
+            var nameProp = item.FindPropertyRelative("DisplayName");
+            var prefabProp = item.FindPropertyRelative("Prefab");
+            var durationProp = item.FindPropertyRelative("DefaultDuration");
+            var enabledProp = item.FindPropertyRelative("Enabled");
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PropertyField(enabledProp, GUIContent.none, GUILayout.Width(18));
+            EditorGUILayout.LabelField("id", EditorStyles.miniLabel, GUILayout.Width(20));
+            EditorGUILayout.PropertyField(idProp, GUIContent.none, GUILayout.MinWidth(70));
+            EditorGUILayout.LabelField("显示名", EditorStyles.miniLabel, GUILayout.Width(36));
+            EditorGUILayout.PropertyField(nameProp, GUIContent.none, GUILayout.MinWidth(60));
+            EditorGUILayout.LabelField("Prefab", EditorStyles.miniLabel, GUILayout.Width(42));
+            EditorGUILayout.PropertyField(prefabProp, GUIContent.none, GUILayout.MinWidth(120));
+            EditorGUILayout.LabelField("时长", EditorStyles.miniLabel, GUILayout.Width(28));
+            EditorGUILayout.PropertyField(durationProp, GUIContent.none, GUILayout.Width(44));
+            if (GUILayout.Button("−", GUILayout.Width(24))) deleteIndex = i;
+            EditorGUILayout.EndHorizontal();
+        }
+
+        if (deleteIndex >= 0)
+        {
+            string deletedId = list.GetArrayElementAtIndex(deleteIndex).FindPropertyRelative("Id")?.stringValue ?? "";
+            list.DeleteArrayElementAtIndex(deleteIndex);
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(_config);
+            if (!string.IsNullOrEmpty(deletedId))
+                Debug.Log($"[VNovelizer] 已从 VFX 粒子注册表删除条目 '{deletedId}'（对应命令将警告未注册）");
+        }
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("从模板创建粒子…", GUILayout.Width(150)))
+                VNParticleTemplateCreator.ShowCreateMenu(_config);
+            if (GUILayout.Button("＋ 添加粒子条目", GUILayout.Width(130)))
+            {
+                int n = list.arraySize;
+                list.arraySize = n + 1;
+                var item = list.GetArrayElementAtIndex(n);
+                item.FindPropertyRelative("Id").stringValue = UniqueId(list, "particle_custom", n);
+                item.FindPropertyRelative("DisplayName").stringValue = "";
+                item.FindPropertyRelative("Prefab").objectReferenceValue = null;
+                item.FindPropertyRelative("DefaultDuration").floatValue = 0.5f;
+                item.FindPropertyRelative("Enabled").boolValue = true;
+                so.ApplyModifiedProperties();
+                EditorUtility.SetDirty(_config);
+            }
+        }
+
+        DrawDuplicateIdWarning(list);
+
+        so.ApplyModifiedProperties();
+        EditorGUILayout.EndVertical();
+    }
+
+    /// <summary>注册表内 id 重复检测：有重复时黄条提示（运行时按 id 查找，重复条目语义模糊）</summary>
+    private static void DrawDuplicateIdWarning(SerializedProperty list)
+    {
+        if (list == null) return;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var duplicates = new List<string>();
+        for (int i = 0; i < list.arraySize; i++)
+        {
+            string id = (list.GetArrayElementAtIndex(i).FindPropertyRelative("Id")?.stringValue ?? "").Trim();
+            if (id.Length == 0) continue;
+            if (!seen.Add(id) && !duplicates.Contains(id)) duplicates.Add(id);
+        }
+        if (duplicates.Count > 0)
+            EditorGUILayout.HelpBox("id 重复：" + string.Join(", ", duplicates) + "（运行时按 id 查找，请保持唯一）", MessageType.Warning);
+    }
+
+    /// <summary>生成不与现有条目冲突的唯一 id（base + 递增序号）</summary>
+    private static string UniqueId(SerializedProperty list, string baseId, int excludeIndex)
+    {
+        string candidate = baseId;
+        int suffix = 1;
+        while (true)
+        {
+            bool conflict = false;
+            for (int i = 0; i < list.arraySize; i++)
+            {
+                if (i == excludeIndex) continue;
+                string existing = list.GetArrayElementAtIndex(i).FindPropertyRelative("Id")?.stringValue ?? "";
+                if (string.Equals(existing, candidate, StringComparison.OrdinalIgnoreCase))
+                {
+                    conflict = true;
+                    break;
+                }
+            }
+            if (!conflict) return candidate;
+            suffix++;
+            candidate = baseId + "_" + suffix;
+        }
+    }
+
     /// <summary>通过 SerializedObject 按字段名渲染（保持只读与可编辑语义一致）</summary>
     private void DrawFields(params string[] fieldNames)
     {
@@ -712,6 +942,10 @@ internal class VNProjectSettingsProvider : SettingsProvider
         var csvFolder = AssetDatabase.LoadAssetAtPath<DefaultAsset>(VNProjectPaths.ScriptsFolder);
         if (excelFolder != null) config.ExcelSourceFolder = excelFolder;
         if (csvFolder != null) config.CsvOutputFolder = csvFolder;
+
+        // 【2026-10-23 减法重构】首次创建资产不再自动预填 VFX 注册表——
+        // 内置条目由 VFX 设置页「恢复内置条目」按钮显式恢复。
+
         EditorUtility.SetDirty(config);
         AssetDatabase.SaveAssets();
 

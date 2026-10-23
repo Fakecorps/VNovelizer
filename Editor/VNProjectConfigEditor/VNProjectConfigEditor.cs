@@ -193,6 +193,33 @@ public class VNProjectConfigEditor : Editor
             card.Add(createButton);
         }
 
+        // "八、VFX（特效注册表）"分组：头部注入"从模板创建粒子…"按钮
+        // （复制内置 rain/snow 预制体模板 + 追加粒子注册表条目）
+        if (title.Contains("VFX"))
+        {
+            var hint = new Label("注册表是滤镜/粒子特效的唯一入口：只有列出的条目才能被命令使用。内置条目可禁用/删除；自定义粒子请点击下方按钮从内置模板复制副本后魔改（经 particlecustom 使用）。")
+            {
+                style =
+                {
+                    whiteSpace = UnityEngine.UIElements.WhiteSpace.Normal,
+                    marginBottom = 4f,
+                    color = new Color(0.7f, 0.7f, 0.7f, 1f),
+                }
+            };
+            card.Add(hint);
+
+            var createParticleButton = new Button(() =>
+            {
+                var config = target as VNProjectConfig;
+                if (config != null) VNParticleTemplateCreator.ShowCreateMenu(config);
+            })
+            {
+                text = "从模板创建粒子…",
+                style = { marginBottom = 6f },
+            };
+            card.Add(createParticleButton);
+        }
+
         foreach (var member in members)
         {
             var prop = serializedObject.FindProperty(member.Name);

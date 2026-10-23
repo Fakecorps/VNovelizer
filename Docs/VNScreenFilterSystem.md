@@ -1,6 +1,8 @@
 # VNovelizer 画面滤镜系统（ScreenFilterSystem）
 
 > 设计定稿：2026-10-21。方案拍板记录：作用域=只滤剧场画面（UI 豁免）；调用=逐滤镜命令 `filter_xxx`（7 款内置，参数可独立调节）+ `unsetfilter` + 自定义 `VNFilterDefinition` 预设资产；首期内置 7 款；叠加=栈式（ping-pong Blit 链）。设计动因与选型对比见本文 §1。
+>
+> **VFX 注册表扩展 2026-10-23**：滤镜与粒子统一改为**注册表驱动**（`VNProjectConfig.VFXFilterRegistry` / `VFXParticleRegistry`，Project Settings → VNovelizer → VFX 手动维护，唯一入口）。新增 `filtercustom(id[,strength[,duration]])` / `particlecustom(id[,intensity[,duration]])`；`playparticle`/`stopparticle` 删除（`unsetparticle` 为唯一粒子生命周期命令）；`VNFilterLibrary` 代码注册与 `VNFilterDefinition` 资产扫描废弃；rain/snow 封装为挂 `VN_Particle` 组件的预制体（内置模板 + 「从模板创建」复制魔改）。
 
 ## 1. 设计动机与选型
 
@@ -15,9 +17,9 @@ VNovelizer 画面 = 世界空间 3D 舞台（背景/立绘 `MeshActor`、L2D 网
 
 最终架构（三层）：
 
-1. **数据层** `VNFilterDefinition`（ScriptableObject 预设：FilterId + Shader + 参数默认值 + 默认时长）+ `VNFilterLibrary`（内置注册表 + 用户资产加载 + shader 双兜底解析）。
+1. **数据层（VFX 注册表）** `VNProjectConfig.VFXFilterRegistry`（条目 = id + 显示名 + Shader 直接引用 + 默认时长 + 启用开关）——**手动真源、唯一入口**：只有列出的条目才能被命令使用，条目删除/禁用 → 命令警告"未注册"。内置 7 款由编辑器预填（首次创建配置资产 / 打开 VFX 设置页自愈，幂等）。`VNFilterLibrary` 转为注册表访问层（shader 解析 = 条目直接引用 + 内置名称表 Shader.Find/Resources.Load 零配置兜底）；旧 `VNFilterDefinition` 预设资产不再扫描（类保留防 Missing Script）。
 2. **运行时** `ScreenFilterManager`（MonoBehaviour 单例）：RT 捕获 → 每帧 ping-pong Blit 链（栈式叠加、权重渐变）→ 最终 RT 交给 `VN_EffectCanvas`（sortingOrder=5）下的全屏 RawImage。该层位于剧场画面之上、Gameplay 对话框(10)之下，因此**滤镜只作用于剧场画面，对话框等 UI 保持清晰**（与官方 camerafx 规划的作用域一致；`VNTheaterRefactoring.md` §4.5 已说明"转场只作用于剧场层"是同一哲学）。
-3. **命令层** `filter_vhs` / `filter_fisheye` / `filter_invert` / `filter_grayscale` / `filter_vignette` / `filter_pixelate` / `filter_chromatic`（7 款内置逐滤镜命令，`VFXCommands/`）+ `unsetfilter`（关闭滤镜，同属「视效命令」分类；反射自动注册 + `[VNParam]` 编辑器元数据）。
+3. **命令层** `filter_vhs` / `filter_fisheye` / `filter_invert` / `filter_grayscale` / `filter_vignette` / `filter_pixelate` / `filter_chromatic`（7 款内置逐滤镜命令，参数默认值留命令类，`VFXCommands/`）+ `filtercustom`（任意注册表条目，strength 只乘整体 `_Weight`）+ `unsetfilter`（关闭滤镜，同属「视效命令」分类；反射自动注册 + `[VNParam]` 编辑器元数据）。
 
 ## 2. 命令
 
@@ -36,20 +38,27 @@ VNovelizer 画面 = 世界空间 3D 舞台（背景/立绘 `MeshActor`、L2D 网
 | `filter_chromatic` | `filter_chromatic([amount[, duration]])` | `amount` RGB 径向色散量 0~0.05（0.012，中心无色差边缘最强） |
 
 - 中间参数可跳空（`filter_vignette(,,0.5,2)` = 仅覆盖 softness 与 duration），空段自动取预设默认。
-- `duration` = 渐变秒数，缺省用预设默认时长（0.5），0 = 立即生效。
+- `duration` = 渐变秒数，缺省用注册表条目默认时长（内置 0.5），0 = 立即生效。
 
-### 2.2 unsetfilter
+### 2.2 filtercustom（VFX 注册表扩展 2026-10-23）
 
 | 命令 | 语法 | 语义 |
 |---|---|---|
-| `unsetfilter` | `unsetfilter(name[, duration])` | 关闭滤镜：权重 1→0 淡出后移除条目并销毁材质；`name=all` 关闭全部；未激活时幂等静默。`name` 在图编辑器为纯下拉选择（候选 = 内置 + 用户预设 + `all`），归类「视效命令」 |
+| `filtercustom` | `filtercustom(id[, strength[, duration]])` | 开启注册表任意滤镜条目（含用户拖入的自定义 Shader 滤镜）。`strength`（0~1，缺省 1）= 整体强弱，**只乘全局混合权重 `_Weight`，不暴露单个 shader 参数**（shader 属性取资产默认值）；`duration` 缺省用注册表条目默认时长。重复开启幂等（渐变到目标权重并刷新），归类「视效命令」 |
+
+### 2.3 unsetfilter
+
+| 命令 | 语法 | 语义 |
+|---|---|---|
+| `unsetfilter` | `unsetfilter(name[, duration])` | 关闭滤镜：权重 1→0 淡出后移除条目并销毁材质；`name=all` 关闭全部；未激活时幂等静默。`name` 在图编辑器为纯下拉选择（候选 = 注册表启用条目 + `all`），归类「视效命令」 |
 
 > **变更记录 2026-10-21**：通用 `setfilter` 命令已移除（拆分动机见 §2.1 逐滤镜命令的引入）。
-> 旧剧本中的 `setfilter(name, duration)` 请替换为对应 `filter_xxx(...)`；已创建的自定义
-> `VNFilterDefinition` 预设资产仍被 `VNFilterLibrary` 扫描（`unsetfilter` 下拉可关闭），
-> 其开启方式未来再补。
+> **变更记录 2026-10-23（VFX 注册表扩展）**：滤镜唯一入口改为 VFX 注册表（Project Settings →
+> VNovelizer → VFX）。自定义 shader 滤镜直接拖入注册表条目，经 `filtercustom(id,…)` 使用；
+> 旧 `VNFilterDefinition` 预设资产不再被扫描（如需继续使用请把其 Shader 拖入注册表新建条目）。
+> 删除/禁用注册表条目后，对应 `filter_xxx`/`filtercustom` 命令会警告"未注册"。
 
-- `name` 大小写不敏感。内置：`fisheye` `vhs` `invert` `grayscale` `vignette` `pixelate` `chromatic`；自定义预设用其 `FilterId`。
+- `name` 大小写不敏感。内置：`fisheye` `vhs` `invert` `grayscale` `vignette` `pixelate` `chromatic`；自定义条目用其注册表 `id`。
 - **命令语义**（与 charscale/bgtrans 同构）：`Execute`（同步/快进语境）= 立即到终态；`Simulate`（快进/读档重建）= 立即到终态，保证重建画面与真实播放一致；`Interrupt`（点击跳过）= 瞬间终态；`ExecuteAsync` 等待渐变时长后返回（保持 `&`/`->` 时序）。
 - 生命周期：滤镜是**持久视觉状态**，持续到 `unsetfilter`/`all`/剧场清场（`TheaterManager.ClearTheater` → `ScreenFilterManager.ResetAllFilters()`：回到主菜单/结束演出即复位）。**不入存档**（瞬态演出状态，与 shake 同级；读档经 Simulate 重建）。
 
@@ -65,16 +74,17 @@ VNovelizer 画面 = 世界空间 3D 舞台（背景/立绘 `MeshActor`、L2D 网
 | `pixelate` | 像素化 | `_PixelCount` 96（2..512） | 横向分块数，分辨率无关 |
 | `chromatic` | 色差 | `_Amount` 0.012（0..0.05） | R/B 径向色散，中心无色差 |
 
-### 3.1 天气粒子（particle_snow / particle_rain）
+### 3.1 粒子特效（particle_snow / particle_rain / particlecustom）
 
 > **变更记录 2026-10-22**：雪/雨从天气滤镜改回**代码生成的粒子系统**（`WeatherParticleFactory` + `WeatherParticleManager`：运行时纯代码构建 ParticleSystem + UIParticle，零美术资源）。`filter_snow`/`filter_rain` 命令、`VNFilterSnow/Rain.shader` 与 `WeatherFilterMap` 兼容映射已全部删除——旧剧本中的 `filter_snow/filter_rain` 会报"未找到命令"、`playparticle(SnowEffect/RainEffect)` 会报找不到资源，请改用 `particle_snow`/`particle_rain`。
+> **变更记录 2026-10-23（VFX 注册表扩展）**：rain/snow 封装为**挂 `VN_Particle` 组件的预制体**并预填进 `VFXParticleRegistry`；运行时走"注册表条目 → 预制体实例化 → `VN_Particle.SetIntensity`"链路（零配置临时实例保留代码构建兜底）。`playparticle`/`stopparticle` 已删除（`unsetparticle` 是唯一生命周期命令）；新增 `particlecustom(id[,intensity[,duration]])` 使用任意注册表条目（含用户自建 Prefab）。
 
-- 命令入口：`particle_snow([intensity[, duration]])` / `particle_rain([intensity[, duration]])`（intensity = 雪/雨量 0~1 缺省 0.6，映射到粒子发射率与亮度；duration = 渐变秒数缺省 0.5，0 = 立即）；关闭用 `unsetparticle(snow|rain)` 或 `unsetparticle(all)`。重复开启幂等（渐变到目标强度并刷新）。
-- 视觉层级：天气粒子挂在 **VN_EffectCanvas 的 EffectLayer**（sortingOrder=5）——剧场画面之上、滤镜层之上（VHS 等画面滤镜不会扭曲天气）、对话框之下，即"在场景里"，对话与 UI 粒子保持清晰。
-- 实现：`WeatherParticleFactory` 纯代码构建——雪 = 软圆点慢速飘落（80~180 px/s）+ 位置噪声风摆 + 出生/消亡淡入淡出；雨 = 长条雨丝（3×70~110px）高速下落（950~1500 px/s）+ ≈10° 风斜 ±3° 抖动；Box 发射区覆盖画布 + 四周边距；贴图 = 引擎内置 Default-Particle 软圆点，无任何美术资产依赖。`WeatherParticleManager` 懒单例：强度渐变 = lerp 发射率与亮度（unscaledTime），衰减到 0 后销毁条目，随剧场清场（ClearTheater → ResetAll）复位。
+- 命令入口：`particle_snow([intensity[, duration]])` / `particle_rain([intensity[, duration]])` / `particlecustom(id[, intensity[, duration]])`（intensity = 强度 0~1 缺省 0.6，映射到粒子发射率与亮度；duration = 渐变秒数，缺省 = 注册表条目默认时长 0.5，0 = 立即）；关闭用 `unsetparticle(条目id)` 或 `unsetparticle(all)`。重复开启幂等（渐变到目标强度并刷新）。内置命令 `particle_snow`/`particle_rain` 按注册表 id（snow/rain）解析——条目被删除/禁用后命令警告"未注册"。
+- 视觉层级：粒子特效挂在 **VN_EffectCanvas 的 EffectLayer**（sortingOrder=5）——剧场画面之上、滤镜层之上（VHS 等画面滤镜不会扭曲天气）、对话框之下，即"在场景里"，对话与 UI 粒子保持清晰。
+- 实现：`VN_Particle` 组件契约（挂预制体上）——`Awake` 自愈 Normalize（全屏 RectTransform / 自动补挂 UIParticle / 启动播放）+ `SetIntensity(float)` 强度抽象（发射率 × 强度 + 亮度 alpha 调制），管理器只认该接口。内置预制体构建源 = `WeatherParticleFactory`（雪 = 软圆点慢速飘落 + 位置噪声风摆；雨 = 长条雨丝 3×70~110px 高速下落 950~1500 px/s + ≈10° 风斜 ±3° 抖动；Box 发射区覆盖画布 + 四周边距；贴图 = 引擎内置 Default-Particle 软圆点）。编辑器侧 `VNWeatherParticleGenerator` 经 PrefabUtility 落盘：包内模板 `Runtime/PackageDefault/VNovelizerRes/VFX/Particles/`（随包分发、GUID 注册只读），缺失时生成到 `Assets/VNovelizer/VFX/Particles/`；「从模板创建粒子…」按钮复制模板到自选位置供魔改并追加注册表条目。`WeatherParticleManager` 懒单例：强度渐变 = `VN_Particle.SetIntensity` lerp（unscaledTime），衰减到 0 后销毁条目，随剧场清场（ClearTheater → ResetAll）复位。
 - 语义（与 filter 命令族同构）：Execute/Simulate/Interrupt = 立即终态；ExecuteAsync 等待渐变（保持 `&` 时序）；不入存档（快进/读档经 Simulate 重建终态）。
 
-内置定义是**代码注册**（`VNFilterLibrary.BuiltinFilters`，运行时 ScriptableObject 实例，非打包资产）——任何资源模式（Addressables / Resources 存量项目）都可用，无需重新跑初始化向导。用户自定义预设（SO 资产）同名覆盖内置。
+内置条目由编辑器预填（首次创建配置资产 / 打开 VFX 设置页自愈，幂等；可禁用/可删）；零配置（未创建持久配置资产）场景由临时实例预填 + 运行时兜底保证开箱即用。
 
 ## 4. 运行时架构（ScreenFilterManager）
 
@@ -106,24 +116,26 @@ VN_EffectCanvas（sortingOrder=5）
    - `_Aspect` = 屏幕宽高比（管理器每帧写入；圆形效果用 `uv-0.5` 后 `x *= _Aspect` 校正）。
 2. **写法**：唯一 SubShader、Built-in 兼容 CGPROGRAM、**无 `RenderPipeline` tag**（URP 走官方兼容路径；加 URP tag 不 include Core.hlsl 会编译失败——BGTransition 实测教训）；`Cull Off / ZWrite Off / ZTest Always`。
 3. **存放**：`Runtime/Resources/FilterShaders/`（包内 Resources 保证进构建）；命名 `VNFilter{名称}.shader` / Shader 名 `VNovelizer/Filters/{名称}`。
-4. **加载**：内置走 `Shader.Find("VNovelizer/Filters/...")` → `Resources.Load<Shader>("FilterShaders/...")` 双兜底；用户预设资产直接引用 Shader 字段。
+4. **加载（VFX 注册表扩展后）**：注册表条目直接引用 Shader 字段；零配置（条目 Shader 为空的内置条目）走 `Shader.Find("VNovelizer/Filters/...")` → `Resources.Load<Shader>("FilterShaders/...")` 双兜底。
 
-## 6. 如何新增滤镜
+## 6. 如何新增滤镜（VFX 注册表扩展后）
 
-**方式 A：用户自定义预设（推荐，无需写代码到包内）**
+**方式 A：用户自定义滤镜（唯一入口，无需写代码）**
 
-1. Assets → Create → VNovelizer → 画面滤镜预设（或在 `Assets/VNovelizer/VFX/Filters/` 下创建，类别 `VNovelizerRes/VFX/Filters` 自动注册 Addressables）；
-2. 填 `FilterId`（如 `dream`）、拖入 shader（自定义 shader 放用户工程任意位置，遵守 §5 契约）、配置 `DefaultParams` 默认值、`DefaultDuration`；
-3. 预设资产会被 `VNFilterLibrary` 自动发现（`unsetfilter` 下拉可选）；开启方式待后续扩展。
+1. 自定义 shader 放用户工程任意位置（遵守 §5 契约）；
+2. 打开 Edit → Project Settings → VNovelizer → VFX，在滤镜注册表点「＋ 添加滤镜条目」或直接往条目拖入 Shader；
+3. 填 id（如 `dream`）、显示名、Shader、默认时长，保持启用；
+4. 剧本中使用 `filtercustom(dream[, strength[, duration]])`（strength 只调整体强弱，shader 参数用资产默认值）；`unsetfilter(dream)` 关闭。
 
-**方式 B：内置注册（包开发者）**：`VNFilterLibrary.BuiltinFilters` 加一条（ID/显示名/shader 名/兜底路径/默认参数），shader 放 `Runtime/Resources/FilterShaders/`。
+**方式 B：内置注册（包开发者）**：`VNFilterLibrary.BuiltinFilters` 元信息表加一条（ID/显示名/默认时长/shader 名/兜底路径），shader 放 `Runtime/Resources/FilterShaders/`——编辑器预填时新内置自动进入注册表。
 
 ## 7. 编辑器集成
 
-- **视效命令分类**：7 款 `filter_xxx` 命令标注 `VNCommandCategory.VFX`，行演出编辑器左侧命令面板单独分组「视效命令」（青绿色），节点标题栏同色带。
+- **视效命令分类**：`filter_xxx` / `filtercustom` / `particle_snow` / `particle_rain` / `particlecustom` / `unsetfilter` / `unsetparticle` 命令标注 `VNCommandCategory.VFX`，行演出编辑器左侧命令面板单独分组「视效命令」（青绿色），节点标题栏同色带。
 - **结构化参数表单**：`filter_xxx` 的可调参数声明为 `Float`/`Int` + Min/Max → Inspector 渲染滑块（带输入框），duration 为可选滑块；`filter_pixelate` 为整数滑块（2~512）。
-- `VNParamType.FilterName`（`unsetfilter` 的 name 参数）渲染为**纯下拉选择**（不自由输入）——候选 = `VNFilterLibrary.GetAllIds()`（内置 + 用户预设）；`unsetfilter` 额外在最前插入 `all`（关闭全部）。
-- `VNProjectConfig.FilterResPath`（引擎内部常量，默认 `VNovelizerRes/VFX/Filters`）；`VNAddressablesRegistrar` 已知类别已含该前缀（用户工作区预设资产自动注册，`VNFilterLibrary` 经 `VNResourceService.LoadAll` 发现）。
+- **候选来源（注册表驱动）**：`VNParamType.FilterName`（`unsetfilter`/`filtercustom` 的 id）与 `VNParamType.RegisteredParticleName`（`particlecustom` 的 id）候选 = 注册表启用条目（`ParamCandidateProvider` 直读 `VNProjectConfig` 注册表，无持久配置时回退内置静态清单，不触碰运行时资源链）；`unsetfilter` 额外在最前插入 `all`、`unsetparticle` 的 `WeatherParticleName` 候选 = 启用条目 + `all`。
+- **VFX 设置页**：Edit → Project Settings → VNovelizer → VFX——滤镜注册表 + 粒子注册表双列表（启用开关 / id / 显示名 / Shader 或 Prefab / 默认时长 / 删除 + 添加按钮 + 重复 id 校验），打开本页触发幂等自愈预填；「从模板创建粒子…」按钮复制内置 rain/snow 模板到自选位置并追加注册表条目。
+- `VNProjectConfig.FilterResPath` / `ParticleResPath`（引擎内部常量，默认 `VNovelizerRes/VFX/Filters` / `VNovelizerRes/VFX/Particles`）；`VNAddressablesRegistrar` 已知类别已含两前缀（工作区粒子副本/模板自动按类别锚定注册）。
 
 ## 8. 已知边界
 
@@ -140,6 +152,19 @@ VN_EffectCanvas（sortingOrder=5）
 4. 渐变：`filter_grayscale(1, 2)` 2 秒淡入；点击跳过 → 立即满强度。
 5. 幂等：同一行 `filter_vhs(0.3, 0.5)&filter_vhs(0.9, 0.5)` 最终强度 0.9。
 6. 快进一致性：滤镜开启状态下行跳转/读档，画面与逐行播放一致（含参数）；回到主菜单滤镜清空。
-7. 图编辑器：命令面板出现「视效命令」分组（7 个 filter_xxx + unsetfilter + particle_snow/particle_rain/unsetparticle）；节点滑块可改参数；unsetfilter 的 name 与 unsetparticle 的 name 均为纯下拉（分别含 all）。
+7. 图编辑器：命令面板出现「视效命令」分组（7 个 filter_xxx + filtercustom + particle_snow/particle_rain/particlecustom + unsetfilter/unsetparticle）；节点滑块可改参数；unsetfilter 的 name 与 unsetparticle 的 name 均为纯下拉（分别含 all），filtercustom/particlecustom 的 id 下拉来自注册表启用条目。
 8. URP 工程（Dev1）验证 shader 无品红、Built-in 工程验证等效。
 9. 屏幕分辨率切换（窗口拖拽）后滤镜不糊、比例正确。
+
+## 10. VFX 注册表扩展验证清单（Dev1 工程实测，2026-10-23）
+
+1. 打开 Edit → Project Settings → VNovelizer → VFX：首次打开自动预填内置 7 款滤镜 + rain/snow 粒子（shader/prefab 引用非空）；再次打开不重复添加（幂等）。
+2. 存量项目（已有 VNProjectConfig.asset）：打开 VFX 页前 `filter_vhs` 警告"未注册"，打开后自愈补填、命令恢复可用。
+3. 删除滤镜条目 `vhs` → `filter_vhs` / `filtercustom(vhs)` 警告"未注册"；禁用 rain 条目 → `particle_rain` 警告"未注册"；恢复条目后命令恢复。
+4. 自定义滤镜：拖任意 shader 进新条目（id=myfx）→ `filtercustom(myfx, 0.5, 1)` 半强度淡入、`unsetfilter(myfx)` 关闭。
+5. 粒子：`particle_snow` / `particle_rain` 照常播放（注册表预制体实例化，画布全屏、有 UIParticle 渲染）；`particlecustom(snow, 0.8)` 等效。
+6. 「从模板创建粒子…」→ 保存副本 → 注册表出现新条目（id=文件名）→ `particlecustom(新id)` 播放副本；副本魔改（如改发射率/颜色）后即时生效。
+7. 内置预制体生成：删除 `Assets/VNovelizer/VFX/Particles/` 下 snow 预制体 + 清空注册表 → 重新打开 VFX 页自愈重新生成。
+8. `playparticle`/`stopparticle` 已从命令面板消失；旧剧本含这两个命令报"未找到命令"。
+9. `unsetparticle(name)` 下拉含注册表全部启用粒子条目 + all；旧存档（含 VNAnim_ 动画）读档恢复动画、跳过已废弃粒子名（仅日志提示）。
+10. 零配置：删掉 VNProjectConfig.asset 后 Play（临时实例）——`filter_vhs` / `particle_snow` 仍可用（内置兜底）。

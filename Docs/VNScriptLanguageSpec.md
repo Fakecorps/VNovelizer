@@ -641,15 +641,15 @@ DSL 底层复用 VNovelizer 现有的 39 个命令（`CommandManager` 注册）�
 | `bgtrans` | `bgtrans(bg, type[, duration]);` | 着色器驱动的背景切换过渡。type：`fade`/`blinds`/`wipe`/`iris`/`scroll`/`dissolve`（duration 缺省 1.0；非法 type 降级 fade） |
 | `filter_vhs` / `filter_fisheye` / `filter_invert` / `filter_grayscale` / `filter_vignette` / `filter_pixelate` / `filter_chromatic` | `filter_vhs([intensity[, duration]]);` 等 | 逐滤镜命令（7 款内置，只作用于剧场画面，UI 豁免）：每款滤镜一个命令，参数独立调节该滤镜数值（如 `filter_vhs(0.8, 1.5)` 强度 0.8、1.5 秒淡入），参数缺省用预设默认；可叠加、重复开启幂等 |
 | `unsetfilter` | `unsetfilter(name[, duration]);` | 关闭画面滤镜（淡出后移除，name 下拉选择已有滤镜）；`unsetfilter(all)` 关闭全部 |
+| `filtercustom` | `filtercustom(id[, strength[, duration]]);` | 开启 VFX 注册表任意滤镜条目（含自定义 Shader；strength 只调整体强弱 0~1，不暴露 shader 单参数） |
 | `shake` | `shake(target[, duration, strength]);` | 震动效果。target：`screen` / `dialogue` / `L`/`ML`/`M`/`MR`/`R` 立绘槽 |
 | `wait` | `wait(seconds);` | 等待指定秒数 |
 | `playvideo` | `playvideo(filename[, nextCmd]);` | 播放视频，结束后可执行一条命令 |
 | `playanim` | `playanim(name[, pos[, loop]]);` | 播放动画（pos 缺省 M；loop 循环需配 stopanim） |
 | `stopanim` | `stopanim(name);` | 停止动画 |
-| `playparticle` | `playparticle(name);` | 播放粒子特效 |
-| `stopparticle` | `stopparticle(name);` | 停止粒子特效 |
-| `particle_snow` / `particle_rain` | `particle_snow([intensity[, duration]]);` 等 | 开启天气粒子（代码生成粒子系统，位于特效层：剧场画面之上、对话框之下；intensity = 雪/雨量 0~1 缺省 0.6，duration = 渐变秒数；重复开启幂等） |
-| `unsetparticle` | `unsetparticle(name[, duration]);` | 关闭天气粒子（密度渐变衰减后移除；name 下拉 rain/snow；`unsetparticle(all)` 关闭全部） |
+| `particle_snow` / `particle_rain` | `particle_snow([intensity[, duration]]);` 等 | 开启内置天气粒子（VFX 注册表 snow/rain 条目 → 预制体实例化，位于特效层：剧场画面之上、对话框之下；intensity = 强度 0~1 缺省 0.6，duration = 渐变秒数；重复开启幂等） |
+| `particlecustom` | `particlecustom(id[, intensity[, duration]]);` | 开启 VFX 注册表任意粒子条目（含用户自建 Prefab；id 下拉 = 注册表启用条目） |
+| `unsetparticle` | `unsetparticle(name[, duration]);` | 关闭粒子特效（强度渐变衰减后移除；唯一生命周期命令；name 下拉 = 注册表启用条目 + all；`unsetparticle(all)` 关闭全部） |
 | `fadeBlackIn` | `fadeBlackIn(duration);` | 黑幕淡入（画面显现） |
 | `fadeBlackOut` | `fadeBlackOut(duration);` | 黑幕淡出（完成后自动推进下一行） |
 | `hide` | `hide();` | 隐藏对话框（大图/CG 模式） |

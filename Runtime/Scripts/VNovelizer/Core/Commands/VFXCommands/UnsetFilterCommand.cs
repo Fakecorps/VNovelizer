@@ -49,8 +49,7 @@ namespace VNovelizer.Core.Commands
             float duration = ParseDuration(args);
             if (duration < 0f)
             {
-                var def = VNFilterLibrary.GetInstance().GetDefinition(name);
-                duration = def != null ? Mathf.Max(def.DefaultDuration, 0f) : 0f;
+                duration = VNFilterLibrary.GetInstance().GetDefaultDuration(name);
             }
 
             ScreenFilterManager.EnsureInstance();

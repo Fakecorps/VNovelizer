@@ -23,9 +23,13 @@ namespace VNovelizer.Core.Commands
         [VNParam(0, "intensity", VNParamType.Float, Min = 0f, Max = 1f, Default = "0.6", Optional = true,
             Description = "雨量（0~1；缺省 = 预设默认 0.6）")]
         [VNParam(1, "duration", VNParamType.Float, Min = 0f, Max = 10f, Optional = true,
-            Description = "渐变秒数（缺省 = 0.5；0 = 立即生效）")]
+            Description = "渐变秒数（缺省 = VFX 注册表 rain 条目默认时长；0 = 立即生效）")]
         public override string CommandName { get { return "particle_rain"; } }
 
-        protected override string WeatherId { get { return "rain"; } }
+        protected override bool TryParseId(string args, out string id)
+        {
+            id = "rain";
+            return true;
+        }
     }
 }

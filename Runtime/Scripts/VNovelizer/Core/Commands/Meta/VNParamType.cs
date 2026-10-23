@@ -71,8 +71,7 @@ namespace VNovelizer.Core.Commands.Meta
         /// <summary>动画名</summary>
         AnimName,
 
-        /// <summary>粒子特效名</summary>
-        ParticleName,
+        // 【VFX 注册表扩展】ParticleName 已删除（playparticle/stopparticle 命令已移除）
 
         /// <summary>行 ID（候选来自当前剧本全部行）</summary>
         LineId,
@@ -116,11 +115,14 @@ namespace VNovelizer.Core.Commands.Meta
         /// <summary>场景回想条目名（候选来自画廊编辑器场景登记项）</summary>
         GallerySceneName,
 
-        /// <summary>画面滤镜名（候选来自 VNFilterLibrary：内置 7 款 + 用户自定义滤镜预设）</summary>
+        /// <summary>画面滤镜名（候选来自 VFX 注册表滤镜条目；无配置时回退内置 7 款）</summary>
         FilterName,
 
-        /// <summary>天气粒子名（候选：rain/snow/all；unsetparticle 的 name 参数）</summary>
+        /// <summary>天气粒子名（候选 = VFX 注册表粒子条目 + all；unsetparticle 的 name 参数）</summary>
         WeatherParticleName,
+
+        /// <summary>VFX 注册表粒子条目名（候选 = 注册表启用粒子条目，无 all；particlecustom 的 id 参数）</summary>
+        RegisteredParticleName,
     }
 
     /// <summary>

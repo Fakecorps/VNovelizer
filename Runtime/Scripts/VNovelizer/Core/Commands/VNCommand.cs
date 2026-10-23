@@ -215,8 +215,8 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new SetCharTransCommand());
             RegisterCommand(new PlaySFXCommand());
             RegisterCommand(new PlayVideoCommand());
-            RegisterCommand(new PlayParticleCommand());
-            RegisterCommand(new StopParticleCommand());
+            // 【VFX 注册表扩展】playparticle/stopparticle 已删除（粒子特效改走
+            // particle_rain/particle_snow/particlecustom + unsetparticle 生命周期）
             RegisterCommand(new ShowPromptCommand());
             RegisterCommand(new PlayAnimCommand());
             RegisterCommand(new StopAnimCommand());

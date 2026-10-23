@@ -949,9 +949,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             var candidates = ResolveCandidates(view, info, param, index);
 
-            // 【滤镜下拉改造 2026-10-21】FilterName 渲染为纯下拉选择（不自由输入）：
-            // 候选 = 内置 7 款 + 用户自定义预设；unsetfilter 额外在最前插入 all（关闭全部）。
-            // 候选恒不应为空（内置 7 款不依赖资源环境）；候选链任何一环异常/为空时直接取内置列表，
+            // 【滤镜下拉改造 2026-10-21 / VFX 注册表扩展 2026-10-23】FilterName 渲染为纯下拉选择
+            // （不自由输入）：候选 = VFX 注册表启用滤镜条目（无持久配置回退内置 7 款）；
+            // unsetfilter 额外在最前插入 all（关闭全部）。候选链任何一环异常/为空时直接取兜底列表，
             // 保证下拉必然出现。
             if (param.Type == VNParamType.FilterName)
             {
@@ -965,11 +965,19 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
 
             // 【天气粒子 2026-10-22】WeatherParticleName 渲染为纯下拉选择（不自由输入）：
-            // 候选 = rain/snow/all（unsetparticle 专用），静态列表不依赖资源环境。
+            // 候选 = VFX 注册表粒子条目 + all（unsetparticle 专用）。
             if (param.Type == VNParamType.WeatherParticleName)
             {
                 if (candidates == null || candidates.Count == 0)
                     candidates = ParamCandidateProvider.GetWeatherParticleIds();
+            }
+
+            // 【VFX 注册表扩展 2026-10-23】RegisteredParticleName 渲染为纯下拉选择
+            // （particlecustom 的 id 参数）：候选 = 注册表启用粒子条目（无 all）。
+            if (param.Type == VNParamType.RegisteredParticleName)
+            {
+                if (candidates == null || candidates.Count == 0)
+                    candidates = ParamCandidateProvider.GetRegisteredParticleIds();
             }
 
             VisualElement field;

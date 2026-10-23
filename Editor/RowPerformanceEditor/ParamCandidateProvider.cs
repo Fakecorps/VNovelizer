@@ -105,16 +105,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     return GetResourceNames(ResType.Video);
 
                 case VNParamType.AnimName:
-                    return GetVfxNames(true);
-
-                case VNParamType.ParticleName:
-                    return GetVfxNames(false);
+                    return GetAnimNames();
 
                 case VNParamType.FilterName:
                     return GetFilterIds();
 
                 case VNParamType.WeatherParticleName:
                     return GetWeatherParticleIds();
+
+                case VNParamType.RegisteredParticleName:
+                    return GetRegisteredParticleIds();
 
                 case VNParamType.GalleryCgName:
                     return GetCgGalleryNames();
@@ -133,37 +133,80 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
-        /// 滤镜名候选：内置 7 款（纯静态读取，不触发运行时资源链）+ 工程内全部
-        /// VNFilterDefinition 预设资产（AssetDatabase 扫描，覆盖 Addressables 注册的
-        /// 用户预设——与 GetCharacterIds 同惯例，编辑模式不触碰运行时提供者链）。
+        /// 【VFX 注册表扩展】滤镜名候选 = VFX 注册表启用滤镜条目（唯一入口）。
+        /// 无持久配置（注册表为空，用户尚未打开过 VFX 设置页）时回退内置 7 款静态清单
+        /// （编辑期候选不触碰运行时资源链，与 GetCharacterIds 同惯例）。
         /// </summary>
         public static List<string> GetFilterIds()
         {
             var result = new List<string>();
-            var builtins = VNovelizer.Core.Filters.VNFilterLibrary.GetBuiltinFilterIds();
-            if (builtins != null) result.AddRange(builtins);
-
-            var guids = AssetDatabase.FindAssets("t:VNFilterDefinition");
-            foreach (string guid in guids)
+            if (VNProjectConfig.TryGetInstance(out var config) &&
+                config.VFXFilterRegistry != null && config.VFXFilterRegistry.Count > 0)
             {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                var def = AssetDatabase.LoadAssetAtPath<VNovelizer.Core.Filters.VNFilterDefinition>(path);
-                if (def == null || string.IsNullOrEmpty(def.FilterId)) continue;
-
-                string id = def.FilterId.Trim();
-                if (id.Length > 0 && !result.Contains(id)) result.Add(id);
+                foreach (var e in config.VFXFilterRegistry)
+                {
+                    if (e == null || !e.Enabled || string.IsNullOrEmpty(e.Id)) continue;
+                    string id = e.Id.Trim();
+                    if (id.Length > 0 && !result.Contains(id)) result.Add(id);
+                }
             }
-
+            else
+            {
+                var builtins = VNovelizer.Core.Filters.VNFilterLibrary.GetBuiltinFilterIds();
+                if (builtins != null) result.AddRange(builtins);
+            }
             return result;
         }
 
         /// <summary>
-        /// 天气粒子名候选（unsetparticle 的 name 参数下拉）：rain/snow/all。
-        /// 纯静态列表，不依赖任何资源环境（与内置滤镜候选同惯例）。
+        /// 【VFX 注册表扩展】粒子名候选（unsetparticle 的 name 参数下拉）=
+        /// VFX 注册表启用粒子条目 + all。无持久配置时回退 rain/snow/all。
         /// </summary>
         public static List<string> GetWeatherParticleIds()
         {
-            return new List<string> { "rain", "snow", "all" };
+            var result = new List<string>();
+            if (VNProjectConfig.TryGetInstance(out var config) &&
+                config.VFXParticleRegistry != null && config.VFXParticleRegistry.Count > 0)
+            {
+                foreach (var e in config.VFXParticleRegistry)
+                {
+                    if (e == null || !e.Enabled || string.IsNullOrEmpty(e.Id)) continue;
+                    string id = e.Id.Trim();
+                    if (id.Length > 0 && !result.Contains(id)) result.Add(id);
+                }
+            }
+            if (result.Count == 0)
+            {
+                result.Add("rain");
+                result.Add("snow");
+            }
+            if (!result.Contains("all")) result.Add("all");
+            return result;
+        }
+
+        /// <summary>
+        /// 【VFX 注册表扩展】注册表粒子条目候选（particlecustom 的 id 参数下拉）=
+        /// 启用条目，不含 all。无持久配置时回退 rain/snow。
+        /// </summary>
+        public static List<string> GetRegisteredParticleIds()
+        {
+            var result = new List<string>();
+            if (VNProjectConfig.TryGetInstance(out var config) &&
+                config.VFXParticleRegistry != null && config.VFXParticleRegistry.Count > 0)
+            {
+                foreach (var e in config.VFXParticleRegistry)
+                {
+                    if (e == null || !e.Enabled || string.IsNullOrEmpty(e.Id)) continue;
+                    string id = e.Id.Trim();
+                    if (id.Length > 0 && !result.Contains(id)) result.Add(id);
+                }
+            }
+            if (result.Count == 0)
+            {
+                result.Add("rain");
+                result.Add("snow");
+            }
+            return result;
         }
 
         /// <summary>
@@ -378,15 +421,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
-        /// 动画 / 粒子特效名候选（VFX 两类目录）：
+        /// 【VFX 注册表扩展】动画名候选（playanim/stopanim 用）：
         /// Addressables 托管模式枚举组内类别条目，文件夹模式扫描类别文件夹。
+        /// （原 GetVfxNames(false) 粒子分支随 playparticle/stopparticle 删除而移除）
         /// </summary>
-        private static List<string> GetVfxNames(bool anim)
+        private static List<string> GetAnimNames()
         {
             var config = VNProjectConfig.Instance;
             if (config == null) return null;
 
-            string category = anim ? config.AnimationPath : config.ParticalEffectPath;
+            string category = config.AnimationPath;
             if (string.IsNullOrEmpty(category)) return null;
 
             var result = new List<string>();

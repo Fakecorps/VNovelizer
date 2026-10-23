@@ -66,8 +66,7 @@ namespace VNovelizer.Core.Commands
 
             if (duration < 0f)
             {
-                var def = VNFilterLibrary.GetInstance().GetDefinition(FilterId);
-                duration = def != null ? Mathf.Max(def.DefaultDuration, 0f) : 0f;
+                duration = VNFilterLibrary.GetInstance().GetDefaultDuration(FilterId);
             }
 
             ScreenFilterManager.EnsureInstance();

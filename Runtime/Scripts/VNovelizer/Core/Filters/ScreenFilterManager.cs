@@ -61,10 +61,10 @@ namespace VNovelizer.Core.Filters
 
         private sealed class ActiveFilter
         {
-            public VNFilterDefinition Definition;
+            public string FilterId;
             public Material Material;    // 滤镜专属材质实例（每帧写入 _Weight）
             public float Weight;         // 当前混合权重（对应 shader _Weight）
-            public float TargetWeight;   // 1 = 淡入目标；0 = 淡出后移除
+            public float TargetWeight;   // 淡入目标（filtercustom 的 strength 缩放后可为 0~1）；0 = 淡出后移除
             public float Speed;          // 权重变化速率（权重/秒；0 = 立即）
         }
 
@@ -88,7 +88,7 @@ namespace VNovelizer.Core.Filters
         {
             if (string.IsNullOrEmpty(filterId)) return false;
             for (int i = 0; i < _stack.Count; i++)
-                if (string.Equals(_stack[i].Definition.FilterId, filterId, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(_stack[i].FilterId, filterId, StringComparison.OrdinalIgnoreCase))
                     return true;
             return false;
         }
@@ -112,19 +112,36 @@ namespace VNovelizer.Core.Filters
         /// </summary>
         public bool SetFilterWithParams(string filterId, float duration, Dictionary<string, float> paramOverrides)
         {
+            return SetFilterCore(filterId, duration, paramOverrides, 1f);
+        }
+
+        /// <summary>
+        /// 开启滤镜并按 strength 缩放整体强弱（<c>filtercustom</c> 命令使用）：
+        /// 混合权重目标 = <paramref name="strength"/>（0~1），只乘全局 _Weight，
+        /// 不暴露单个 shader 参数（shader 属性取资产默认值）。
+        /// </summary>
+        public bool SetFilterScaled(string filterId, float strength, float duration)
+        {
+            return SetFilterCore(filterId, duration, null, Mathf.Clamp01(strength));
+        }
+
+        /// <summary>开启滤镜核心：注册表校验 → shader 解析 → 权重目标淡入（重复开启幂等刷新）</summary>
+        private bool SetFilterCore(string filterId, float duration, Dictionary<string, float> paramOverrides, float targetWeight)
+        {
             if (string.IsNullOrEmpty(filterId)) return false;
 
             var library = VNFilterLibrary.GetInstance();
-            var def = library.GetDefinition(filterId);
-            if (def == null)
+            var entry = library.GetEntry(filterId);
+            if (entry == null)
             {
-                Debug.LogWarning($"[ScreenFilterManager] 未找到滤镜 '{filterId}'。可用滤镜: {string.Join(", ", library.GetAllIds())}");
+                Debug.LogWarning($"[ScreenFilterManager] 滤镜 '{filterId}' 未在 VFX 注册表注册（或已禁用）。" +
+                                 $"可用滤镜: {string.Join(", ", library.GetAllIds())}");
                 return false;
             }
             var shader = library.ResolveShader(filterId);
             if (shader == null)
             {
-                Debug.LogWarning($"[ScreenFilterManager] 滤镜 '{filterId}' 的 Shader 无法加载（内置 shader 缺失或预设资产 Shader 引用为空）");
+                Debug.LogWarning($"[ScreenFilterManager] 滤镜 '{filterId}' 的 Shader 无法加载（注册表条目 Shader 引用为空或内置 shader 缺失）");
                 return false;
             }
 
@@ -132,23 +149,22 @@ namespace VNovelizer.Core.Filters
             if (existing != null)
             {
                 ApplyOverrides(existing.Material, paramOverrides);
-                existing.TargetWeight = 1f;
+                existing.TargetWeight = targetWeight;
                 existing.Speed = duration > 0f ? 1f / duration : 0f;
-                if (duration <= 0f) existing.Weight = 1f;
+                if (duration <= 0f) existing.Weight = targetWeight;
                 return true;
             }
 
-            var mat = new Material(shader) { name = "VNFilterMat_" + def.FilterId };
-            def.ApplyTo(mat);
+            var mat = new Material(shader) { name = "VNFilterMat_" + entry.Id };
             ApplyOverrides(mat, paramOverrides);
             mat.SetFloat("_Weight", 0f);
 
             _stack.Add(new ActiveFilter
             {
-                Definition = def,
+                FilterId = entry.Id,
                 Material = mat,
-                Weight = duration > 0f ? 0f : 1f,
-                TargetWeight = 1f,
+                Weight = duration > 0f ? 0f : targetWeight,
+                TargetWeight = targetWeight,
                 Speed = duration > 0f ? 1f / duration : 0f,
             });
             return true;
@@ -226,7 +242,7 @@ namespace VNovelizer.Core.Filters
         private ActiveFilter Find(string filterId)
         {
             for (int i = 0; i < _stack.Count; i++)
-                if (string.Equals(_stack[i].Definition.FilterId, filterId, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(_stack[i].FilterId, filterId, StringComparison.OrdinalIgnoreCase))
                     return _stack[i];
             return null;
         }

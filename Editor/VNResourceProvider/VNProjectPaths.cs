@@ -77,6 +77,7 @@ public static class VNProjectPaths
             WorkspaceRoot + "/VFX/Partical",
             WorkspaceRoot + "/VFX/Animation",
             WorkspaceRoot + "/VFX/Filters",
+            WorkspaceRoot + "/VFX/Particles",
             WorkspaceRoot + "/GalleryContent",
             WorkspaceRoot + "/GalleryContent/CG",
             WorkspaceRoot + "/GalleryContent/Music",

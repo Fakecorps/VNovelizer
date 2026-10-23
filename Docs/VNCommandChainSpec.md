@@ -846,7 +846,7 @@ ScriptParser → 三路径执行（默认模板 / 增强 / 定制）→ ChainExe
 | `charfadein` / `charfadeout` | token 列表模式（旧批处理时代为并行设计），多实例并行安全 |
 | `wait` | 无状态；分支/主链被 StopCoroutine 直接杀死，链式下跳过反而更干脆 |
 | `t_color` / `t_size` / `showprompt` / `setboolflag` / `setintflag` / `setstringflag` / `unlockcg` / `unlockmusic` / `unlockscene` / `config` | 同步瞬时命令，`StartCoroutine` 首帧同步执行完毕，并行下按书写顺序生效（结果可预测）；showprompt 自管理淡出 |
-| `playparticle` / `stopparticle` | 幂等（同名特效防叠加），各自独立对象，并行安全 |
+| `filter_xxx` / `filtercustom` / `particle_xxx` / `particlecustom` / `unsetfilter` / `unsetparticle` | 状态型命令（管理器按 id 幂等合并条目，`unsetparticle` 为唯一粒子生命周期命令）；并行安全（2026-10-23 VFX 注册表扩展后取代已删除的 `playparticle`/`stopparticle`） |
 | `playsfx` | 逐次顺序播放；并行时共用单一 SFX 声源会互相顶替（既有设计，见 B.4） |
 
 ### B.4 已知限制（既有行为，非链式引入，文档说明）
@@ -859,7 +859,7 @@ ScriptParser → 三路径执行（默认模板 / 增强 / 定制）→ ChainExe
 | 4 | 矛盾链的预演差异 | `[charfadeout(L) & charfadein(L)]`（同槽矛盾写法）：Simulate 按深度优先序取后者为最终态，实际执行为动画竞态——属作者笔误，校验器不拦截 |
 | 5 | 同步入口 `ExecuteCommands` 的链式串 | 时序被忽略，按展开顺序执行（已实现 Debug.LogWarning 提示） |
 | 6 | fire-and-forget 同步入口 | `playsfx`/`charjump` 的同步入口 `Execute` 自行 `StartCoroutine` 不登记引用计数（旧路径既有）；链式路径经 `ExecuteSingleCommandAsync` 有正确计数，不受影响 |
-| 7 | `stopparticle` 的 5 秒延迟回收 | 延迟回收协程无人跟踪（期望行为：特效飘完自回收）；对象销毁有判空保护 |
+| 7 | （已随 `stopparticle` 删除失效 2026-10-23）粒子特效回收 | 现粒子特效经 `unsetparticle` 强度衰减后立即销毁条目（无 5 秒延迟回收语义） |
 | 8 | 同名动画/特效并行 | `playanim(a,L)` 与 `playanim(a,R)` 并行时按名字 `Find` 只找到第一个；建议避免同名并行播放 |
 
 ### B.5 模拟复杂场景验证结论

@@ -336,7 +336,7 @@ ParseFrom(node, stopAt):
 
 | 文件 | 内容 |
 |------|------|
-| `VNParamType.cs` | `VNParamType` 枚举（24 项，含动态取值域标记）+ `VNCommandCategory` 枚举（7 项，含 VFX 视效命令） |
+| `VNParamType.cs` | `VNParamType` 枚举（32 项，含动态取值域标记；2026-10-23 VFX 注册表扩展删除 `ParticleName`、新增 `RegisteredParticleName`）+ `VNCommandCategory` 枚举（7 项，含 VFX 视效命令） |
 | `VNCommandMetaAttribute.cs` | `[VNCommandMeta(Category, Description)]`，可选 `ArgSeparator` / `VariadicArgs` / `Planned` |
 | `VNParamAttribute.cs` | `[VNParam(Index, Name, Type)]`，可选 `Options` / `Min` / `Max` / `Default` / `Optional` / `ImplicitBinding` / `BoundColumn` / `InlineForbidden` |
 | `CommandMetaReader.cs` | 反射读取器（带缓存）+ `VNCommandInfo` / `VNParamInfo` 投影类 |
@@ -390,6 +390,9 @@ public class ShakeCommand : VNCommand
 | `SlotCode` | `L / ML / M / MR / R` |
 | `LineId` | 当前剧本全部行 ID |
 | `FlagName` | Flag 编辑器已登记的标志 |
+| `FilterName` | VFX 注册表启用滤镜条目（无持久配置回退内置 7 款） |
+| `WeatherParticleName` | VFX 注册表启用粒子条目 + `all` |
+| `RegisteredParticleName` | VFX 注册表启用粒子条目（particlecustom 的 id） |
 | `Float` / `Int` / `Bool` / `String` / `Enum` | 由 `Min`/`Max`/`Options` 约束 |
 
 ### 10.4 通用节点（永久兼容层，决策 s4-q1）

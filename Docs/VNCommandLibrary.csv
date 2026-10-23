@@ -66,8 +66,12 @@ showprompt,"showprompt(text, duration, inEase, outEase)","text: 提示文字内�
 duration: 停留秒数（可选，默认 2）
 inEase: 浮入曲线（可选；缺省=OutQuad 淡入+OutBack 回弹位移；只填一个=进出同曲线。候选：Linear/In*/InOut*，含「无」空选）
 outEase: 浮出曲线（可选；缺省 InQuad。候选：Linear/Out*，含「无」空选）",屏幕提示文字（浮动显示后自动消失）,"showprompt(获得钥匙, 2.0) 或 showprompt(获得钥匙, 2.0, OutBack, InQuad)",,,,,,,,,,,,,,,
-playparticle,playparticle(effect),effect: 特效资源名（Particle 特效目录下的预制体）,播放常驻粒子特效（花瓣等；同名特效自动去重不叠加）,playparticle(Petal),,,,,,,,,,,,,,,
-stopparticle,stopparticle(effect),effect: 特效资源名（与 playparticle 参数一致）,停止粒子特效并延迟回收（停止发射，已发射粒子 5 秒飘完）,stopparticle(Petal),,,,,,,,,,,,,,,
+filtercustom,"filtercustom(id, strength, duration)","id: 注册表滤镜条目 id（图编辑器下拉 = 注册表启用条目）
+strength: 整体强弱 0~1（可选，缺省 1.0；只乘全局混合权重，不暴露 shader 单参数）
+duration: 渐变秒数（可选，缺省 = 注册表条目默认时长；0 = 立即）",开启 VFX 注册表中的任意滤镜（含用户拖入的自定义 Shader 滤镜）,"filtercustom(myfx, 0.5, 1)",,,,,,,,,,,,,,,
+particlecustom,"particlecustom(id, intensity, duration)","id: 注册表粒子条目 id（图编辑器下拉 = 注册表启用条目）
+intensity: 整体强度 0~1（可选，缺省 0.6；发射率+亮度）
+duration: 渐变秒数（可选，缺省 = 注册表条目默认时长；0 = 立即）",开启 VFX 注册表中的任意粒子特效（含用户自建 Prefab 条目）,"particlecustom(petal_rain, 0.8, 1)",,,,,,,,,,,,,,,
 playanim,"playanim(anim, pos, loop)","anim: 动画资源名（Animation 目录下的预制体）
 pos: 显示位置（可选，默认 M）：L/ML/M/MR/R 槽位跟随、M(x,y) 槽位偏移、(x,y) 绝对坐标
 loop: 填 loop 则循环播放（用 stopanim 回收）",播放 Animator 动画特效（挂在特效层；loop 结尾缀名表循环播放）,"playanim(sparkle, M(10,-20), loop)",,,,,,,,,,,,,,,
@@ -92,10 +96,10 @@ particle_snow,"particle_snow(intensity, duration)","intensity: 雪量 0~1（可�
 duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",下雪天气粒子（代码生成粒子系统，位于特效层：剧场画面之上、对话框之下）,"particle_snow(0.8, 1.5)",,,,,,,,,,,,,,,
 particle_rain,"particle_rain(intensity, duration)","intensity: 雨量 0~1（可选，缺省 0.6）
 duration: 渐变秒数（可选，缺省 0.5；0 = 立即生效）",下雨天气粒子（代码生成雨丝粒子，带 ≈10° 风斜；位于特效层）,"particle_rain(0.9, 1)",,,,,,,,,,,,,,,
-unsetparticle,"unsetparticle(name, duration)","name: 天气名（图编辑器下拉选择：rain/snow；all = 关闭全部天气粒子）
-duration: 衰减秒数（可选，缺省 0.5；0 = 立即移除）",关闭天气粒子（密度渐变衰减后移除；未激活时静默）,"unsetparticle(rain) 或 unsetparticle(all)",,,,,,,,,,,,,,,
-unsetfilter,"unsetfilter(name, duration)","name: 滤镜名（图编辑器下拉选择：内置 + 自定义预设；all = 关闭全部滤镜）
-duration: 淡出秒数（可选，缺省用预设默认时长 0.5；0 = 立即移除）",关闭画面滤镜（权重淡出后移除，画面恢复原始；未激活时静默）,"unsetfilter(vhs) 或 unsetfilter(all)",,,,,,,,,,,,,,,
+unsetparticle,"unsetparticle(name, duration)","name: 注册表粒子条目名（图编辑器下拉选择：注册表启用条目；all = 关闭全部粒子特效）
+duration: 衰减秒数（可选，缺省 = 注册表条目默认时长；0 = 立即移除）",关闭粒子特效（强度渐变衰减后移除；唯一生命周期命令；未激活时静默）,"unsetparticle(rain) 或 unsetparticle(all)",,,,,,,,,,,,,,,
+unsetfilter,"unsetfilter(name, duration)","name: 滤镜名（图编辑器下拉选择：注册表启用条目；all = 关闭全部滤镜）
+duration: 淡出秒数（可选，缺省用注册表条目默认时长 0.5；0 = 立即移除）",关闭画面滤镜（权重淡出后移除，画面恢复原始；未激活时静默）,"unsetfilter(vhs) 或 unsetfilter(all)",,,,,,,,,,,,,,,
 fadeBlackIn,fadeBlackIn(duration),duration: 淡入秒数（0.05-10）,黑幕淡入（阻塞至淡入完成；配合 fadeBlackOut 使用）,fadeBlackIn(0.5),,,,,,,,,,,,,,,
 fadeBlackOut,fadeBlackOut(duration),duration: 淡出秒数（0.05-10）,黑幕淡出（阻塞至淡出完成；配合 fadeBlackIn 使用）,fadeBlackOut(0.5),,,,,,,,,,,,,,,
 t_color,"t_color(r, g, b)","r: 红（0-255）

@@ -750,7 +750,15 @@ public class VNManager : BaseManager<VNManager>
     // 恢复特效 (物理生成)
     private void RestoreEffect(string effectName)
     {
-        string commandString = $"playparticle({effectName})";
+        // 【VFX 注册表扩展】playparticle 已删除（粒子特效经命令 Simulate 重建，不入存档）。
+        // activeEffects 里现存的只剩 VNAnim_ 前缀循环动画；旧存档中的粒子特效名（如 Petal）
+        // 对应命令已不存在，静默跳过并提示。
+        if (!effectName.StartsWith("VNAnim_", System.StringComparison.Ordinal))
+        {
+            VNDebug.LogVerbose($"[VNManager] 跳过恢复已废弃特效 '{effectName}'（playparticle 命令已删除）");
+            return;
+        }
+        string commandString = $"playanim({effectName.Substring("VNAnim_".Length)})";
         CommandManager.GetInstance().ExecuteCommand(commandString);
 
         VNDebug.LogVerbose($"[VNManager] 自动恢复特效: {commandString}");

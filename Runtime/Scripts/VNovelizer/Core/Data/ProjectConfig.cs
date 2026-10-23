@@ -1,10 +1,40 @@
 using Alchemy.Inspector;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
+
+/// <summary>
+/// 【VFX 注册表扩展】滤镜注册表条目：滤镜逻辑名 + Shader 直接引用 + 默认时长 + 启用开关。
+/// 注册表是唯一入口——只有列出的条目才能被 filter_xxx / filtercustom / unsetfilter 使用。
+/// </summary>
+[System.Serializable]
+public class VNProjectFilterEntry
+{
+    [LabelText("滤镜 ID")] public string Id;
+    [LabelText("显示名")] public string DisplayName;
+    [LabelText("Shader")] public Shader Shader;
+    [LabelText("默认时长（秒）")] public float DefaultDuration = 0.5f;
+    [LabelText("启用")] public bool Enabled = true;
+}
+
+/// <summary>
+/// 【VFX 注册表扩展】粒子特效注册表条目：粒子逻辑名 + Prefab 直接引用 + 默认时长 + 启用开关。
+/// Prefab 必须挂 <see cref="VNovelizer.Core.Weather.VN_Particle"/> 组件（管理器只认该接口）；
+/// 注册表是唯一入口——只有列出的条目才能被 particle_rain/particle_snow/particlecustom/unsetparticle 使用。
+/// </summary>
+[System.Serializable]
+public class VNProjectParticleEntry
+{
+    [LabelText("粒子 ID")] public string Id;
+    [LabelText("显示名")] public string DisplayName;
+    [LabelText("预制体")] public GameObject Prefab;
+    [LabelText("默认时长（秒）")] public float DefaultDuration = 0.5f;
+    [LabelText("启用")] public bool Enabled = true;
+}
 
 /// <summary>
 /// 全局项目配置文件（含 UI 模板覆写）。
@@ -39,6 +69,9 @@ public class VNProjectConfig : ScriptableObject
             if (_tempInstance == null)
             {
                 _tempInstance = CreateInstance<VNProjectConfig>();
+                // 【VFX 注册表扩展】零配置兜底：临时实例预填内置滤镜/粒子条目
+                // （Shader/Prefab 留空 → 运行时内置兜底解析），与持久资产的编辑器预填语义一致
+                _tempInstance.PrefillBuiltinVfxRegistry();
                 if (!_warnedMissingConfig)
                 {
                     _warnedMissingConfig = true;
@@ -125,6 +158,10 @@ public class VNProjectConfig : ScriptableObject
 
     [Order(155), BoxGroup("二、资源默认地址（引擎内部，勿改）"), ReadOnly, LabelText("画面滤镜预设")]
     public string FilterResPath = "VNovelizerRes/VFX/Filters";
+
+    [Order(158), BoxGroup("二、资源默认地址（引擎内部，勿改）"), ReadOnly, LabelText("粒子预制体")]
+    [Tooltip("VFX 粒子预制体类别前缀（内置 rain/snow 模板与用户粒子副本所在类别）")]
+    public string ParticleResPath = "VNovelizerRes/VFX/Particles";
 
     [Order(160), BoxGroup("二、资源默认地址（引擎内部，勿改）"), ReadOnly, LabelText("BGM（背景音乐）")]
     public string BgmResPath = "VNovelizerRes/Audio/Music/BGM";
@@ -267,6 +304,19 @@ public class VNProjectConfig : ScriptableObject
     [Order(1020), BoxGroup("七、UI 模板覆写"), LabelText("场景数据容器")]
     public SceneDataContainer Override_SceneDataContainer;
 
+    // ==================== 八、VFX（特效注册表） ====================
+    // 【VFX 注册表扩展 2026-10-23】手动真源：只有列在这里的条目才能被命令使用
+    // （拖入才可用，唯一入口）。内置 7 款滤镜 + rain/snow 粒子由编辑器预填
+    // （打开 VFX 设置页 / 首次创建配置资产时自动补填，幂等；可禁用/可删）。
+    // 零配置（未创建持久资产）场景由临时实例 PrefillBuiltinVfxRegistry 兜底。
+    [Order(1100), BoxGroup("八、VFX（特效注册表）"), LabelText("滤镜注册表")]
+    [Tooltip("滤镜特效唯一入口：id + Shader（拖入即可用）。内置 7 款已预填，可禁用/删除；删除后对应 filter_xxx 命令会警告未注册")]
+    public List<VNProjectFilterEntry> VFXFilterRegistry = new List<VNProjectFilterEntry>();
+
+    [Order(1110), BoxGroup("八、VFX（特效注册表）"), LabelText("粒子注册表")]
+    [Tooltip("粒子特效唯一入口：id + Prefab（需挂 VN_Particle 组件）。内置 rain/snow 已预填，可禁用/删除")]
+    public List<VNProjectParticleEntry> VFXParticleRegistry = new List<VNProjectParticleEntry>();
+
     // ==================== 辅助方法 ====================
 
     /// <summary>
@@ -328,6 +378,75 @@ public class VNProjectConfig : ScriptableObject
             case VNUIPrefabKeys.MusicDataContainer:   return Override_MusicDataContainer;
             case VNUIPrefabKeys.SceneDataContainer:   return Override_SceneDataContainer;
             default: return null;
+        }
+    }
+
+    /// <summary>
+    /// 【VFX 注册表扩展】按 id 查询滤镜注册表条目（大小写不敏感；仅返回启用条目）。
+    /// 返回 null = 未注册 / 已禁用 / 注册表为空（零配置临时实例由预填保证内置条目存在）。
+    /// </summary>
+    public VNProjectFilterEntry GetFilterEntry(string filterId)
+    {
+        if (string.IsNullOrEmpty(filterId) || VFXFilterRegistry == null) return null;
+        foreach (var e in VFXFilterRegistry)
+            if (e != null && e.Enabled &&
+                string.Equals(e.Id, filterId.Trim(), System.StringComparison.OrdinalIgnoreCase))
+                return e;
+        return null;
+    }
+
+    /// <summary>
+    /// 【VFX 注册表扩展】按 id 查询粒子注册表条目（大小写不敏感；仅返回启用条目）。
+    /// 返回 null = 未注册 / 已禁用 / 注册表为空。
+    /// </summary>
+    public VNProjectParticleEntry GetParticleEntry(string particleId)
+    {
+        if (string.IsNullOrEmpty(particleId) || VFXParticleRegistry == null) return null;
+        foreach (var e in VFXParticleRegistry)
+            if (e != null && e.Enabled &&
+                string.Equals(e.Id, particleId.Trim(), System.StringComparison.OrdinalIgnoreCase))
+                return e;
+        return null;
+    }
+
+    /// <summary>
+    /// 【VFX 注册表扩展】零配置兜底预填（仅临时实例调用，无 UnityEditor 依赖）：
+    /// 内置 7 款滤镜（Shader 留空 → VNFilterLibrary 内置 shader 名称表兜底解析）+
+    /// rain/snow 粒子（Prefab 留空 → WeatherParticleManager 运行时代码构建兜底）。
+    /// 持久配置资产由编辑器 VNVfxRegistryPrefiller 预填真实资产引用；两者语义一致（幂等）。
+    /// </summary>
+    public void PrefillBuiltinVfxRegistry()
+    {
+        if (VFXFilterRegistry == null) VFXFilterRegistry = new List<VNProjectFilterEntry>();
+        if (VFXParticleRegistry == null) VFXParticleRegistry = new List<VNProjectParticleEntry>();
+
+        if (VFXFilterRegistry.Count == 0)
+        {
+            foreach (var info in VNovelizer.Core.Filters.VNFilterLibrary.GetBuiltinFilterInfos())
+                VFXFilterRegistry.Add(new VNProjectFilterEntry
+                {
+                    Id = info.Id,
+                    DisplayName = info.DisplayName,
+                    Shader = null, // 运行时经内置名称表兜底解析
+                    DefaultDuration = info.DefaultDuration,
+                    Enabled = true,
+                });
+        }
+
+        if (VFXParticleRegistry.Count == 0)
+        {
+            VFXParticleRegistry.Add(new VNProjectParticleEntry
+            {
+                Id = "snow", DisplayName = "下雪",
+                Prefab = null, // 运行时经代码构建兜底（WeatherParticleFactory）
+                DefaultDuration = 0.5f, Enabled = true,
+            });
+            VFXParticleRegistry.Add(new VNProjectParticleEntry
+            {
+                Id = "rain", DisplayName = "下雨",
+                Prefab = null,
+                DefaultDuration = 0.5f, Enabled = true,
+            });
         }
     }
 #if UNITY_EDITOR
