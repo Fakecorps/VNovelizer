@@ -595,6 +595,14 @@
 
 .vn-node--confirm .vn-param-value { color: #C8D8B8; }
 
+.vn-node.vn-node--unassigned > #node-border {
+    background-color: #454858;
+    border-color: #E1AF61;
+    border-width: 2px;
+}
+
+.vn-node--unassigned .vn-node-title { color: #F0D5A9; }
+
 /* 模板影子节点（未持久化，仅视图层） */
 .vn-node--template {
     opacity: 0.55;
@@ -1261,6 +1269,40 @@
    所有视觉（背景/行号/着色/选区/光标）都在 C# 里用 EditorGUI.DrawRect + GUI.Label 完成。
    USS 这里只需给容器本身定外框与边距。 */
 
+.vn-textchain-tool-field {
+    flex-shrink: 1;
+    min-width: 0;
+    margin-top: 3px;
+}
+
+.vn-textchain-tool-field .unity-base-field__input {
+    min-width: 0;
+    flex-shrink: 1;
+}
+
+.vn-textchain-tools {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    min-width: 0;
+    min-height: 26px;
+    padding-top: 2px;
+}
+
+.vn-textchain-tools Button {
+    flex-shrink: 0;
+    margin-right: 3px;
+    padding-left: 5px;
+    padding-right: 5px;
+    height: 22px;
+}
+
+.vn-textchain-tool-info {
+    flex-shrink: 1;
+    min-width: 0;
+    white-space: normal;
+}
+
 .vn-codefield-imgui {
     margin-top: 2px;
     margin-bottom: 8px;
@@ -1510,36 +1552,8 @@
     font-size: 11px;
     -unity-font-style: bold;
     border-radius: 4px;
-    /* Unity USS 不支持 pointer-events: none；用 picking-mode 在 C# 层设置 */
-}
-
-/* Fix-DropLane 2026-10-21：拖拽幽灵预览框——落点位置实时预览，
-   配色 = 目标泳道配色（进入段蓝灰 / 出口段绿），所见即所得 */
-.vn-drag-ghost {
-    position: absolute;
-    width: 200px;
-    height: 56px;
-    border-radius: 6px;
-    border-width: 2px;
-    align-items: center;
-    justify-content: center;
-}
-
-.vn-drag-ghost--entry {
-    border-color: #6A9AD0;
-    background-color: rgba(74, 122, 170, 0.28);
-}
-
-.vn-drag-ghost--confirm {
-    border-color: #5A8A3E;
-    background-color: rgba(90, 138, 62, 0.32);
-}
-
-.vn-drag-ghost-label {
-    color: #E8E8E8;
-    font-size: 12px;
-    -unity-font-style: bold;
     white-space: nowrap;
+    /* Unity USS 不支持 pointer-events: none；用 picking-mode 在 C# 层设置 */
 }
 
 /* 框选矩形（自实现 DragBoxSelector 绘制） */

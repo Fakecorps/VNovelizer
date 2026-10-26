@@ -40,6 +40,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             /// <summary>出口段图转储。</summary>
             public string ConfirmGraphDump;
+            public string UnassignedGraphDump;
 
             public Dictionary<string, Vector2> Positions;
             public bool TemplateCollapsed;
@@ -125,6 +126,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (a.EntryGraphDump != b.EntryGraphDump) return false;
             if (a.ConfirmGraphDump != b.ConfirmGraphDump) return false;
+            if (a.UnassignedGraphDump != b.UnassignedGraphDump) return false;
             if (a.TemplateCollapsed != b.TemplateCollapsed) return false;
 
             if (a.Positions == null || b.Positions == null)

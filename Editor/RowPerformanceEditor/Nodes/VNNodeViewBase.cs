@@ -34,6 +34,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         /// <summary>是否属于出口段（@Confirm 链）——决定配色</summary>
         public bool IsConfirmChain { get; private set; }
+        public bool IsUnassigned { get; private set; }
+
+        public void SetAssignment(bool? isConfirm)
+        {
+            IsUnassigned = !isConfirm.HasValue;
+            IsConfirmChain = isConfirm.GetValueOrDefault();
+            EnableInClassList("vn-node--unassigned", IsUnassigned);
+            EnableInClassList("vn-node--confirm", isConfirm == true);
+            EnableInClassList("vn-choice--confirm", this is ChoiceNodeView && isConfirm == true);
+            this.Query<Port>().ForEach(p => p.EnableInClassList("vn-port-confirm", isConfirm == true));
+        }
 
         public Port InputPort { get; protected set; }
         public Port OutputPort { get; protected set; }

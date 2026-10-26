@@ -62,6 +62,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         /// <summary>R10：运行时命令高亮区间（命令全文偏移 → 状态），由 Window 每帧注入。</summary>
         private readonly List<RuntimeHighlightSpan> _runtimeSpans = new List<RuntimeHighlightSpan>();
+        private Dictionary<int, int> _runtimeSourcePositions = new Dictionary<int, int>();
+
+        public void SetRuntimePositionMap(Dictionary<int, int> positions)
+        {
+            _runtimeSourcePositions = positions ?? new Dictionary<int, int>();
+        }
 
         private struct RuntimeHighlightSpan
         {
@@ -72,40 +78,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         /// <summary>文本被用户编辑（每次改动立即触发；外部做防抖）。</summary>
         public event Action<string> OnTextChanged;
+        public event Action OnFindRequested;
 
         /// <summary>焦点从本编辑器移出。外部可在此做规范化回填 —— 打字期间不能回填。</summary>
         public event Action OnFocusLost;
-
-        /// <summary>
-        /// 2026-09-03：编辑器请求外部恢复 UIToolkit 焦点。
-        ///
-        /// <para><b>触发场景</b>：用户按 Tab（含 Shift+Tab）后。即使 IMGUI 内部
-        /// <see cref="HandleKeyDown"/> 已 <c>e.Use()</c> 消化了 Tab 并插入 4 空格，
-        /// UIToolkit 的 FocusController 仍会把焦点切到下一个 focusable element
-        /// （出口段 IMGUIContainer），导致本编辑器视觉失焦、光标消失、后续键盘
-        /// 事件不再派发到本编辑器。</para>
-        ///
-        /// <para><b>根因</b>：焦点切换发生在 UIToolkit 层，IMGUI 的 <c>e.Use()</c>
-        /// 不影响 UIToolkit 焦点。现有三套拦截方案全部失效：
-        /// <list type="bullet">
-        /// <item><c>tabIndex = -1</c>：不影响 Tab 焦点切换</item>
-        /// <item>BubbleUp <c>StopPropagation</c> + <c>container.Focus()</c>：BubbleUp
-        ///   不会回到原 container（事件 target 已是新 container，冒泡路径不经过原 container）</item>
-        /// <item>TrickleDown <c>PreventDefault</c>：对 Tab 焦点切换无效（焦点切换
-        ///   不是 KeyDownEvent 的"默认行为"，PreventDefault 管不到）</item>
-        /// <item>同步 <c>OnFocusRestoreRequested</c> + <c>container.Focus()</c>：在
-        ///   IMGUI onGUIHandler 期间调用，被 UIToolkit DefaultAction 阶段覆盖
-        ///   （焦点切换在 KeyDownEvent 的 DefaultAction 阶段执行，container.Focus()
-        ///   在 AtTarget 阶段调用后又被 DefaultAction 切走）</item>
-        /// </list></para>
-        ///
-        /// <para><b>成熟方案</b>：IMGUI 处理 Tab 之后，设置 <see cref="PendingRefocus"/>
-        /// 标志。外部在 IMGUIContainer 的 <c>BlurEvent</c>（焦点切走后立即触发）
-        /// 中检查此标志，若为 true 则 <c>schedule container.Focus()</c> 异步恢复
-        /// 焦点。<c>BlurEvent</c> 在 DefaultAction 焦点切换完成之后才派发，所以
-        /// 此时 <c>container.Focus()</c> 不会被覆盖。</para>
-        /// </summary>
-        public event Action OnFocusRestoreRequested;
 
         /// <summary>
         /// 用户单击落在某条命令范围内时触发（2026-09-03 新增）。
@@ -120,20 +96,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// </summary>
         public event Action<int, bool> OnCommandDoubleClicked;
 
-        /// <summary>
-        /// 2026-09-03：Tab 按下后请求外部恢复焦点的标志。
-        ///
-        /// <para>IMGUI <see cref="HandleKeyDown"/> 处理 Tab 之后置为 true。外部
-        /// （<see cref="TextChainEditor"/>）在 IMGUIContainer 的 <c>BlurEvent</c>
-        /// 回调中检查此标志：若为 true，说明焦点切走是 Tab 触发的，需要恢复；
-        /// 清除标志后 <c>schedule container.Focus()</c> 把焦点取回。</para>
-        ///
-        /// <para>用标志而非直接在 <c>OnFocusRestoreRequested</c> 事件中恢复焦点，
-        /// 是因为同步调用 <c>container.Focus()</c> 在 IMGUI onGUIHandler 期间会被
-        /// UIToolkit DefaultAction 阶段覆盖（用户 2026-09-03 反馈验证）。必须等
-        /// <c>BlurEvent</c>（焦点切走之后）才能可靠恢复。</para>
-        /// </summary>
-        public bool PendingRefocus;
+        private bool _leftAltHeld;
 
         /// <summary>
         /// 是否持有键盘焦点。外部（如规范化回填）据此判断能否安全覆写文本：
@@ -148,6 +111,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private int _selectAnchor;  // 选区锚点（= _cursor 表示无选区）
 
         private Vector2 _scroll;
+        private float _viewportWidth;
+        private float _viewportHeight;
         private int _controlId;
         private bool _hasFocus;
 
@@ -381,6 +346,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             EnsureStyles();
             EnsureLayout(rect.width - GutterWidth - PadLeft * 2);
+            _viewportWidth = Mathf.Max(0f, rect.width - GutterWidth - PadLeft * 2);
+            _viewportHeight = rect.height;
+            int previousCursor = _cursor;
 
             bool wasFocus = _hasFocus;
             _controlId = GUIUtility.GetControlID(FocusType.Keyboard, rect);
@@ -407,7 +375,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
             else if (e.type == EventType.ScrollWheel && rect.Contains(e.mousePosition))
             {
-                Scroll(e.delta * 14f);
+                Scroll((e.shift ? new Vector2(e.delta.y, 0f) : e.delta) * 14f);
                 e.Use();
             }
 
@@ -438,12 +406,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 Input.imeCompositionMode = IMECompositionMode.Auto;
             }
 
+            if (e.type == EventType.KeyUp && e.keyCode == KeyCode.LeftAlt)
+                ResetLeftAltKey();
             if (_hasFocus && e.type == EventType.KeyDown)
                 HandleKeyDown(e);
 
             // 键盘编辑可能刚改过文本 → 绘制前必须让"逻辑行"与"可视行"再次对齐。
             // 否则会出现 _rows 还是旧的、_lineStarts 已经是新的，导致行索引越界。
             EnsureLayout(rect.width - GutterWidth - PadLeft * 2);
+            if (_hasFocus && (previousCursor != _cursor || e.type == EventType.KeyDown))
+                EnsureCursorVisible();
 
             // ---- 绘制 ----
             DrawBackground(rect);
@@ -467,7 +439,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (wasFocus != _hasFocus)
             {
                 _desiredColumn = -1;
-                if (!_hasFocus) OnFocusLost?.Invoke();
+                if (!_hasFocus)
+                {
+                    ResetLeftAltKey();
+                    OnFocusLost?.Invoke();
+                }
             }
         }
 
@@ -781,15 +757,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 foreach (var cmd in ScanCommandSpans(line))
                 {
                     int absStart = _lineStarts[li] + cmd.NameStart;
+                    if (!_runtimeSourcePositions.TryGetValue(absStart, out int sourcePosition)) continue;
 
                     var running = isConfirm ? state.ConfirmRunning : state.EntryRunning;
                     var executed = isConfirm ? state.ConfirmExecuted : state.EntryExecuted;
                     int pointer = isConfirm ? state.ConfirmPointer : state.EntryPointer;
 
                     RuntimeNodeState s = RuntimeNodeState.None;
-                    if (running.Contains(absStart)) s = RuntimeNodeState.Running;
-                    else if (pointer == absStart) s = RuntimeNodeState.Pointer;
-                    else if (executed.Contains(absStart)) s = RuntimeNodeState.Executed;
+                    if (running.Contains(sourcePosition)) s = RuntimeNodeState.Running;
+                    else if (pointer == sourcePosition) s = RuntimeNodeState.Pointer;
+                    else if (executed.Contains(sourcePosition)) s = RuntimeNodeState.Executed;
 
                     if (s == RuntimeNodeState.None) continue;
                     _runtimeSpans.Add(new RuntimeHighlightSpan
@@ -879,7 +856,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 if (col >= span.NameStart && col <= span.ArgEnd)
                 {
-                    startPosition = _lineStarts[lineIdx] + span.NameStart;
+                    int displayPosition = _lineStarts[lineIdx] + span.NameStart;
+                    if (RuntimeReplayMode && !_runtimeSourcePositions.TryGetValue(displayPosition, out startPosition))
+                        return false;
+                    if (!RuntimeReplayMode) startPosition = displayPosition;
 
                     // 是否出口段：本行在 @Confirm: 标记行之后
                     for (int i = 0; i < _lines.Count; i++)
@@ -915,6 +895,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 switch (e.keyCode)
                 {
                     case KeyCode.A: SelectAll(); e.Use(); return;
+                    case KeyCode.F: OnFindRequested?.Invoke(); e.Use(); return;
                     case KeyCode.C: DoCopy(); e.Use(); return;
                     case KeyCode.X: DoCopy(); DeleteSelection(); e.Use(); return;
                     case KeyCode.V: DoPaste(); e.Use(); return;
@@ -959,55 +940,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 case KeyCode.KeypadEnter:
                     if (!ReadOnly) { ReplaceSelection("\n"); }
                     e.Use(); return;
-                case KeyCode.Tab:
-                    // 2026-09-01：IDE 习惯 —— Tab 插 4 空格而非 \t（避免渲染宽度差异），
-                    // Shift+Tab 删前导 4 空格，选区多行按行首缩进
-                    if (!ReadOnly)
-                    {
-                        if (shift)
-                        {
-                            int line = IndexToLine(_cursor);
-                            int ls = _lineStarts[line];
-                            int remove = 0;
-                            while (remove < 4 && ls + remove < _text.Length && _text[ls + remove] == ' ')
-                                remove++;
-                            if (remove > 0) DeleteRange(ls, remove);
-                        }
-                        else if (HasSelection)
-                        {
-                            // 多行缩进：从最后一行往前插（避免索引偏移）
-                            int firstLine = IndexToLine(SelStart);
-                            int lastLine = IndexToLine(SelEnd);
-                            RecordSnapshot();
-                            for (int li = lastLine; li >= firstLine; li--)
-                                _text = _text.Insert(_lineStarts[li], "    ");
-                            _layoutDirty = true;
-                            int delta = 4 * (lastLine - firstLine + 1);
-                            _selectAnchor = _cursor = Mathf.Clamp(SelEnd + delta, 0, _text.Length);
-                            NotifyChanged();
-                        }
-                        else
-                        {
-                            ReplaceSelection("    ");
-                        }
-
-                        // 2026-09-03：通知外部恢复 UIToolkit 焦点（双管齐下）。
-                        //
-                        // 第一道防线：同步调用 OnFocusRestoreRequested → container.Focus()
-                        //   在 IMGUI onGUIHandler 期间尝试恢复焦点。若 UIToolkit 允许
-                        //   在事件处理期间修改焦点状态，立即生效。但实测可能被 UIToolkit
-                        //   DefaultAction 阶段覆盖（焦点切换在 KeyDownEvent 的 DefaultAction
-                        //   阶段执行，container.Focus() 在 AtTarget 阶段调用后又被切走）。
-                        //
-                        // 第二道防线：设置 PendingRefocus = true，外部在 IMGUIContainer 的
-                        //   BlurEvent（焦点切走后立即触发，在 DefaultAction 之后）中检查此标志，
-                        //   schedule container.Focus() 异步恢复。BlurEvent 在焦点切换完成后
-                        //   才派发，所以此时 container.Focus() 不会被 DefaultAction 覆盖。
-                        //
-                        // 详细原理见 OnFocusRestoreRequested 和 PendingRefocus 的文档。
-                        PendingRefocus = true;
-                        OnFocusRestoreRequested?.Invoke();
-                    }
+                case KeyCode.LeftAlt:
+                    HandleLeftAltKeyDown();
                     e.Use(); return;
                 case KeyCode.Escape:
                     e.Use(); return;
@@ -1018,12 +952,113 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 快捷键（如 Ctrl+Space 切换输入法、Ctrl+C/V/X 已在上面处理）。
             // 根因：原代码不检测 Ctrl，Ctrl+Space 时 e.character == ' '，被当成空格
             // 插入到文本，输入法切换被吞。
-            if (!ReadOnly && !e.control && !e.command
+            if (!ReadOnly && !e.control && !e.command && !e.alt
                 && e.character != '\0' && !char.IsControl(e.character))
             {
                 ReplaceSelection(e.character.ToString());
                 e.Use();
             }
+        }
+
+        public void HandleLeftAltKeyDown()
+        {
+            if (_leftAltHeld || ReadOnly || RuntimeReplayMode) return;
+            _leftAltHeld = true;
+            IndentFourSpaces();
+        }
+
+        public void ResetLeftAltKey() => _leftAltHeld = false;
+
+        private void IndentFourSpaces()
+        {
+            EnsureLayout(0f);
+            int firstLine = IndexToLine(HasSelection ? SelStart : _cursor);
+            int lastLine = IndexToLine(HasSelection ? SelEnd : _cursor);
+            if (HasSelection && lastLine > firstLine && SelEnd == _lineStarts[lastLine]) lastLine--;
+
+            if (firstLine == lastLine)
+            {
+                ReplaceSelection("    ");
+                EnsureLayout(0f);
+                EnsureCursorVisible();
+                return;
+            }
+
+            RecordSnapshot();
+            for (int line = lastLine; line >= firstLine; line--)
+            {
+                int start = _lineStarts[line];
+                _text = _text.Insert(start, "    ");
+                if (_cursor >= start) _cursor += 4;
+                if (_selectAnchor >= start) _selectAnchor += 4;
+            }
+            _layoutDirty = true;
+            NotifyChanged();
+            EnsureLayout(0f);
+            EnsureCursorVisible();
+        }
+
+        public bool FindNext(string search)
+        {
+            if (string.IsNullOrEmpty(search)) return false;
+            int start = Mathf.Clamp(_cursor, 0, _text.Length);
+            int match = _text.IndexOf(search, start, StringComparison.OrdinalIgnoreCase);
+            if (match < 0 && start > 0)
+                match = _text.IndexOf(search, 0, StringComparison.OrdinalIgnoreCase);
+            if (match < 0) return false;
+            _selectAnchor = match;
+            _cursor = match + search.Length;
+            EnsureLayout(0f);
+            EnsureCursorVisible();
+            return true;
+        }
+
+        public bool ReplaceNext(string search, string replacement)
+        {
+            if (ReadOnly || RuntimeReplayMode || string.IsNullOrEmpty(search)) return false;
+            if (!HasSelection || !string.Equals(_text.Substring(SelStart, SelEnd - SelStart),
+                    search, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!FindNext(search)) return false;
+            }
+            ReplaceSelection(replacement ?? "");
+            EnsureLayout(0f);
+            FindNext(search);
+            return true;
+        }
+
+        public int ReplaceAll(string search, string replacement)
+        {
+            if (ReadOnly || RuntimeReplayMode || string.IsNullOrEmpty(search)) return 0;
+            var result = new StringBuilder();
+            int cursor = 0;
+            int count = 0;
+            int match;
+            while ((match = _text.IndexOf(search, cursor, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                result.Append(_text, cursor, match - cursor);
+                result.Append(replacement ?? "");
+                cursor = match + search.Length;
+                count++;
+            }
+            if (count == 0) return 0;
+            result.Append(_text, cursor, _text.Length - cursor);
+            RecordSnapshot();
+            _text = result.ToString();
+            _cursor = _selectAnchor = Mathf.Min(_cursor, _text.Length);
+            _layoutDirty = true;
+            NotifyChanged();
+            EnsureLayout(0f);
+            EnsureCursorVisible();
+            return count;
+        }
+
+        public void GoToLine(int lineNumber)
+        {
+            EnsureLayout(0f);
+            int line = Mathf.Clamp(lineNumber - 1, 0, _lines.Count - 1);
+            _cursor = _selectAnchor = _lineStarts[line];
+            EnsureCursorVisible();
         }
 
         private void MoveHorizontal(int dir, bool shift, bool byWord)
@@ -1124,10 +1159,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void ReplaceSelection(string insert)
         {
-            if (HasSelection) DeleteSelection();
-            InsertAt(_cursor, insert);
-            _cursor += insert.Length;
+            if (ReadOnly) return;
+            int start = HasSelection ? SelStart : _cursor;
+            int length = HasSelection ? SelEnd - start : 0;
+            RecordSnapshot();
+            _text = _text.Remove(start, length).Insert(start, insert);
+            _cursor = start + insert.Length;
             _selectAnchor = _cursor;
+            _layoutDirty = true;
+            NotifyChanged();
         }
 
         private void DeleteSelection()
@@ -1411,13 +1451,35 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             return _lines[line].IndexOf(SelectedSignature, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        // 滚动（供外部滚轮事件调用）
+        private void EnsureCursorVisible()
+        {
+            if (_lines.Count == 0 || _viewportWidth <= 0f) return;
+            int line = IndexToLine(_cursor);
+            string text = _lines[line];
+            EnsureLineAdvance(text);
+            int column = Mathf.Clamp(_cursor - _lineStarts[line], 0, text.Length);
+            float x = _lineAdvanceX[column];
+            float y = PadTop + line * _lineHeight;
+            if (x < _scroll.x) _scroll.x = x;
+            else if (x + 12f > _scroll.x + _viewportWidth)
+                _scroll.x = x + 12f - _viewportWidth;
+            if (y < _scroll.y) _scroll.y = y;
+            else if (y + _lineHeight > _scroll.y + _viewportHeight)
+                _scroll.y = y + _lineHeight - _viewportHeight;
+            _scroll.x = Mathf.Max(0f, _scroll.x);
+            _scroll.y = Mathf.Max(0f, _scroll.y);
+        }
+
         public void Scroll(Vector2 delta)
         {
             _scroll += delta;
-            _scroll.x = 0f;   // 2026-09-01 v3：移除自动换行后仍不水平滚动（行结构由 SerializeFormatted 提供）
+            EnsureLayout(0f);
+            float maxWidth = 0f;
+            foreach (string line in _lines)
+                maxWidth = Mathf.Max(maxWidth, _textStyle.CalcSize(new GUIContent(line)).x);
+            _scroll.x = Mathf.Clamp(_scroll.x, 0f, Mathf.Max(0f, maxWidth - _viewportWidth + PadLeft));
             _scroll.y = Mathf.Clamp(_scroll.y, 0f,
-                Mathf.Max(0f, _lines.Count * _lineHeight - 40f));
+                Mathf.Max(0f, ContentHeight - _viewportHeight));
         }
 
         public float ContentHeight => _lines.Count * _lineHeight + PadTop * 2;
@@ -1478,7 +1540,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     i++;
                     while (i < line.Length && line[i] != '"')
                     {
-                        if (line[i] == '\\') i++;
+                        if (line[i] == '\\' && i + 1 < line.Length) i++;
                         i++;
                     }
                     if (i < line.Length) i++;  // 闭合引号

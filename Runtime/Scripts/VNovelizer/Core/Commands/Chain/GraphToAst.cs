@@ -289,26 +289,27 @@ namespace VNovelizer.Core.Commands.Chain
             var texts = node.ChoiceTexts;
             int optionCount = texts != null ? texts.Count : 0;
 
+            var branches = new Dictionary<int, string>();
             foreach (var pair in ctx.Graph.GetOrderedSuccessors(node.Id))
             {
-                if (pair.Key < 0) continue; // 主延续边由主链 ParseSequence 消费
-
-                var opt = new ChoiceOption
-                {
-                    Text = pair.Key < optionCount ? (texts[pair.Key] ?? "") : "",
-                };
-
-                var branch = ParseSequence(ctx, pair.Value, null, depth + 1);
-                if (!ctx.Result.Success) return choice;
-
-                opt.Chain = Normalize(branch);
-                choice.Options.Add(opt);
+                if (pair.Key < 0) continue;
+                branches[pair.Key] = pair.Value;
+                optionCount = System.Math.Max(optionCount, pair.Key + 1);
             }
 
-            // 选项文本数多于已连线端口（空链选项）：补齐为独立空链选项。
-            for (int i = choice.Options.Count; i < optionCount; i++)
+            for (int i = 0; i < optionCount; i++)
             {
-                choice.Options.Add(new ChoiceOption { Text = texts[i] ?? "", Chain = null });
+                var opt = new ChoiceOption
+                {
+                    Text = i < (texts?.Count ?? 0) ? (texts[i] ?? "") : "",
+                };
+                if (branches.TryGetValue(i, out string branchStart))
+                {
+                    var branch = ParseSequence(ctx, branchStart, null, depth + 1);
+                    if (!ctx.Result.Success) return choice;
+                    opt.Chain = Normalize(branch);
+                }
+                choice.Options.Add(opt);
             }
 
             return choice;

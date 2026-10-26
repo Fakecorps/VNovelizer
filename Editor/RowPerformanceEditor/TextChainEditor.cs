@@ -13,10 +13,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
     ///
     /// <para><b>2026-09-03 合二为一重构</b>：原进入段 + 出口段两个独立编辑器
     /// 合并为单个文本框。出口段通过 <c>@Confirm:</c> 关键字分隔（单独成行，
-    /// 大小写不敏感，与 <see cref="ScriptParser.SplitConfirmSection"/> 一致）。
-    /// 合并后 UIToolkit 只有一个 IMGUIContainer，Tab 键不再切焦点到"出口段
-    /// 编辑器"（原双编辑器方案的根本问题 —— 详见 <see cref="VnCodeEditorIMGUI"/>
-    /// 的 OnFocusRestoreRequested 文档对四套失效方案的分析）。</para>
+    /// 大小写不敏感，与 <see cref="ScriptParser.SplitConfirmSection"/> 一致）。</para>
     ///
     /// <para><b>文本格式</b>：</para>
     /// <code>
@@ -40,7 +37,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
     public class TextChainEditor
     {
         /// <summary>文本被编辑（isConfirm, 新文本）——外部负责解析重建图。</summary>
-        public event Action<bool, string> OnChainTextChanged;
+        public event Func<bool, string, bool> OnChainTextChanged;
+
+        public event Action OnDraftChanged;
 
         /// <summary>R10：Play 模式下双击命令 token（命令全文偏移 = 源 Position, 是否出口段）。</summary>
         public event Action<int, bool> OnCommandDoubleClicked;
@@ -76,13 +75,30 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         /// <summary>编辑器持有焦点期间暂存的规范化合并文本（失焦后落回）。</summary>
         private string _pendingText;
+        private int _textRevision;
+        private int _pendingRevision;
 
         private VnCodeEditorIMGUI _editor;
+        private IMGUIContainer _codeContainer;
 
         public TextChainEditor(VisualElement root)
         {
             _root = root;
             _root.AddToClassList("vn-textchain-panel");
+            _root.RegisterCallback<KeyDownEvent>(e =>
+            {
+                if (e.keyCode != KeyCode.LeftAlt || _editor == null || _editor.RuntimeReplayMode) return;
+                var focused = _root.panel?.focusController?.focusedElement as VisualElement;
+                if (focused != _codeContainer && (focused == null || !_codeContainer.Contains(focused))) return;
+                _editor.HandleLeftAltKeyDown();
+                _codeContainer.MarkDirtyRepaint();
+                e.PreventDefault();
+                e.StopImmediatePropagation();
+            }, TrickleDown.TrickleDown);
+            _root.RegisterCallback<KeyUpEvent>(e =>
+            {
+                if (e.keyCode == KeyCode.LeftAlt) _editor?.ResetLeftAltKey();
+            }, TrickleDown.TrickleDown);
             Rebuild();
         }
 
@@ -100,8 +116,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <para><b>2026-09-03 合并后</b>：entry + confirm 先拼成单文本（@Confirm: 分隔），
         /// 再整体写入唯一编辑器。</para>
         /// </summary>
-        public void SetTexts(string entry, string confirm)
+        public void SetTexts(string entry, string confirm, bool force = false)
         {
+            if (force)
+            {
+                CancelPending();
+                _pendingText = null;
+            }
             if (entry != null) _entryText = entry;
             if (confirm != null) _confirmText = confirm;
 
@@ -118,7 +139,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 // 避免用缓存值覆盖用户正在输入的半成品。
                 if (entry == null && confirm == null) return;
 
-                if (_editor.HasFocus) _pendingText = MergeTexts(_entryText, _confirmText);
+                if (_editor.HasFocus && !force) _pendingText = MergeTexts(_entryText, _confirmText);
                 else WriteTo(_editor, MergeTexts(_entryText, _confirmText), resetHistory: true);
             }
         }
@@ -142,7 +163,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 // 2026-09-03：同 SetTexts，entry 和 confirm 都为 null 时不动文本。
                 if (entry == null && confirm == null) return;
 
-                if (_editor.HasFocus) _pendingText = MergeTexts(_entryText, _confirmText);
+                if (_editor.HasFocus)
+                {
+                    _pendingText = MergeTexts(_entryText, _confirmText);
+                    _pendingRevision = _textRevision;
+                }
                 else WriteTo(_editor, MergeTexts(_entryText, _confirmText), resetHistory: false);
             }
         }
@@ -150,7 +175,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void WriteTo(VnCodeEditorIMGUI editor, string value, bool resetHistory)
         {
             if (editor == null) return;
-            if (editor.Text == value) return;
+            if (editor.Text == value)
+            {
+                if (resetHistory) editor.ResetHistory();
+                return;
+            }
 
             _suppressEcho = true;
             editor.SetTextWithoutNotify(value);
@@ -165,9 +194,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             string pending = _pendingText;
             _pendingText = null;
 
-            // 2026-09-04：编辑器文本与 pending 不同 = 用户已继续输入，
-            // pending 已过期——不覆盖用户输入，交给防抖用最新文本重建图。
-            if (_editor != null && _editor.Text != pending)
+            // 格式化前后的文本本来就不同；只有此后发生了新的键入才应丢弃回填。
+            if (_editor != null && _textRevision != _pendingRevision)
             {
                 SplitByConfirm(_editor.Text, out string entry, out string confirm);
                 _entryText = entry;
@@ -212,6 +240,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 _editor.SelectedSignature = sig;
         }
 
+        public void RestoreDraft(string text)
+        {
+            if (_editor == null || text == null) return;
+            CancelPending();
+            _pendingText = null;
+            _editor.SetTextWithoutNotify(text);
+            _editor.ResetHistory();
+            OnTextChanged(text);
+        }
+
+        public string GetFullText() => _editor?.Text ?? MergeTexts(_entryText, _confirmText);
+
         public void Refresh() => Rebuild();
 
         /// <summary>外部读取当前进入段文本（从编辑器实时拆分）。</summary>
@@ -253,12 +293,43 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             t.AddToClassList("vn-insp-sectitle");
             section.Add(t);
 
-            // IMGUI 自绘代码编辑器（通过 IMGUIContainer 嵌入）——
-            // 2026-09-03 合二为一：单编辑器同时承载进入段与出口段，@Confirm: 分隔。
-            // 这从根本上消除了原双编辑器方案的 Tab 焦点切换问题
-            // （UIToolkit FocusController 把 Tab 切到"下一个 focusable element"，
-            //  原来下一个就是出口段 IMGUIContainer；合并后没有第二个 IMGUIContainer）。
+            // 单个 IMGUI 自绘编辑器承载由 @Confirm: 分隔的进入段与出口段。
             var editorContainer = BuildCodeEditor(EditorMinHeight);
+            var search = new TextField("查找") { tooltip = "查找文本（Ctrl+F）" };
+            search.AddToClassList("vn-textchain-tool-field");
+            var replacement = new TextField("替换") { tooltip = "替换为" };
+            replacement.AddToClassList("vn-textchain-tool-field");
+            var info = new Label("");
+            info.AddToClassList("vn-textchain-tool-info");
+            var actions = new VisualElement();
+            actions.AddToClassList("vn-textchain-tools");
+            actions.Add(new Button(() => info.text = _editor.FindNext(search.value) ? "已定位" : "未找到")
+                { text = "查找下一个" });
+            actions.Add(new Button(() => info.text = _editor.ReplaceNext(search.value, replacement.value)
+                ? "已替换" : "未找到") { text = "替换" });
+            actions.Add(new Button(() => info.text = $"替换 {_editor.ReplaceAll(search.value, replacement.value)} 处")
+                { text = "全部替换" });
+            var lineField = new TextField("行号") { tooltip = "跳转到行号" };
+            lineField.style.width = 100;
+            var gotoRow = new VisualElement();
+            gotoRow.AddToClassList("vn-textchain-tools");
+            gotoRow.Add(lineField);
+            gotoRow.Add(new Button(() =>
+            {
+                if (int.TryParse(lineField.value, out int line)) _editor.GoToLine(line);
+            }) { text = "跳行" });
+            gotoRow.Add(info);
+            search.RegisterCallback<KeyDownEvent>(e =>
+            {
+                if (e.keyCode != KeyCode.Return && e.keyCode != KeyCode.KeypadEnter) return;
+                info.text = _editor.FindNext(search.value) ? "已定位" : "未找到";
+                e.StopPropagation();
+            });
+            _editor.OnFindRequested += () => search.Focus();
+            section.Add(search);
+            section.Add(replacement);
+            section.Add(actions);
+            section.Add(gotoRow);
             section.Add(editorContainer);
 
             _root.Add(section);
@@ -268,7 +339,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 "choice 选项：choice{描述1, 命令链1, 描述2, 命令链2, ...}（描述含逗号时用双引号包裹）。\n" +
                 "用 @Confirm: 单独成行分隔进入段与出口段，@Confirm: 之后的命令在用户确认推进时执行。\n" +
                 "文本与节点图双向实时联动 —— 编辑即重建节点图（200ms 防抖），解析失败的中间态不会破坏图。\n" +
-                "选中画布节点时，编辑器里对应行会整行高亮（橙色）。");
+                "选中画布节点时，编辑器里对应行会整行高亮（橙色）。左 Alt 缩进 4 空格。");
             help.AddToClassList("vn-textchain-help");
             _root.Add(help);
         }
@@ -310,34 +381,14 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 _editor.OnGUI(rect);
             });
 
+            _codeContainer = container;
+
             // 自适应高度：最小 height，剩余空间由 flexGrow 分配。
             container.style.minHeight = height;
             container.style.flexGrow = 1;
             container.style.flexShrink = 1;
             container.AddToClassList("vn-codefield-imgui");
-
-            // 2026-09-03：合二为一后只有一个 IMGUIContainer，Tab 焦点切换问题
-            // 大幅缓解（没有"出口段 IMGUIContainer"作为下一个 focusable element）。
-            // 但仍保留 BlurEvent 兜底：若 Tab 切到其他 focusable element（如
-            // Inspector 的 TextField 或工具栏按钮），BlurEvent 会把焦点取回。
-            // 详细原理见 VnCodeEditorIMGUI.OnFocusRestoreRequested 和 PendingRefocus 文档。
-            bool refocusing = false;
-            _editor.OnFocusRestoreRequested += () =>
-            {
-                if (refocusing) return;
-                refocusing = true;
-                try { container.Focus(); }
-                finally { refocusing = false; }
-            };
-
-            container.RegisterCallback<BlurEvent>(e =>
-            {
-                if (!_editor.PendingRefocus) return;
-                _editor.PendingRefocus = false;
-                // 在当前事件循环结束后执行（不是下一帧），避免在 BlurEvent 处理
-                // 期间修改焦点状态引发重入，同时最小化延迟。
-                container.schedule.Execute(() => container.Focus()).StartingIn(0);
-            });
+            container.RegisterCallback<BlurEvent>(_ => _editor.ResetLeftAltKey());
 
             return container;
         }
@@ -350,42 +401,54 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             SplitByConfirm(newText, out string entry, out string confirm);
             _entryText = entry ?? "";
             _confirmText = confirm ?? "";
+            _textRevision++;
+            _pendingText = null;
+            OnDraftChanged?.Invoke();
 
             _debounce?.Pause();
-
-            var scheduled = _root.schedule.Execute(() =>
-            {
-                _debounce = null;
-
-                string current = _editor?.Text ?? "";
-                SplitByConfirm(current, out string curEntry, out string curConfirm);
-
-                // 分别触发进入段和出口段的图重建，只触发实际变化的段。
-                // 两次触发都走 HandleChainTextChanged，各自独立解析重建对应泳道。
-                // 2026-09-02：去掉 Trim 比较逻辑，由 HandleChainTextChanged 决定是否
-                // 重建图（解析失败的中间态会自动跳过）。
-                // 2026-09-04：与 synced 基线比较——空文本（清空某段）也能触发；
-                // 未变化的段不触发，避免只编辑出口段时把进入段的合成模板标志
-                // （_syntheticTemplate）误清除、保存时被意外"提升"为定制行。
-                if (curEntry != _syncedEntry)
-                {
-                    OnChainTextChanged?.Invoke(false, curEntry);
-                    _syncedEntry = curEntry;
-                }
-                if (curConfirm != _syncedConfirm)
-                {
-                    OnChainTextChanged?.Invoke(true, curConfirm);
-                    _syncedConfirm = curConfirm;
-                }
-            }).StartingIn(DebounceMs);
-
-            _debounce = scheduled;
+            _debounce = _root.schedule.Execute(Flush).StartingIn(DebounceMs);
         }
 
         public void CancelPending()
         {
             _debounce?.Pause();
             _debounce = null;
+        }
+
+        public void SetRuntimeSourceTexts(string entrySource, string confirmSource)
+        {
+            if (_editor == null) return;
+            var positions = new Dictionary<int, int>();
+            string entry = GetEntryText();
+            string confirm = GetConfirmText();
+            MapCommandPositions(entry, entrySource, 0, positions);
+            int confirmOffset = string.IsNullOrEmpty(entry)
+                ? "@Confirm:\n".Length : entry.Length + "\n@Confirm:\n".Length;
+            MapCommandPositions(confirm, confirmSource, confirmOffset, positions);
+            _editor.SetRuntimePositionMap(positions);
+        }
+
+        private static void MapCommandPositions(string display, string source, int displayOffset,
+            Dictionary<int, int> positions)
+        {
+            var formatted = ChainLexer.Tokenize(display ?? "");
+            var original = ChainLexer.Tokenize(source ?? "");
+            if (formatted.Count != original.Count) return;
+            var segmentPositions = new Dictionary<int, int>();
+            for (int i = 0; i < formatted.Count; i++)
+            {
+                if (formatted[i].Type != original[i].Type) return;
+                if (formatted[i].Type != ChainTokenType.Command) continue;
+                string a = formatted[i].Text;
+                string b = original[i].Text;
+                int aEnd = a.IndexOfAny(new[] { '(', '{' });
+                int bEnd = b.IndexOfAny(new[] { '(', '{' });
+                if (aEnd < 0 || bEnd < 0 ||
+                    !string.Equals(a.Substring(0, aEnd).Trim(), b.Substring(0, bEnd).Trim(),
+                        StringComparison.OrdinalIgnoreCase)) return;
+                segmentPositions[displayOffset + formatted[i].Position] = original[i].Position;
+            }
+            foreach (var pair in segmentPositions) positions[pair.Key] = pair.Value;
         }
 
         /// <summary>R10：注入运行时命令高亮（state 为 null 时清空）。</summary>
@@ -410,16 +473,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             SplitByConfirm(current, out string entry, out string confirm);
 
             // 与防抖回调同规则：只触发相对 synced 基线变化的段（含清空场景）
-            if (entry != _syncedEntry)
-            {
-                OnChainTextChanged?.Invoke(false, entry);
+            if (entry != _syncedEntry && (OnChainTextChanged?.Invoke(false, entry) ?? false))
                 _syncedEntry = entry;
-            }
-            if (confirm != _syncedConfirm)
-            {
-                OnChainTextChanged?.Invoke(true, confirm);
+            if (confirm != _syncedConfirm && (OnChainTextChanged?.Invoke(true, confirm) ?? false))
                 _syncedConfirm = confirm;
-            }
         }
 
         // ---------------- @Confirm: 拆分 / 合并 ----------------

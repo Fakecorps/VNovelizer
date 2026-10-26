@@ -66,6 +66,7 @@ namespace VNovelizer.Editor
             "showbg(Beach) -> choice{去海边, jump(2001), 回家, loadscript(Chapter2)}",
             // R11：引号包裹含逗号的描述 + 空链选项
             "choice{\"选项A,含逗号\", wait(0.5) -> jump(2001), 继续, }",
+            "choice{左, wait(1), 中间空链, , 右, jump(3)}",
             // R11：嵌套 choice（选项链内再弹选项）
             "choice{问路, choice{走左边, jump(1001), 走右边, jump(1002)}, 离开, jump(2001)}",
             // R11：选项链内含串行 + 分组（排版递归最深路径）

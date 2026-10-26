@@ -11,7 +11,7 @@ using VNovelizer.Core.Commands.Meta;
 namespace VNovelizer.Editor.RowPerformanceEditor
 {
     /// <summary>
-    /// 左侧命令面板：命令列表 + 泳道切换 + 拖拽建节点 + 双击建节点。
+    /// 左侧命令面板：命令列表 + 自由拖拽/双击建节点。
     ///
     /// <para>
     /// <b>交互方式</b>（2026-08-26 修订）：
@@ -27,8 +27,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
     /// </summary>
     public class CommandPalette
     {
-        /// <summary>请求在画布上创建命令节点（命令名, 是否出口段, 画布坐标）</summary>
-        public event Action<string, bool, Vector2?> OnRequestCreateNode;
+        /// <summary>请求在画布上创建待连接命令节点（命令名, 画布坐标）</summary>
+        public event Action<string, Vector2?> OnRequestCreateNode;
 
         /// <summary>请求创建 FORK/JOIN 并行组</summary>
         public event Action<bool> OnRequestCreateForkJoin;
@@ -36,11 +36,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private readonly VisualElement _root;
         private readonly ScrollView _list;
         private ToolbarSearchField _search;
-        private Button _entryTab;
-        private Button _confirmTab;
-
-        /// <summary>当前编辑的泳道：false = 进入段，true = 出口段</summary>
-        public bool TargetConfirmChain { get; private set; }
 
         /// <summary>DragAndDrop 传输用的数据键</summary>
         private const string DragDataKey = "VN_PaletteCommand";
@@ -73,21 +68,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _search.RegisterValueChangedCallback(_ => Rebuild());
             _root.Add(_search);
 
-            var tabs = new VisualElement();
-            tabs.AddToClassList("vn-chain-tabs");
-
-            _entryTab = new Button(() => SetTarget(false)) { text = "进入段" };
-            _entryTab.AddToClassList("vn-chain-tab");
-            tabs.Add(_entryTab);
-
-            _confirmTab = new Button(() => SetTarget(true)) { text = "出口段" };
-            _confirmTab.AddToClassList("vn-chain-tab");
-            tabs.Add(_confirmTab);
-
-            _root.Add(tabs);
-            UpdateTabVisual();
-
-            var forkBtn = new Button(() => OnRequestCreateForkJoin?.Invoke(TargetConfirmChain))
+            var forkBtn = new Button(() =>
+            {
+                var menu = new GenericMenu();
+                menu.AddItem(new GUIContent("进入时"), false,
+                    () => OnRequestCreateForkJoin?.Invoke(false));
+                menu.AddItem(new GUIContent("确认后"), false,
+                    () => OnRequestCreateForkJoin?.Invoke(true));
+                menu.ShowAsContext();
+            })
             {
                 text = "添加 FORK / JOIN 并行组"
             };
@@ -98,32 +87,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _root.Add(forkBtn);
         }
 
-        private void SetTarget(bool confirmChain)
-        {
-            TargetConfirmChain = confirmChain;
-            UpdateTabVisual();
-            Rebuild();
-        }
-
-        private void UpdateTabVisual()
-        {
-            _entryTab.RemoveFromClassList("vn-chain-tab--active");
-            _confirmTab.RemoveFromClassList("vn-chain-tab--active-confirm");
-
-            if (TargetConfirmChain) _confirmTab.AddToClassList("vn-chain-tab--active-confirm");
-            else _entryTab.AddToClassList("vn-chain-tab--active");
-        }
-
         private void BuildFooterNote()
         {
             var note = new Label(
-                "拖拽命令到画布建节点，或双击在画布中心创建。\n" +
-                "签名由 [VNParam] 特性反射生成。标 [G] 者无元数据，为通用节点。");
+                "命令块可放在画布任意位置；连接后才确定进入时/确认后执行。\n" +
+                "待连接命令块不会写入剧本，需连线或删除后才能保存。");
             note.AddToClassList("vn-panel-note");
             _root.Add(note);
         }
 
-        /// <summary>重建命令列表（搜索 / 泳道切换 / 元数据刷新后调用）。</summary>
+        /// <summary>重建命令列表（搜索 / 元数据刷新后调用）。</summary>
         public void Rebuild()
         {
             _list.Clear();
@@ -218,7 +191,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 if (evt.clickCount >= 2)
                 {
-                    OnRequestCreateNode?.Invoke(info.Name, TargetConfirmChain, null);
+                    OnRequestCreateNode?.Invoke(info.Name, null);
                     evt.StopPropagation();
                 }
             });

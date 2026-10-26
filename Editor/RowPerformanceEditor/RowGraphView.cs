@@ -14,8 +14,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
     /// 行演出编辑器的画布（2026-08-27 重构：执行流从左到右）。
     ///
     /// <para>
-    /// <b>双泳道</b>：进入段在上半区（<see cref="ChainAutoLayout.EntryLaneY"/>），
-    /// 出口段在下半区（<see cref="ChainAutoLayout.ConfirmLaneY"/>），两条链各自从左到右流动。
+    /// <b>自由画布</b>：两套执行锚点初始分开展示，但命令块的位置没有执行语义；
+    /// 连入进入时或确认后链时才确定执行阶段，两段仍通过 @Confirm 保存。
     /// </para>
     ///
     /// <para>
@@ -47,14 +47,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// （两次独立拖动被合并成一条、且快照记录的是移动中位置，均不符合直觉）。
         /// </summary>
         public event Action OnNodeDragGestureStarted;
+        public event Action OnNodeDragGestureFinished;
 
         public event Action OnRequestPromotion;
 
-        /// <summary>请求在画布指定位置创建命令节点（命令名, 是否出口段, 画布坐标）</summary>
-        public event Action<string, bool, Vector2> OnRequestCreateNodeAt;
+        /// <summary>请求在画布指定位置创建未归属的命令节点（命令名, 画布坐标）。</summary>
+        public event Action<string, Vector2> OnRequestCreateNodeAt;
 
         public ChainGraph EntryGraph { get; private set; } = new ChainGraph();
         public ChainGraph ConfirmGraph { get; private set; } = new ChainGraph();
+        public ChainGraph UnassignedGraph { get; private set; } = new ChainGraph();
+        public int UnassignedCount => UnassignedGraph.NodeCount;
         public VNLineContext LineContext { get; set; }
 
         private readonly Dictionary<string, VNNodeViewBase> _nodeViews =
@@ -66,15 +69,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         /// <summary>拖拽悬停提示</summary>
         private Label _dragHint;
-
-        /// <summary>
-        /// 拖拽幽灵预览框（Fix-DropLane 2026-10-21）：实时显示落点位置与将落入的泳道。
-        /// 用户反馈"节点一拖出来就是绿色的、连不上"——落点低于两泳道中线即被判定为
-        /// 出口段（绿色 confirm 配色），与进入段节点跨泳道无法连线；此前拖动过程中
-        /// 没有任何泳道预览，用户无从预知。幽灵框颜色 = 目标泳道配色，所见即所得。
-        /// </summary>
-        private VisualElement _dragGhost;
-        private Label _dragGhostLabel;
 
         public RowGraphView()
         {
@@ -93,6 +87,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             // 节点拖动手势检测（Capture 阶段——赶在 SelectionDragger 之前记录）
             RegisterCallback<PointerDownEvent>(OnPointerDownCapture, TrickleDown.TrickleDown);
+            RegisterCallback<PointerUpEvent>(e =>
+            {
+                if (e.button == 0)
+                    schedule.Execute(() => OnNodeDragGestureFinished?.Invoke()).StartingIn(0);
+            });
 
             RegisterCallback<DragUpdatedEvent>(OnDragUpdated);
             RegisterCallback<DragPerformEvent>(OnDragPerform);
@@ -103,69 +102,36 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _dragHint.style.display = DisplayStyle.None;
             _dragHint.pickingMode = PickingMode.Ignore;
             Add(_dragHint);
-
-            // 幽灵预览框放在 contentViewContainer（跟随缩放/平移，与真实落点重合）
-            _dragGhost = new VisualElement();
-            _dragGhost.AddToClassList("vn-drag-ghost");
-            _dragGhost.pickingMode = PickingMode.Ignore;
-            _dragGhostLabel = new Label("进入段");
-            _dragGhostLabel.AddToClassList("vn-drag-ghost-label");
-            _dragGhost.Add(_dragGhostLabel);
-            _dragGhost.style.display = DisplayStyle.None;
-            contentViewContainer.Add(_dragGhost);
         }
 
         // ---------------- 拖拽接收 ----------------
 
         private void OnDragUpdated(DragUpdatedEvent evt)
         {
-            if (!CommandPalette.TryGetDragCommand(out _)) return;
+            if (EditorApplication.isPlaying || !CommandPalette.TryGetDragCommand(out _)) return;
 
             DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
 
-            Vector2 canvasPos = contentViewContainer.WorldToLocal(evt.mousePosition);
-            bool isConfirm = IsConfirmDropY(canvasPos.y);
-
-            // Fix-DropLane：幽灵预览框跟随落点，配色/文本与目标泳道一致（所见即所得），
-            // 用户在松手前就能看出节点会落进进入段（蓝灰）还是出口段（绿）。
-            _dragGhost.style.left = canvasPos.x;
-            _dragGhost.style.top = canvasPos.y;
-            _dragGhost.EnableInClassList("vn-drag-ghost--confirm", isConfirm);
-            _dragGhost.EnableInClassList("vn-drag-ghost--entry", !isConfirm);
-            _dragGhostLabel.text = isConfirm ? "出口段 @Confirm" : "进入段";
-            _dragGhost.style.display = DisplayStyle.Flex;
-
-            _dragHint.text = isConfirm ? "松开创建到【出口段】" : "松开创建到【进入段】";
+            _dragHint.text = "松开创建命令块，连线后确定执行时机";
+            _dragHint.style.left = evt.localMousePosition.x + 6f;
+            _dragHint.style.top = evt.localMousePosition.y + 6f;
             _dragHint.style.display = DisplayStyle.Flex;
-            _dragHint.style.left = evt.mousePosition.x + 12;
-            _dragHint.style.top = evt.mousePosition.y + 12;
         }
 
         private void OnDragPerform(DragPerformEvent evt)
         {
-            if (!CommandPalette.TryGetDragCommand(out string commandName)) return;
+            if (EditorApplication.isPlaying || !CommandPalette.TryGetDragCommand(out string commandName)) return;
 
             Vector2 canvasPos = contentViewContainer.WorldToLocal(evt.mousePosition);
-            // 上半区=进入段，下半区=出口段（与幽灵预览框的判定一致）
-            bool isConfirm = IsConfirmDropY(canvasPos.y);
-
-            OnRequestCreateNodeAt?.Invoke(commandName, isConfirm, canvasPos);
+            OnRequestCreateNodeAt?.Invoke(commandName, canvasPos);
             CommandPalette.ClearDragData();
             _dragHint.style.display = DisplayStyle.None;
-            _dragGhost.style.display = DisplayStyle.None;
             evt.StopPropagation();
         }
 
         private void OnDragExited(DragExitedEvent evt)
         {
             _dragHint.style.display = DisplayStyle.None;
-            _dragGhost.style.display = DisplayStyle.None;
-        }
-
-        /// <summary>拖放落点的泳道判定（上半区=进入段，下半区=出口段）</summary>
-        private static bool IsConfirmDropY(float y)
-        {
-            return y > (ChainAutoLayout.EntryLaneY + ChainAutoLayout.ConfirmLaneY) / 2f;
         }
 
         // ---------------- 图重建 ----------------
@@ -180,7 +146,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         public void Rebuild(ChainGraph entryGraph, ChainGraph confirmGraph,
             Dictionary<string, Vector2> savedPositions = null,
             bool templateCollapsed = true, bool showTemplate = false,
-            bool frameAll = true)
+            bool frameAll = true, ChainGraph unassignedGraph = null)
         {
             _suppressChangeEvents = true;
 
@@ -188,6 +154,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             EntryGraph = entryGraph ?? new ChainGraph();
             ConfirmGraph = confirmGraph ?? new ChainGraph();
+            UnassignedGraph = unassignedGraph ?? new ChainGraph();
 
             // 哨兵兜底：调用方（文本解析 / 快照恢复 / 粘贴）应已装配锚点边，
             // 这里只保证节点存在，不重复连边。
@@ -199,6 +166,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             BuildLane(ConfirmGraph, isConfirm: true, centerY: ChainAutoLayout.ConfirmLaneY,
                 savedPositions: savedPositions, startX: ChainAutoLayout.StartX);
+            BuildUnassigned(savedPositions);
 
             _suppressChangeEvents = false;
 
@@ -216,6 +184,42 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             DeleteElements(graphElements.ToList());
             _nodeViews.Clear();
+        }
+
+        private void BuildUnassigned(Dictionary<string, Vector2> savedPositions)
+        {
+            int index = 0;
+            foreach (var node in UnassignedGraph.Nodes)
+            {
+                var view = CreateNodeView(node, false);
+                if (view == null) continue;
+                view.SetAssignment(null);
+                var pos = savedPositions != null && savedPositions.TryGetValue("unassigned/" + node.Id, out var saved)
+                    ? saved : new Vector2(ChainAutoLayout.StartX + 260f + index * 35f,
+                        (ChainAutoLayout.EntryLaneY + ChainAutoLayout.ConfirmLaneY) * 0.5f);
+                view.SetPosition(new Rect(pos, Vector2.zero));
+                AddElement(view);
+                view.RefreshPorts();
+                _nodeViews["u:" + node.Id] = view;
+                index++;
+            }
+            foreach (var edge in UnassignedGraph.Edges)
+            {
+                var from = GetUnassignedView(edge.FromId);
+                var to = GetUnassignedView(edge.ToId);
+                if (from == null || to?.InputPort == null) continue;
+                var output = from is ChoiceNodeView choice
+                    ? (edge.PortIndex == ChoicePort.Main ? choice.MainOutputPort : choice.GetOptionPort(edge.PortIndex))
+                    : from.OutputPort;
+                if (output != null) AddElement(output.ConnectTo(to.InputPort));
+            }
+        }
+
+        private VNNodeViewBase GetUnassignedView(string id)
+        {
+            if (id == null) return null;
+            _nodeViews.TryGetValue("u:" + id, out var view);
+            return view;
         }
 
         private void BuildLane(ChainGraph graph, bool isConfirm, float centerY,
@@ -454,7 +458,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             var portView = port.node as VNNodeViewBase;
             if (portView == null) return;
-            if (portView.IsConfirmChain != startView.IsConfirmChain) return;
+            if (!portView.IsUnassigned && !startView.IsUnassigned &&
+                portView.IsConfirmChain != startView.IsConfirmChain) return;
 
             // 影子节点（如空出口段的 NextLine 提示）是纯视图装饰——
             // 连到它身上的边永远进不了图数据，干脆禁止连线避免误导。
@@ -466,6 +471,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private GraphViewChange OnGraphViewChanged(GraphViewChange change)
         {
             if (_suppressChangeEvents) return change;
+            if (EditorApplication.isPlaying)
+            {
+                change.edgesToCreate?.Clear();
+                change.elementsToRemove?.Clear();
+                change.movedElements?.Clear();
+                return change;
+            }
 
             bool structural = (change.edgesToCreate != null && change.edgesToCreate.Count > 0) ||
                               (change.elementsToRemove != null && change.elementsToRemove.Count > 0);
@@ -506,8 +518,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 for (int i = change.edgesToCreate.Count - 1; i >= 0; i--)
                 {
-                    if (!RewriteAsInsertion(change.edgesToCreate[i]))
+                    var edge = change.edgesToCreate[i];
+                    if (!RewriteAsInsertion(edge))
                         change.edgesToCreate.RemoveAt(i);
+                    else
+                        AdoptUnassignedComponent(edge, change);
                 }
             }
 
@@ -571,7 +586,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var b = newEdge.input?.node as VNNodeViewBase;   // 新边终点
             if (a == null || b == null) return false;
             if (ReferenceEquals(a, b)) return false;
-            if (a.IsConfirmChain != b.IsConfirmChain) return false;
+            if (!a.IsUnassigned && !b.IsUnassigned &&
+                a.IsConfirmChain != b.IsConfirmChain) return false;
 
             // Terminal 锚点：按 capacity 区分容量拦截。
             //   - Single 容量端口（LineStart.出 / LineExit.入 / OnConfirmEntry.出）：已占用拒绝，
@@ -647,6 +663,45 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var bridge = c.OutputPort.ConnectTo(a.InputPort);
             AddElement(bridge);
             return true;
+        }
+
+        private void AdoptUnassignedComponent(Edge newEdge, GraphViewChange change)
+        {
+            var from = newEdge.output?.node as VNNodeViewBase;
+            var to = newEdge.input?.node as VNNodeViewBase;
+            if (from == null || to == null || from.IsUnassigned == to.IsUnassigned) return;
+
+            var anchor = from.IsUnassigned ? to : from;
+            var seed = from.IsUnassigned ? from : to;
+            var component = new HashSet<VNNodeViewBase> { seed };
+            var queue = new Queue<VNNodeViewBase>();
+            queue.Enqueue(seed);
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                foreach (var edge in edges.Concat(change.edgesToCreate ?? new List<Edge>()))
+                {
+                    if (change.elementsToRemove != null && change.elementsToRemove.Contains(edge)) continue;
+                    var a = edge.output?.node as VNNodeViewBase;
+                    var b = edge.input?.node as VNNodeViewBase;
+                    VNNodeViewBase neighbor = a == current ? b : b == current ? a : null;
+                    if (neighbor == null || !neighbor.IsUnassigned || !component.Add(neighbor)) continue;
+                    queue.Enqueue(neighbor);
+                }
+            }
+
+            var target = anchor.IsConfirmChain ? ConfirmGraph : EntryGraph;
+            foreach (var view in component)
+            {
+                string oldId = view.Data.Id;
+                _nodeViews.Remove("u:" + oldId);
+                UnassignedGraph.RemoveNode(oldId);
+                if (target.GetNode(oldId) != null)
+                    view.Data.Id = GenerateNodeId(target, view.Data.CommandName ?? "node");
+                target.AddNode(view.Data);
+                view.SetAssignment(anchor.IsConfirmChain);
+                _nodeViews[NodeViewKey(anchor.IsConfirmChain, view.Data.Id)] = view;
+            }
         }
 
         private Edge FindExistingInputEdge(Edge newEdge)
@@ -726,16 +781,18 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (removedNodes != null && removedNodes.Count > 0)
             {
                 foreach (var v in removedNodes)
-                    _nodeViews.Remove(NodeViewKey(v.IsConfirmChain, v.Data.Id));
+                    _nodeViews.Remove(v.IsUnassigned ? "u:" + v.Data.Id : NodeViewKey(v.IsConfirmChain, v.Data.Id));
             }
 
             RebuildEdgesFromView(EntryGraph, isConfirm: false, pendingNew, removedEdges, removedNodes);
             RebuildEdgesFromView(ConfirmGraph, isConfirm: true, pendingNew, removedEdges, removedNodes);
+            RebuildEdgesFromView(UnassignedGraph, isConfirm: false, pendingNew, removedEdges, removedNodes,
+                unassigned: true);
         }
 
         private void RebuildEdgesFromView(ChainGraph graph, bool isConfirm,
             List<Edge> pendingNewEdges, List<Edge> removedEdges,
-            List<VNNodeViewBase> removedNodes)
+            List<VNNodeViewBase> removedNodes, bool unassigned = false)
         {
             var rebuilt = new ChainGraph();
             var validIds = new HashSet<string>();
@@ -744,14 +801,16 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (removedNodes != null)
             {
                 foreach (var v in removedNodes)
-                    if (v.IsConfirmChain == isConfirm && v.Data != null)
+                    if (v.IsUnassigned == unassigned &&
+                        (unassigned || v.IsConfirmChain == isConfirm) && v.Data != null)
                         removedIds.Add(v.Data.Id);
             }
 
             foreach (var node in graph.Nodes)
             {
                 if (removedIds.Contains(node.Id)) continue;      // 即将被删除
-                if (GetNodeView(isConfirm, node.Id) == null) continue; // 视图已不存在
+                if ((unassigned ? GetUnassignedView(node.Id) : GetNodeView(isConfirm, node.Id)) == null)
+                    continue; // 视图已不存在
                 rebuilt.AddNode(node);
                 validIds.Add(node.Id);
             }
@@ -760,7 +819,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             edges.ForEach(edge =>
             {
                 if (removedEdges != null && removedEdges.Contains(edge)) return;
-                TryAddEdge(rebuilt, edge, isConfirm, validIds);
+                TryAddEdge(rebuilt, edge, isConfirm, validIds, unassigned);
             });
 
             // 再合并尚未被 Unity 加入 view 的待处理新边（创建方向时序：先回调后应用）
@@ -769,20 +828,23 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 foreach (var edge in pendingNewEdges)
                 {
                     if (removedEdges != null && removedEdges.Contains(edge)) continue;
-                    TryAddEdge(rebuilt, edge, isConfirm, validIds);
+                    TryAddEdge(rebuilt, edge, isConfirm, validIds, unassigned);
                 }
             }
 
-            if (isConfirm) ConfirmGraph = rebuilt;
+            if (unassigned) UnassignedGraph = rebuilt;
+            else if (isConfirm) ConfirmGraph = rebuilt;
             else EntryGraph = rebuilt;
         }
 
-        private void TryAddEdge(ChainGraph rebuilt, Edge edge, bool isConfirm, HashSet<string> validIds)
+        private void TryAddEdge(ChainGraph rebuilt, Edge edge, bool isConfirm,
+            HashSet<string> validIds, bool unassigned)
         {
             var from = edge.output?.node as VNNodeViewBase;
             var to = edge.input?.node as VNNodeViewBase;
             if (from == null || to == null) return;
-            if (from.IsConfirmChain != isConfirm || to.IsConfirmChain != isConfirm) return;
+            if (from.IsUnassigned != unassigned || to.IsUnassigned != unassigned) return;
+            if (!unassigned && (from.IsConfirmChain != isConfirm || to.IsConfirmChain != isConfirm)) return;
             if (from.Data == null || to.Data == null) return;
 
             // 引擎隐式影子（NextLine 等）不进图数据；终端哨兵已在 validIds 中——
@@ -1217,6 +1279,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             ApplyIssues(entryResult, isConfirm: false);
             ApplyIssues(confirmResult, isConfirm: true);
+            foreach (var node in UnassignedGraph.Nodes)
+                GetUnassignedView(node.Id)?.ApplyValidationState(ChainGraphIssueLevel.Fatal,
+                    "尚未连入进入时或确认后的命令链，无法保存");
         }
 
         private void ApplyIssues(ChainGraphValidationResult result, bool isConfirm)
@@ -1299,6 +1364,24 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             }
         }
 
+        public VNNodeViewBase CreateUnassignedNode(string commandName, string args, Vector2 position)
+        {
+            bool isChoice = string.Equals(commandName, "choice", StringComparison.OrdinalIgnoreCase);
+            string id = "unassigned:" + Guid.NewGuid().ToString("N");
+            var data = UnassignedGraph.AddNode(id,
+                isChoice ? ChainGraphNodeKind.Choice : ChainGraphNodeKind.Command,
+                isChoice ? null : commandName, isChoice ? null : args ?? "");
+            if (isChoice) data.ChoiceTexts = new List<string> { "", "" };
+            var view = CreateNodeView(data, false);
+            view.SetAssignment(null);
+            view.SetPosition(new Rect(position, Vector2.zero));
+            AddElement(view);
+            view.RefreshPorts();
+            _nodeViews["u:" + id] = view;
+            OnGraphChanged?.Invoke();
+            return view;
+        }
+
         /// <summary>在指定画布坐标处创建一个命令节点。</summary>
         /// <param name="notifyChange">是否触发 OnGraphChanged（批量操作如粘贴传 false，由调用方统一收尾）</param>
         public CommandNodeView CreateCommandNode(string commandName, string args,
@@ -1372,7 +1455,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         public void RemoveChoiceOption(ChoiceNodeView view, int index)
         {
             if (view == null || view.Data == null) return;
-            var graph = view.IsConfirmChain ? ConfirmGraph : EntryGraph;
+            var graph = view.IsUnassigned ? UnassignedGraph :
+                view.IsConfirmChain ? ConfirmGraph : EntryGraph;
 
             _suppressChangeEvents = true;
             try
@@ -1420,11 +1504,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 foreach (var id in toDelete)
                 {
-                    var v = GetNodeView(view.IsConfirmChain, id);
+                    var v = view.IsUnassigned ? GetUnassignedView(id) : GetNodeView(view.IsConfirmChain, id);
                     if (v != null)
                     {
                         RemoveElement(v);
-                        _nodeViews.Remove(NodeViewKey(view.IsConfirmChain, id));
+                        _nodeViews.Remove(view.IsUnassigned ? "u:" + id : NodeViewKey(view.IsConfirmChain, id));
                     }
                 }
 
@@ -1445,7 +1529,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 foreach (var edge in graph.Edges)
                 {
                     if (edge.FromId != view.Data.Id) continue;
-                    var to = GetNodeView(view.IsConfirmChain, edge.ToId);
+                    var to = view.IsUnassigned ? GetUnassignedView(edge.ToId) :
+                        GetNodeView(view.IsConfirmChain, edge.ToId);
                     if (to?.InputPort == null) continue;
                     var outPort = edge.PortIndex == ChoicePort.Main
                         ? view.MainOutputPort
@@ -1609,6 +1694,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         public void CreateForkJoinPair(Vector2 canvasPosition, bool isConfirm)
         {
+            if (EditorApplication.isPlaying) return;
             var graph = isConfirm ? ConfirmGraph : EntryGraph;
 
             string forkId = GenerateNodeId(graph, "fork");
@@ -1646,6 +1732,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// </summary>
         public void RelayoutAll()
         {
+            if (EditorApplication.isPlaying) return;
             // 用实测宽度跑一次 layout（更精确——长命令节点不会挤压邻居）
             var widths = MeasureAllWidths();
             ApplyLayout(EntryGraph, isConfirm: false,
@@ -1684,7 +1771,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 // Undo 恢复时全部节点叠在原点。
                 if (pos.x == 0f && pos.y == 0f) continue;
 
-                result[PositionKey(view.IsConfirmChain, view.Data.Id)] = pos;
+                result[view.IsUnassigned ? "unassigned/" + view.Data.Id :
+                    PositionKey(view.IsConfirmChain, view.Data.Id)] = pos;
             }
             return result;
         }
@@ -1733,7 +1821,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             foreach (var kvp in _nodeViews)
             {
                 if (!(kvp.Value is CommandNodeView cmd)) continue;
-                if (kvp.Value.IsConfirmChain != isConfirm) continue;
+                if (kvp.Value.IsUnassigned || kvp.Value.IsConfirmChain != isConfirm) continue;
                 if (!string.Equals(cmd.Data.CommandName, commandName, StringComparison.OrdinalIgnoreCase)) continue;
                 if ((cmd.Data.Args ?? "").Trim() != a) continue;
                 return cmd;
@@ -1774,14 +1862,12 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt)
         {
+            if (EditorApplication.isPlaying) return;
             Vector2 canvasPos = contentViewContainer.WorldToLocal(evt.mousePosition);
-            bool isConfirm = canvasPos.y >
-                             (ChainAutoLayout.EntryLaneY + ChainAutoLayout.ConfirmLaneY) / 2f;
-
-            string laneName = isConfirm ? "出口段" : "进入段";
-
-            evt.menu.AppendAction("添加 FORK / JOIN 并行组 (" + laneName + ")",
-                _ => CreateForkJoinPair(canvasPos, isConfirm));
+            evt.menu.AppendAction("添加并行组 / 进入时",
+                _ => CreateForkJoinPair(canvasPos, false));
+            evt.menu.AppendAction("添加并行组 / 确认后",
+                _ => CreateForkJoinPair(canvasPos, true));
             evt.menu.AppendSeparator();
             evt.menu.AppendAction("整理布局", _ => RelayoutAll());
             evt.menu.AppendAction("聚焦全部节点", _ => FrameAll());

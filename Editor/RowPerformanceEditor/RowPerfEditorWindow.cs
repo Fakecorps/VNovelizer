@@ -50,9 +50,20 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         // 在 CreateGUI 中通过 LoadCsv(_csvPath) 重建。
         private List<CsvRow> _rows = new List<CsvRow>();
         private bool _isDirty;
+        private string _textParseError;
+        private bool _lastSaveSucceeded;
+        private string _savedCommand;
+        [SerializeField] private string _reloadDraftText;
+        [SerializeField] private string _reloadDraftRowId;
+        [SerializeField] private string _reloadDraftCsvPath;
+        [SerializeField] private string _reloadSavedCommand;
+        [SerializeField] private string _reloadEntryGraph;
+        [SerializeField] private string _reloadConfirmGraph;
+        [SerializeField] private string _reloadUnassignedGraph;
+        [SerializeField] private bool _reloadSyntheticTemplate;
 
         /// <summary>【Fix-50】进 Play 时跳过镜像写回、退出 Play 后补写的挂起标记</summary>
-        private bool _mirrorPendingAfterPlay;
+        [SerializeField] private bool _mirrorPendingAfterPlay;
 
         /// <summary>
         /// 当前 EntryGraph 是否为视图合成的模板图（Normal/Enhanced 行展开的系统命令节点）。
@@ -71,6 +82,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// （纯点击不占撤销位），见 <see cref="HandleNodeDragGestureStarted"/>。
         /// </summary>
         private GraphUndoStack.Snapshot _pendingDragSnapshot;
+        private bool _dragMoved;
 
         /// <summary>
         /// R13：拖动结束后的位置落盘防抖（约 1 秒）——布局是用户核心资产，
@@ -102,6 +114,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         /// <summary>命令链文本侧边栏整列容器（含分隔条）—— 工具栏一键折叠/展开。</summary>
         private VisualElement _textChainColumn;
+        private VisualElement _paletteColumn;
+        private VisualElement _paletteDivider;
+        private VisualElement _textDivider;
+        private VisualElement _inspectorColumn;
+        private VisualElement _inspectorDivider;
+        private Button _viewModeButton;
+        private const string PrefsKeyViewMode = "VNovelizer.RowPerfEditor.ViewMode";
 
         /// <summary>折叠按钮引用（切换时更新图标与 tooltip）。</summary>
         private Button _toggleTextChainButton;
@@ -188,14 +207,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             var win = GetWindow<RowPerfEditorWindow>("行演出编辑器");
             win.minSize = new Vector2(1080, 560);
             win.Show();
+            if (!win.ConfirmDiscardIfDirty()) return;
             win.LoadCsv(csvPath);
-            win.GotoLineId(lineId);
+            if (string.Equals(win._csvPath, csvPath, StringComparison.OrdinalIgnoreCase))
+                win.GotoLineId(lineId);
         }
 
         // ==================== 生命周期 ====================
 
         private void CreateGUI()
         {
+            saveChangesMessage = "行演出命令有未保存的修改，关闭窗口前是否保存？";
             var root = rootVisualElement;
             root.AddToClassList("vn-root");
 
@@ -208,23 +230,25 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             main.AddToClassList("vn-main");
             root.Add(main);
 
-            var paletteRoot = new VisualElement();
-            main.Add(paletteRoot);
-            _palette = new CommandPalette(paletteRoot);
-            _palette.OnRequestCreateNode += HandleCreateNode;
+            _paletteColumn = new VisualElement();
+            main.Add(_paletteColumn);
+            _palette = new CommandPalette(_paletteColumn);
+            _palette.OnRequestCreateNode += (cmd, pos) => HandleCreateNode(cmd, false, pos);
             _palette.OnRequestCreateForkJoin += HandleCreateForkJoin;
 
             // 2026-08-31：命令面板 / 画布之间的可拖拽分隔条
-            main.Add(new VnColumnResizer(paletteRoot, 160f, 520f,
-                invert: false, prefsKey: PrefsKey + ".PaletteW", defaultWidth: 230f));
+            _paletteDivider = new VnColumnResizer(_paletteColumn, 160f, 520f,
+                invert: false, prefsKey: PrefsKey + ".PaletteW", defaultWidth: 230f);
+            main.Add(_paletteDivider);
 
             _graphView = new RowGraphView();
             _graphView.style.flexGrow = 1;
             _graphView.OnGraphChanged += HandleGraphChanged;
             _graphView.OnNodesMoved += HandleNodesMoved;
             _graphView.OnNodeDragGestureStarted += HandleNodeDragGestureStarted;
+            _graphView.OnNodeDragGestureFinished += FinishNodeDragGesture;
             _graphView.OnRequestPromotion += HandlePromotionRequest;
-            _graphView.OnRequestCreateNodeAt += (cmd, isConfirm, pos) => HandleCreateNode(cmd, isConfirm, pos);
+            _graphView.OnRequestCreateNodeAt += (cmd, pos) => HandleCreateNode(cmd, false, pos);
             _graphView.OnPositionsRelayouted += HandlePositionsRelayouted;
             main.Add(_graphView);
 
@@ -243,12 +267,27 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 分隔条绑外层：拖动时改 _textChainColumn 宽度；invert=true（分隔条在列左侧）。
             // 关键：resizer 必须作为 main 的直接子元素（与 palette/inspector resizer 同结构），
             // 否则 resizer 内部的 panel.visualTree 事件挂载行为不一致会导致拖不动。
-            main.Add(new VnColumnResizer(_textChainColumn, 240f, 760f,
-                invert: true, prefsKey: PrefsKey + ".TextW", defaultWidth: 360f));
+            _textDivider = new VnColumnResizer(_textChainColumn, 240f, 760f,
+                invert: true, prefsKey: PrefsKey + ".TextW", defaultWidth: 360f);
+            main.Add(_textDivider);
             main.Add(_textChainColumn);
 
             _textChain = new TextChainEditor(textChainRoot);
             _textChain.OnChainTextChanged += HandleChainTextChanged;
+            _textChain.OnDraftChanged += () =>
+            {
+                _isDirty = true;
+                hasUnsavedChanges = true;
+                if (_textParseError != null)
+                {
+                    string entry = _textChain.GetEntryText();
+                    string confirm = _textChain.GetConfirmText();
+                    if ((string.IsNullOrWhiteSpace(entry) || ChainParser.Parse(entry).Success) &&
+                        (string.IsNullOrWhiteSpace(confirm) || ChainParser.Parse(confirm).Success))
+                        _textParseError = null;
+                }
+                UpdateHeaderAndStatus();
+            };
 
             // 文本中单击命令 → 细节栏展示该命令信息（与点击图节点等价，但不改图选中状态）。
             // 文本与图不同步（防抖期/解析失败）时 FindCommandNode 返回 null，静默不响应。
@@ -258,14 +297,15 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 if (view != null) _inspector.Show(view);
             };
 
-            var inspectorRoot = new VisualElement();
+            _inspectorColumn = new VisualElement();
 
             // 分隔条在 inspector 左侧 → invert
-            main.Add(new VnColumnResizer(inspectorRoot, 200f, 620f,
-                invert: true, prefsKey: PrefsKey + ".InspectorW", defaultWidth: 284f));
-            main.Add(inspectorRoot);
+            _inspectorDivider = new VnColumnResizer(_inspectorColumn, 200f, 620f,
+                invert: true, prefsKey: PrefsKey + ".InspectorW", defaultWidth: 284f);
+            main.Add(_inspectorDivider);
+            main.Add(_inspectorColumn);
 
-            _inspector = new InspectorBuilder(inspectorRoot);
+            _inspector = new InspectorBuilder(_inspectorColumn);
             _inspector.OnValueChanged += HandleGraphChanged;
             _inspector.OnRequestJumpToColumn += HandleJumpToColumn;
             _inspector.CurrentScriptNameProvider = () => _scriptName;
@@ -288,13 +328,6 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             root.RegisterCallback<KeyDownEvent>(HandleShortcuts);
 
-            // 2026-09-03：Tab 焦点恢复改由 VnCodeEditorIMGUI.OnFocusRestoreRequested
-            // 事件驱动（见 TextChainEditor.BuildCodeEditor），不再在 root 级别
-            // PreventDefault Tab —— 该方案对 Tab 焦点切换无效（焦点切换不是
-            // KeyDownEvent 的"默认行为"，PreventDefault 管不到；且 BubbleUp 回调
-            // 不会回到原 container，参见 VnCodeEditorIMGUI.OnFocusRestoreRequested
-            // 的事件文档对三套失效方案的详细分析）。
-            //
             // 保留 Ctrl+Space 的 TrickleDown PreventDefault：Ctrl+Space 是 Windows
             // 输入法切换快捷键，PreventDefault 阻止 UIToolkit 把它当默认字符处理
             // （避免被当成空格插入到文本）。VnCodeEditorIMGUI 已检测 !e.control 不
@@ -318,8 +351,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (string.IsNullOrEmpty(_csvPath)) TryAutoSelectScript();
             else RestoreSessionAfterReload();
 
-            // 恢复命令链文本侧边栏的折叠状态（窗口栏变小时用户偏好隐藏，给画布更多空间）
-            ApplyTextChainCollapsedState();
+            ApplyViewMode();
         }
 
         /// <summary>
@@ -342,13 +374,68 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 SelectRow(savedIndex);
             else if (_rows.Count > 0)
                 SelectRow(0);
+            if (CurrentRow != null && _reloadDraftText != null &&
+                string.Equals(_reloadDraftCsvPath, _csvPath, StringComparison.OrdinalIgnoreCase) &&
+                _reloadDraftRowId == CurrentRow.Id)
+            {
+                if (_reloadEntryGraph != null && _reloadConfirmGraph != null)
+                {
+                    _graphView.Rebuild(ChainGraphDumper.Restore(_reloadEntryGraph),
+                        ChainGraphDumper.Restore(_reloadConfirmGraph),
+                        GraphPosStore.LoadPositions(_csvPath, CurrentRow.Id),
+                        templateCollapsed: false, showTemplate: false, frameAll: false,
+                        unassignedGraph: ChainGraphDumper.Restore(_reloadUnassignedGraph));
+                    _syntheticTemplate = _reloadSyntheticTemplate;
+                }
+                _savedCommand = _reloadSavedCommand;
+                _textChain?.RestoreDraft(_reloadDraftText);
+                _isDirty = true;
+                _undoStack.Clear();
+                PushUndoSnapshot("恢复草稿");
+                Validate();
+                UpdateHeaderAndStatus();
+                ShowNotification(new GUIContent("已恢复脚本重载前的未保存命令草稿"));
+            }
+            _reloadDraftText = null;
+            _reloadSavedCommand = null;
+            _reloadEntryGraph = null;
+            _reloadConfirmGraph = null;
+            _reloadUnassignedGraph = null;
         }
 
         /// <summary>注销全局订阅（窗口关闭 / Domain Reload 时 Unity 调用）。</summary>
         private void OnDisable()
         {
+            _reloadDraftText = _isDirty ? _textChain?.GetFullText() : null;
+            _reloadDraftRowId = _isDirty ? CurrentRow?.Id : null;
+            _reloadDraftCsvPath = _isDirty ? _csvPath : null;
+            _reloadSavedCommand = _isDirty ? _savedCommand : null;
+            _reloadEntryGraph = _isDirty && _graphView != null
+                ? ChainGraphDumper.Dump(_graphView.EntryGraph) : null;
+            _reloadConfirmGraph = _isDirty && _graphView != null
+                ? ChainGraphDumper.Dump(_graphView.ConfirmGraph) : null;
+            _reloadUnassignedGraph = _isDirty && _graphView != null
+                ? ChainGraphDumper.Dump(_graphView.UnassignedGraph) : null;
+            _reloadSyntheticTemplate = _syntheticTemplate;
             EditorApplication.update -= OnEditorUpdate;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            if ((_isDirty || (_posSaveDebounce != null && _posSaveDebounce.isActive)) &&
+                CurrentRow != null && _graphView != null && !string.IsNullOrEmpty(_csvPath))
+                GraphPosStore.Save(_csvPath, CurrentRow.Id, _graphView.CollectPositions(), true);
+        }
+
+        public override void SaveChanges()
+        {
+            SaveCurrentRow();
+            if (_lastSaveSucceeded) base.SaveChanges();
+        }
+
+        public override void DiscardChanges()
+        {
+            if (CurrentRow != null) CurrentRow.Command = _savedCommand;
+            _isDirty = false;
+            _textParseError = null;
+            base.DiscardChanges();
         }
 
         // ==================== R10 运行时控制器/监听器 ====================
@@ -372,6 +459,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                     _followedRuntimeLineId = "";
                     ApplyRuntimeVisualStates(null);
                     _textChain?.SetRuntimeReplayMode(false);
+                    _paletteColumn?.SetEnabled(true);
+                    _inspectorColumn?.SetEnabled(true);
+                    Validate();
+                    UpdateHeaderAndStatus();
                     if (_runtimeBadge != null) _runtimeBadge.text = "";
                 }
                 return;
@@ -380,9 +471,10 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             // ① 行跟随（运行时行 ID 变化）
             string rtLineId = VNRuntimeDebugState.CurrentLineId;
-            if (!string.IsNullOrEmpty(rtLineId) && rtLineId != _followedRuntimeLineId)
+            string runtimeKey = VNRuntimeDebugState.CurrentScriptName + "\0" + rtLineId;
+            if (!string.IsNullOrEmpty(rtLineId) && runtimeKey != _followedRuntimeLineId)
             {
-                _followedRuntimeLineId = rtLineId;
+                _followedRuntimeLineId = runtimeKey;
                 FollowRuntimeLine(rtLineId);
                 _runtimeVisualsDirty = true;
             }
@@ -441,6 +533,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void ApplyRuntimeVisualStates(LineNodeState state)
         {
             _graphView.SetRuntimeNodeStates(state);
+            var row = CurrentRow;
+            if (state != null && row != null && RowPromotion.DetermineForm(row.Command) == RowForm.Custom)
+            {
+                SplitCommandColumn(row.Command, out string entry, out string confirm);
+                _textChain?.SetRuntimeSourceTexts(entry, confirm);
+            }
+            else _textChain?.SetRuntimeSourceTexts("", "");
             _textChain?.SetRuntimeHighlights(state);
         }
 
@@ -474,8 +573,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 // 【Fix-50】进 Play 前只落盘 CSV（快速原子写）；镜像写回 xlsx 推迟到退出 Play 后。
                 // 原实现同步执行"读 xlsx → ClosedXML 写回 →（可能弹 Kill 确认）→ 重试 Sleep"，
                 // 点 Play 后编辑器冻结数秒、状态切换路径上还可能弹窗打断。
-                _mirrorPendingAfterPlay = true;
                 SaveCurrentRow(skipMirrorWriteBack: true);
+                if (!_lastSaveSucceeded) EditorApplication.isPlaying = false;
             }
             else if (change == PlayModeStateChange.ExitingPlayMode && _mirrorPendingAfterPlay)
             {
@@ -490,6 +589,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             bool locked = EditorApplication.isPlaying;
             _saveButton?.SetEnabled(!locked);
             _resetButton?.SetEnabled(!locked);
+            _paletteColumn?.SetEnabled(!locked);
+            _inspectorColumn?.SetEnabled(!locked);
             _textChain?.SetRuntimeReplayMode(locked);
 
             // 行级状态徽章（普通/增强行的"正在播放/已播放"标记）
@@ -605,6 +706,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _toggleTextChainButton.tooltip = "折叠/展开命令链文本侧边栏";
             _toggleTextChainButton.AddToClassList("vn-toolbar-toggle");
             bar.Add(_toggleTextChainButton);
+            _viewModeButton = new Button(() =>
+            {
+                EditorPrefs.SetInt(PrefsKeyViewMode, (EditorPrefs.GetInt(PrefsKeyViewMode, 0) + 1) % 3);
+                ApplyViewMode();
+            });
+            _viewModeButton.tooltip = "切换：分屏 → 文本专注 → 节点专注";
+            bar.Add(_viewModeButton);
 
             _formBadge = new Label("—");
             _formBadge.AddToClassList("vn-rowform-badge");
@@ -713,6 +821,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>载入 CSV。解析复用与运行时相同的列约定，避免两处格式理解不一致。</summary>
         public void LoadCsv(string csvPath)
         {
+            if (!EditorApplication.isPlaying && _rows.Count > 0 && !ConfirmDiscardIfDirty()) return;
             // 2026-08-27 修复：切换 CSV 前保存旧文件当前行位置（必须在 _csvPath 变更前做，
             // 否则旧行位置会写进新 CSV 的 .graphpos.json）。
             var oldRow = CurrentRow;
@@ -736,7 +845,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 return;
             }
 
-            string[] lines = File.ReadAllLines(csvPath);
+            string[] lines = SplitCsvRecords(File.ReadAllText(csvPath));
             bool layoutDetected = false;
 
             for (int i = 1; i < lines.Length; i++) // 跳过表头
@@ -808,6 +917,33 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private static string Cell(List<string> cells, int index)
             => index >= 0 && index < cells.Count ? cells[index] : "";
 
+        private static string[] SplitCsvRecords(string content)
+        {
+            var records = new List<string>();
+            var record = new System.Text.StringBuilder();
+            bool quoted = false;
+            for (int i = 0; i < content.Length; i++)
+            {
+                char c = content[i];
+                if (c == '"')
+                {
+                    record.Append(c);
+                    if (quoted && i + 1 < content.Length && content[i + 1] == '"')
+                        record.Append(content[++i]);
+                    else quoted = !quoted;
+                }
+                else if (!quoted && (c == '\r' || c == '\n'))
+                {
+                    records.Add(record.ToString());
+                    record.Clear();
+                    if (c == '\r' && i + 1 < content.Length && content[i + 1] == '\n') i++;
+                }
+                else record.Append(c);
+            }
+            records.Add(record.ToString());
+            return records.ToArray();
+        }
+
         /// <summary>引号感知的 CSV 行解析（与 ScriptParser 的规则一致）。</summary>
         private static List<string> ParseCsvLine(string line)
         {
@@ -846,29 +982,27 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private void StepRow(int delta)
         {
             if (_rows.Count == 0) return;
+            int target = Mathf.Clamp(_currentRowIndex + delta, 0, _rows.Count - 1);
+            if (target == _currentRowIndex) return;
             if (!ConfirmDiscardIfDirty()) return;
 
-            // 切行前先把文本编辑器的未到点防抖提交 —— 避免「输入 → 立刻切走」丢
-            // 200ms 防抖里还没提交的改动。
             _textChain?.CancelPending();
 
-            int target = Mathf.Clamp(_currentRowIndex + delta, 0, _rows.Count - 1);
             if (target != _currentRowIndex) SelectRow(target);
         }
 
         public void GotoLineId(string lineId)
         {
             if (string.IsNullOrWhiteSpace(lineId) || _rows.Count == 0) return;
-            if (!ConfirmDiscardIfDirty()) return;
-
-            _textChain?.CancelPending();
-
             int index = _rows.FindIndex(r => r.Id == lineId.Trim());
             if (index < 0)
             {
                 EditorUtility.DisplayDialog("未找到行", $"剧本中不存在行 ID：{lineId}", "好");
                 return;
             }
+            if (index == _currentRowIndex) return;
+            if (!ConfirmDiscardIfDirty()) return;
+            _textChain?.CancelPending();
             SelectRow(index);
         }
 
@@ -886,6 +1020,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             _currentRowIndex = index;
             _isDirty = false;
+            _textParseError = null;
+            _savedCommand = CurrentRow.Command;
             _undoStack.Clear(); // 撤销不跨行
 
             RefreshAll();
@@ -963,7 +1099,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 ? FormatTextForEditor(DefaultPerformanceTemplate.BuildText(
                     form == RowForm.Enhanced ? entryText : null, filledSlots))
                 : FormatTextForEditor(entryText);
-            _textChain?.SetTexts(entryDisplay, FormatTextForEditor(confirmText));
+            _textChain?.SetTexts(entryDisplay, FormatTextForEditor(confirmText), force: true);
 
             Validate();
             UpdateHeaderAndStatus();
@@ -1091,6 +1227,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void UpdateHeaderAndStatus()
         {
+            hasUnsavedChanges = _isDirty;
             var row = CurrentRow;
 
             if (row == null)
@@ -1186,9 +1323,23 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (_statusValidation == null) return;
 
             int fatal = (_entryValidation?.FatalCount ?? 0) + (_confirmValidation?.FatalCount ?? 0);
+            int unassigned = _graphView?.UnassignedCount ?? 0;
             int warn = (_entryValidation?.WarningCount ?? 0) + (_confirmValidation?.WarningCount ?? 0);
 
-            if (fatal > 0)
+            if (!string.IsNullOrEmpty(_textParseError))
+            {
+                _statusValidation.text = _textParseError;
+                _statusValidation.style.color = new Color(0.78f, 0.35f, 0.31f);
+                _saveButton?.SetEnabled(false);
+                return;
+            }
+
+            if (unassigned > 0)
+            {
+                _statusValidation.text = $"[X] {unassigned} 个命令块待连接（无法保存）";
+                _statusValidation.style.color = new Color(0.78f, 0.35f, 0.31f);
+            }
+            else if (fatal > 0)
             {
                 _statusValidation.text = $"[X] {fatal} 个致命错误（无法保存）" +
                                          (warn > 0 ? $" · {warn} 警告" : "");
@@ -1205,7 +1356,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 _statusValidation.style.color = new Color(0.50f, 0.67f, 0.36f);
             }
 
-            _saveButton?.SetEnabled(fatal == 0);
+            _saveButton?.SetEnabled(fatal == 0 && unassigned == 0);
         }
 
         // ==================== 交互处理 ====================
@@ -1225,18 +1376,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             var info = CommandMetaReader.Get(commandName);
 
-            // R11：choice 是独立节点类型（多出端口 + 选项列表），不走通用命令节点
-            if (string.Equals(commandName, "choice", System.StringComparison.OrdinalIgnoreCase))
-            {
-                var choiceView = _graphView.CreateChoiceNode(pos, isConfirm);
-                _graphView.ClearSelection();
-                _graphView.AddToSelection(choiceView);
-                return;
-            }
-
             string defaultArgs = BuildDefaultArgs(info);
-
-            var view = _graphView.CreateCommandNode(commandName, defaultArgs, pos, isConfirm);
+            var view = _graphView.CreateUnassignedNode(commandName, defaultArgs, pos);
             _graphView.ClearSelection();
             _graphView.AddToSelection(view);
         }
@@ -1318,8 +1459,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         private string GetChoiceChainPreview(int portIndex)
         {
             if (_selectedChoiceView == null || _selectedChoiceView.Data == null) return "";
-            var graph = _selectedChoiceView.IsConfirmChain
-                ? _graphView.ConfirmGraph : _graphView.EntryGraph;
+            var graph = _selectedChoiceView.IsUnassigned ? _graphView.UnassignedGraph :
+                _selectedChoiceView.IsConfirmChain ? _graphView.ConfirmGraph : _graphView.EntryGraph;
             return GraphToAst.SerializeChoiceOptionChain(graph,
                 _selectedChoiceView.Data.Id, portIndex);
         }
@@ -1329,6 +1470,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (_isRestoring) return; // Undo/Redo 重建期间的变更事件全部忽略（防重入）
             if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑（图只读）
             _isDirty = true;
+            hasUnsavedChanges = true;
             Validate();
             UpdateHeaderAndStatus();
             PushUndoSnapshot("编辑");
@@ -1342,7 +1484,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 string newEntry = SerializeForTextTab(_graphView.EntryGraph);
                 string newConfirm = SerializeForTextTab(_graphView.ConfirmGraph);
-                _textChain.EchoTexts(newEntry, newConfirm);
+                _textChain.EchoTexts(
+                    !string.IsNullOrEmpty(_textParseError) &&
+                    !string.IsNullOrWhiteSpace(_textChain.GetEntryText()) &&
+                    !ChainParser.Parse(_textChain.GetEntryText()).Success ? null : newEntry,
+                    !string.IsNullOrEmpty(_textParseError) &&
+                    !string.IsNullOrWhiteSpace(_textChain.GetConfirmText()) &&
+                    !ChainParser.Parse(_textChain.GetConfirmText()).Success ? null : newConfirm);
             }
         }
 
@@ -1361,10 +1509,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// 对 null 不动），等用户补全后再重建图。
         /// </para>
         /// </summary>
-        private void HandleChainTextChanged(bool isConfirm, string newText)
+        private bool HandleChainTextChanged(bool isConfirm, string newText)
         {
-            if (_graphView == null) return;
-            if (EditorApplication.isPlaying) return; // R10：运行时锁定编辑（文本只读）
+            if (_graphView == null || EditorApplication.isPlaying) return false;
 
             // 中间态检测：解析失败 → 不重建图
             ChainParseResult parsed = null;
@@ -1373,10 +1520,22 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 parsed = ChainParser.Parse(newText);
                 if (!parsed.Success)
                 {
-                    // 仅显示文本，不动图。错误信息由校验状态栏展示。
-                    _textChain.SetTexts(null, null);
-                    return;
+                    _textParseError = $"{(isConfirm ? "出口段" : "进入段")}语法错误：" +
+                        string.Join("；", parsed.Errors.Select(e => e.ToString()).ToArray());
+                    UpdateValidationStatus();
+                    return false;
                 }
+            }
+
+            // 两段共享一个草稿；另一段仍有错误时不能用旧图回填覆盖它。
+            string otherText = isConfirm ? _textChain.GetEntryText() : _textChain.GetConfirmText();
+            if (!string.IsNullOrWhiteSpace(otherText) && !ChainParser.Parse(otherText).Success)
+            {
+                _textParseError = $"{(isConfirm ? "进入段" : "出口段")}语法错误，请修正后保存";
+            }
+            else
+            {
+                _textParseError = null;
             }
 
             var newGraph = BuildGraph(parsed?.Root, isConfirm);
@@ -1389,7 +1548,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (!isConfirm) _syntheticTemplate = false;
 
             _graphView.Rebuild(entryGraph, confirmGraph, positions,
-                templateCollapsed: false, showTemplate: false, frameAll: false);
+                templateCollapsed: false, showTemplate: false, frameAll: false,
+                unassignedGraph: _graphView.UnassignedGraph);
 
             // 用规范化序列化文本回填（文本与图互相校准）。
             // 2026-08-31：加"回填前文本未变则跳过"保护 ——
@@ -1405,10 +1565,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             bool confirmChanged = (newConfirm != null && newConfirm != curConfirm);
 
             _textChain.EchoTexts(
-                entryChanged ? newEntry : null,
-                confirmChanged ? newConfirm : null);
+                entryChanged && (!isConfirm || string.IsNullOrEmpty(_textParseError)) ? newEntry : null,
+                confirmChanged && (isConfirm || string.IsNullOrEmpty(_textParseError)) ? newConfirm : null);
 
             HandleGraphChanged(); // dirty + 校验 + 快照
+            return true;
         }
 
         /// <summary>
@@ -1493,6 +1654,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             {
                 EntryGraphDump = ChainGraphDumper.Dump(_graphView.EntryGraph),
                 ConfirmGraphDump = ChainGraphDumper.Dump(_graphView.ConfirmGraph),
+                UnassignedGraphDump = ChainGraphDumper.Dump(_graphView.UnassignedGraph),
                 Positions = _graphView.CollectPositions(),
                 TemplateCollapsed = true,
                 Label = label,
@@ -1508,39 +1670,27 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             _statusUndo.text = _undoStack.CanUndo ? $"撤销栈 {_undoStack.Depth - 1}" : "";
         }
 
-        /// <summary>
-        /// 节点拖动手势开始（左键按下）：暂存「移动前」快照。
-        /// 仅当手势真正产生移动（HandleNodesMoved）时才压栈——纯点击不占撤销位。
-        /// </summary>
         private void HandleNodeDragGestureStarted()
         {
             if (_isRestoring || _graphView == null || CurrentRow == null) return;
             _pendingDragSnapshot = BuildSnapshot("移动节点");
+            _dragMoved = false;
         }
 
-        /// <summary>
-        /// 节点拖动（仅位置变化，图数据不变）。
-        /// 2026-08-28 重构（替代旧的 TopLabel 粘性合并）：
-        /// 旧逻辑把栈顶为「移动」的所有后续移动合并进同一条记录——用户移动 A
-        /// 再移动 B，按一次 Ctrl+Z 会把两次一起回退，且快照记录的是移动中位置。
-        /// 新方案：每个拖动手势压入一条独立的「移动前」快照（PushForce 绕过
-        /// 与栈顶的去重——否则手势开始时内容与栈顶相同会被跳过，首次移动无法撤销）。
-        /// </summary>
         private void HandleNodesMoved()
         {
-            if (_isRestoring) return; // Undo/Redo 重建期间忽略（防重入）
-
-            if (_pendingDragSnapshot != null)
-            {
-                _undoStack.PushForce(_pendingDragSnapshot);
-                _pendingDragSnapshot = null;
-                _statusUndo.text = _undoStack.CanUndo ? $"撤销栈 {_undoStack.Depth - 1}" : "";
-            }
-
+            if (_isRestoring) return;
+            _dragMoved = true;
             UpdateHeaderAndStatus();
-
-            // R13：拖动结束后约 1 秒防抖把位置写盘（布局是用户资产，关窗口也不丢）
             SchedulePositionSaveDebounced();
+        }
+
+        private void FinishNodeDragGesture()
+        {
+            if (!_isRestoring && _dragMoved && _pendingDragSnapshot != null)
+                PushUndoSnapshot("移动节点");
+            _pendingDragSnapshot = null;
+            _dragMoved = false;
         }
 
         /// <summary>
@@ -1566,8 +1716,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void PerformUndo()
         {
-            // 纯点击产生的陈旧暂存快照随任何 Undo 操作作废
-            _pendingDragSnapshot = null;
+            FinishNodeDragGesture();
+            _textChain?.Flush();
+            if (!string.IsNullOrEmpty(_textParseError)) return;
 
             var snapshot = _undoStack.Undo();
             if (snapshot == null) return;
@@ -1576,7 +1727,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private void PerformRedo()
         {
-            _pendingDragSnapshot = null;
+            FinishNodeDragGesture();
+            _textChain?.Flush();
+            if (!string.IsNullOrEmpty(_textParseError)) return;
 
             var snapshot = _undoStack.Redo();
             if (snapshot == null) return;
@@ -1600,9 +1753,17 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
                 // frameAll: false——撤销不应把视野跳到全图（业界惯例：Undo 保持视口）
                 _graphView.Rebuild(entryGraph, confirmGraph, snapshot.Positions,
-                    templateCollapsed: false, showTemplate: false, frameAll: false);
+                    templateCollapsed: false, showTemplate: false, frameAll: false,
+                    unassignedGraph: ChainGraphDumper.Restore(snapshot.UnassignedGraphDump));
 
                 _isDirty = true;
+                string entry = SerializeForTextTab(_graphView.EntryGraph);
+                string confirm = SerializeForTextTab(_graphView.ConfirmGraph);
+                if (entry != null && confirm != null)
+                {
+                    _textParseError = null;
+                    _textChain?.SetTexts(entry, confirm, force: true);
+                }
                 Validate();
                 UpdateHeaderAndStatus();
             }
@@ -1785,9 +1946,30 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             // 2026-08-28：保存前先把文本编辑器未到点的防抖同步提交，避免最后一次
             // keystroke 还在 200ms 防抖窗口里、Serialize 拿到的还是旧图。
             _textChain?.Flush();
+            _lastSaveSucceeded = false;
+
+            // 草稿尚不能解析时，图仍是旧版本，绝不可用旧图代替文本落盘。
+            string draftEntry = _textChain?.GetEntryText();
+            string draftConfirm = _textChain?.GetConfirmText();
+            bool entryInvalid = !string.IsNullOrWhiteSpace(draftEntry) && !ChainParser.Parse(draftEntry).Success;
+            bool confirmInvalid = !string.IsNullOrWhiteSpace(draftConfirm) && !ChainParser.Parse(draftConfirm).Success;
+            if (entryInvalid || confirmInvalid)
+            {
+                _textParseError = (entryInvalid ? "进入段" : "出口段") + "语法错误，请先修正文本再保存";
+                Validate();
+                EditorUtility.DisplayDialog("无法保存", _textParseError, "好");
+                return;
+            }
+            _textParseError = null;
 
             // 1. 校验（致命错误阻断）
             Validate();
+            if (_graphView.UnassignedCount > 0)
+            {
+                EditorUtility.DisplayDialog("无法保存",
+                    $"还有 {_graphView.UnassignedCount} 个待连接命令块。请连到进入时或确认后的执行链，或删除它们。", "好");
+                return;
+            }
             if ((_entryValidation?.HasFatal ?? false) || (_confirmValidation?.HasFatal ?? false))
             {
                 EditorUtility.DisplayDialog("无法保存",
@@ -1843,37 +2025,26 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (!string.IsNullOrWhiteSpace(newCommand)) newCommand += "&";
             newCommand += "@Confirm:" + confirmText;
 
-            // 3. 未变更则不写回——存量剧本手写的排版格式得以完整保留
-            if (row.Command == newCommand)
-            {
-                SavePositionsOnly(row);
-                _isDirty = false;
-                UpdateHeaderAndStatus();
-                ShowNotification(new GUIContent("命令链无变化，已保存节点位置"));
-                return;
-            }
-
-            row.Command = newCommand;
-
-            // 保存期间挂起自动转换轮询：CSV 原子写 + 镜像写回 xlsx 全程不被轮询读到半写文件
+            // 仅在真实落盘成功后提交内存状态；失败时保留原基线以供再次重试。
             AutoExcelConverter.SuspendForSeconds(2.0);
-
-            if (!TryWriteCsv(out string writeError))
+            if (!TryWriteCsv(newCommand, out bool diskChanged, out string writeError))
             {
                 EditorUtility.DisplayDialog("写入失败", writeError, "好");
                 return;
             }
 
-            // CSV 落盘后立即把该行 Command 镜像写回 Excel（Phase 1：编辑器保存 → CSV → Excel 反向覆写，
-            // 见 VNCommandChainSpec.md §11.5）。写回失败仅告警，CSV 侧不受影响。
-            // 【Fix-50】ExitingEditMode 路径传入 skipMirrorWriteBack=true，镜像推迟到退出 Play 后
-            if (!skipMirrorWriteBack)
+            row.Command = newCommand;
+            _savedCommand = newCommand;
+            _lastSaveSucceeded = true;
+            if (diskChanged && skipMirrorWriteBack)
+                _mirrorPendingAfterPlay = true;
+            else if (diskChanged)
                 ExcelToCsvConverter.MirrorRowCommandBackToExcel(_csvPath, row.Id, newCommand);
 
             SavePositionsOnly(row);
             _isDirty = false;
             RefreshAll();
-            ShowNotification(new GUIContent("已保存到 CSV"));
+            ShowNotification(new GUIContent(diskChanged ? "已保存到 CSV" : "命令链无变化，已保存节点位置"));
         }
 
         /// <summary>
@@ -1906,7 +2077,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
             if (_isDirty)
             {
                 SaveCurrentRow();
-                if (_isDirty) return;
+                if (!_lastSaveSucceeded) return;
             }
 
             string lineId = string.IsNullOrWhiteSpace(row.Id) ? "" : row.Id.Trim();
@@ -1934,21 +2105,40 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             bool collapsed = !EditorPrefs.GetBool(PrefsKeyTextChainCollapsed, false);
             EditorPrefs.SetBool(PrefsKeyTextChainCollapsed, collapsed);
-            ApplyTextChainCollapsedState();
+            ApplyViewMode();
         }
 
-        /// <summary>根据 EditorPrefs 偏好应用命令链文本侧边栏的显示状态与按钮图标。</summary>
-        private void ApplyTextChainCollapsedState()
+        private void ApplyViewMode()
         {
-            if (_textChainColumn == null) return;
-            bool collapsed = EditorPrefs.GetBool(PrefsKeyTextChainCollapsed, false);
-            _textChainColumn.style.display = collapsed ? DisplayStyle.None : DisplayStyle.Flex;
+            if (_textChainColumn == null || _graphView == null) return;
+            int mode = EditorPrefs.GetInt(PrefsKeyViewMode, 0);
+            bool textFocus = mode == 1;
+            bool graphFocus = mode == 2;
+            minSize = new Vector2(mode == 0 ? 1080 : 620, 560);
+            bool showPalette = !textFocus;
+            bool showGraph = !textFocus;
+            bool showText = textFocus || (!graphFocus && !EditorPrefs.GetBool(PrefsKeyTextChainCollapsed, false));
+
+            _paletteColumn.style.display = showPalette ? DisplayStyle.Flex : DisplayStyle.None;
+            _paletteDivider.style.display = showPalette ? DisplayStyle.Flex : DisplayStyle.None;
+            _graphView.style.display = showGraph ? DisplayStyle.Flex : DisplayStyle.None;
+            _textChainColumn.style.display = showText ? DisplayStyle.Flex : DisplayStyle.None;
+            _textDivider.style.display = mode == 0 && showText ? DisplayStyle.Flex : DisplayStyle.None;
+            _inspectorColumn.style.display = textFocus ? DisplayStyle.None : DisplayStyle.Flex;
+            _inspectorDivider.style.display = textFocus ? DisplayStyle.None : DisplayStyle.Flex;
+            _textChainColumn.style.width = textFocus
+                ? new StyleLength(StyleKeyword.Auto)
+                : new StyleLength(Mathf.Clamp(EditorPrefs.GetFloat(PrefsKey + ".TextW", 360f), 240f, 760f));
+            _textChainColumn.style.flexGrow = textFocus ? 1 : 0;
+            _textChainColumn.style.flexShrink = textFocus ? 1 : 0;
+
+            if (_viewModeButton != null)
+                _viewModeButton.text = textFocus ? "文本专注" : graphFocus ? "节点专注" : "分屏";
             if (_toggleTextChainButton != null)
             {
-                _toggleTextChainButton.text = collapsed ? "◀◀" : "▶▶";
-                _toggleTextChainButton.tooltip = collapsed
-                    ? "展开命令链文本侧边栏"
-                    : "折叠命令链文本侧边栏（窗口栏窄时腾出空间给画布）";
+                _toggleTextChainButton.SetEnabled(mode == 0);
+                _toggleTextChainButton.text = showText ? "▶▶" : "◀◀";
+                _toggleTextChainButton.tooltip = showText ? "折叠文本栏" : "展开文本栏";
             }
         }
 
@@ -2048,65 +2238,76 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// 读到半写文件。轮询恰好撞上写入的概率不高，但一旦发生就是数据损坏，
         /// 而原子写的成本只是多一次文件移动。
         /// </summary>
-        private bool TryWriteCsv(out string error)
+        private bool TryWriteCsv(string command, out bool changed, out string error)
         {
+            changed = false;
             error = null;
 
             try
             {
-                string[] original = File.ReadAllLines(_csvPath);
-                if (original.Length == 0) { error = "CSV 为空"; return false; }
-
-                var output = new List<string> { original[0] }; // 表头原样保留
-
-                // 按行 ID 匹配而非按序号——载入时残缺行会被跳过，
-                // 若按序号对应会把命令写到错误的行上。
-                var byId = new Dictionary<string, CsvRow>();
-                foreach (var row in _rows)
-                    if (!string.IsNullOrEmpty(row.Id)) byId[row.Id] = row;
-
-                for (int i = 1; i < original.Length; i++)
+                DateTime sourceStamp = File.GetLastWriteTimeUtc(_csvPath);
+                byte[] sourceBytes = File.ReadAllBytes(_csvPath);
+                if (File.GetLastWriteTimeUtc(_csvPath) != sourceStamp)
                 {
-                    if (string.IsNullOrWhiteSpace(original[i]))
-                    {
-                        output.Add(original[i]);
-                        continue;
-                    }
-
-                    var cells = ParseCsvLine(original[i]);
-                    string id = Cell(cells, 0);
-
-                    if (!string.IsNullOrEmpty(id) && byId.TryGetValue(id, out var row))
-                        output.Add(BuildCsvLine(row));
-                    else
-                        output.Add(original[i]); // 未识别的行原样保留，绝不丢内容
+                    error = "CSV 在读取过程中发生变化，请重试保存";
+                    return false;
                 }
+                bool withBom = sourceBytes.Length >= 3 && sourceBytes[0] == 0xEF &&
+                    sourceBytes[1] == 0xBB && sourceBytes[2] == 0xBF;
+                string content = new System.Text.UTF8Encoding(false).GetString(sourceBytes, withBom ? 3 : 0,
+                    sourceBytes.Length - (withBom ? 3 : 0));
+                string[] records = SplitCsvRecords(content);
+                if (records.Length < 2) { error = "CSV 为空"; return false; }
+                string newline = content.Contains("\r\n") ? "\r\n" : "\n";
+                int match = -1;
+                List<string> targetCells = null;
+                for (int i = 1; i < records.Length; i++)
+                {
+                    if (string.IsNullOrWhiteSpace(records[i])) continue;
+                    var cells = ParseCsvLine(records[i]);
+                    if (Cell(cells, 0) != CurrentRow.Id) continue;
+                    if (match >= 0) { error = "CSV 中存在重复行 ID，请先修复后再保存"; return false; }
+                    match = i;
+                    targetCells = cells;
+                }
+                if (match < 0 || targetCells == null || targetCells.Count <= _layout.CommandIndex)
+                {
+                    error = "磁盘 CSV 中找不到当前行或 Command 列，已停止写入";
+                    return false;
+                }
+                string diskCommand = targetCells[_layout.CommandIndex];
+                if (!string.Equals(diskCommand, _savedCommand, StringComparison.Ordinal))
+                {
+                    error = "当前行 Command 已在窗口外发生变化，请复制草稿并重新加载后处理冲突";
+                    return false;
+                }
+                if (diskCommand == command) return true;
 
-                // 【Fix-49】临时文件仍在同目录（保证 File.Replace 同卷原子性），但后缀用
-                // ".tmp~" 让 AssetDatabase 不会把它当资产导入（残留时也不污染工程）；
-                // 无论成功失败都在 finally 中清理残留。
+                records[match] = BuildCsvLine(targetCells, command);
                 string tempPath = _csvPath + ".tmp~";
-                File.WriteAllLines(tempPath, output);
+                File.WriteAllText(tempPath, string.Join(newline, records), new System.Text.UTF8Encoding(withBom));
+                if (File.GetLastWriteTimeUtc(_csvPath) != sourceStamp ||
+                    new FileInfo(_csvPath).Length != sourceBytes.Length)
+                {
+                    error = "CSV 在保存期间被其他工具修改，请重新加载后处理冲突";
+                    return false;
+                }
 
                 if (File.Exists(_csvPath))
                 {
-                    try
-                    {
-                        // File.Replace 在同卷内是原子操作
-                        File.Replace(tempPath, _csvPath, null);
-                    }
-                    catch (IOException)
-                    {
-                        // Replace 失败（如杀毒/权限瞬时占用）降级为覆盖拷贝，保证保存不中断
-                        File.Copy(tempPath, _csvPath, true);
-                    }
+                    File.Replace(tempPath, _csvPath, null);
                 }
                 else
                 {
                     File.Move(tempPath, _csvPath);
                 }
 
-                AssetDatabase.ImportAsset(_csvPath);
+                changed = true;
+                try { AssetDatabase.ImportAsset(_csvPath); }
+                catch (Exception importError)
+                {
+                    Debug.LogWarning($"CSV 已写入，但 Unity 资产刷新失败：{importError.Message}");
+                }
                 return true;
             }
             catch (Exception e)
@@ -2130,13 +2331,11 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// 列索引取自 <see cref="_layout"/>——写错这里会把命令写进 Note 列，
         /// 是最需要防范的一类错误。
         /// </summary>
-        private string BuildCsvLine(CsvRow row)
+        private string BuildCsvLine(List<string> diskCells, string command)
         {
-            var cells = new List<string>(row.Cells);
+            var cells = new List<string>(diskCells);
             int cmdIndex = _layout.CommandIndex;
-
-            while (cells.Count <= cmdIndex) cells.Add("");
-            cells[cmdIndex] = row.Command ?? "";
+            cells[cmdIndex] = command ?? "";
 
             var parts = new List<string>();
             foreach (string cell in cells) parts.Add(EscapeCsv(cell));
@@ -2154,6 +2353,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
         private bool ConfirmDiscardIfDirty()
         {
+            _textChain?.Flush();
             if (!_isDirty) return true;
 
             int choice = EditorUtility.DisplayDialogComplex(
@@ -2163,8 +2363,13 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             switch (choice)
             {
-                case 0: SaveCurrentRow(); return !_isDirty;
-                case 2: _isDirty = false; return true;
+                case 0: SaveCurrentRow(); return _lastSaveSucceeded;
+                case 2:
+                    if (CurrentRow != null) CurrentRow.Command = _savedCommand;
+                    _isDirty = false;
+                    _textParseError = null;
+                    hasUnsavedChanges = false;
+                    return true;
                 default: return false;
             }
         }
