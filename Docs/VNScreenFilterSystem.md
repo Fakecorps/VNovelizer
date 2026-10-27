@@ -77,14 +77,15 @@ VNovelizer 画面 = 世界空间 3D 舞台（背景/立绘 `MeshActor`、L2D 网
 ### 3.1 粒子特效（particle_snow / particle_rain / particlecustom）
 
 > **变更记录 2026-10-22**：雪/雨从天气滤镜改回**代码生成的粒子系统**（`WeatherParticleFactory` + `WeatherParticleManager`：运行时纯代码构建 ParticleSystem + UIParticle，零美术资源）。`filter_snow`/`filter_rain` 命令、`VNFilterSnow/Rain.shader` 与 `WeatherFilterMap` 兼容映射已全部删除——旧剧本中的 `filter_snow/filter_rain` 会报"未找到命令"、`playparticle(SnowEffect/RainEffect)` 会报找不到资源，请改用 `particle_snow`/`particle_rain`。
-> **变更记录 2026-10-23（VFX 注册表扩展）**：rain/snow 封装为**挂 `VN_Particle` 组件的预制体**并预填进 `VFXParticleRegistry`；运行时走"注册表条目 → 预制体实例化 → `VN_Particle.SetIntensity`"链路（零配置临时实例保留代码构建兜底）。`playparticle`/`stopparticle` 已删除（`unsetparticle` 是唯一生命周期命令）；新增 `particlecustom(id[,intensity[,duration]])` 使用任意注册表条目（含用户自建 Prefab）。
+> **变更记录 2026-10-23（VFX 注册表扩展）**：rain/snow 封装为**挂 `VN_Particle` 组件的预制体**；用户在 VFX 设置页显式恢复内置条目后，运行时走"注册表条目 → 预制体实例化 → `VN_Particle.SetIntensity`"链路（仅无持久配置的临时实例保留代码构建兜底）。`playparticle`/`stopparticle` 已删除（`unsetparticle` 是唯一生命周期命令）；新增 `particlecustom(id[,intensity[,duration]])` 使用任意注册表条目（含用户自建 Prefab）。
+> **2026-10-27 雨雪参数同步**：包内 `Runtime/PackageDefault/VNovelizerRes/VFX/Particles/` 已包含从 Dev1 定稿的 rain/snow 预制体、软圆点材质与贴图（独立 GUID）；`WeatherParticleFactory` 零配置兜底和显式烘焙参数亦同步。Snow 从参考画布上沿 Y=540 之外的 Y=620–780 出生；Rain 宽 5–8、高 160–250、基准发射率 520/s（命令默认强度 0.6 时约 312/s）。修改工作区的同名 prefab 不会自动写回包内，已注册的资产引用也不会被静默替换。
 
 - 命令入口：`particle_snow([intensity[, duration]])` / `particle_rain([intensity[, duration]])` / `particlecustom(id[, intensity[, duration]])`（intensity = 强度 0~1 缺省 0.6，映射到粒子发射率与亮度；duration = 渐变秒数，缺省 = 注册表条目默认时长 0.5，0 = 立即）；关闭用 `unsetparticle(条目id)` 或 `unsetparticle(all)`。重复开启幂等（渐变到目标强度并刷新）。内置命令 `particle_snow`/`particle_rain` 按注册表 id（snow/rain）解析——条目被删除/禁用后命令警告"未注册"。
 - 视觉层级：粒子特效挂在 **VN_EffectCanvas 的 EffectLayer**（sortingOrder=5）——剧场画面之上、滤镜层之上（VHS 等画面滤镜不会扭曲天气）、对话框之下，即"在场景里"，对话与 UI 粒子保持清晰。
-- 实现：`VN_Particle` 组件契约（挂预制体上）——`Awake` 自愈 Normalize（全屏 RectTransform / 自动补挂 UIParticle / 启动播放）+ `SetIntensity(float)` 强度抽象（发射率 × 强度 + 亮度 alpha 调制），管理器只认该接口。内置预制体构建源 = `WeatherParticleFactory`（雪 = 软圆点慢速飘落 + 位置噪声风摆；雨 = 长条雨丝 3×70~110px 高速下落 950~1500 px/s + ≈10° 风斜 ±3° 抖动；Box 发射区覆盖画布 + 四周边距；贴图 = 引擎内置 Default-Particle 软圆点）。编辑器侧 `VNWeatherParticleGenerator` 经 PrefabUtility 落盘：包内模板 `Runtime/PackageDefault/VNovelizerRes/VFX/Particles/`（随包分发、GUID 注册只读），缺失时生成到 `Assets/VNovelizer/VFX/Particles/`；「从模板创建粒子…」按钮复制模板到自选位置供魔改并追加注册表条目。`WeatherParticleManager` 懒单例：强度渐变 = `VN_Particle.SetIntensity` lerp（unscaledTime），衰减到 0 后销毁条目，随剧场清场（ClearTheater → ResetAll）复位。
+- 实现：预制体自带 `RectTransform` / `ParticleSystem` / `UIParticle` / `VN_Particle`；`VN_Particle.Awake` 仅捕获初始参数并播放，不自动修复预制体；`SetIntensity(float)` 将发射率乘强度并调制初始颜色 alpha。内置模板及零配置兜底的参数源为 `WeatherParticleFactory`：雪 = 5–14px 软圆点、6–9s 寿命、88/s 基准发射、95–185px/s 下落，低频噪声风摆，发射区 Y=620–780 全在参考画布上沿外；雨 = 5–8×160–250px 的倾斜软边雨丝、520/s 基准发射、900–1280px/s 下落，发射区位于画布顶部。雨雪共用包内 `VN_SoftDot` 材质/贴图且不拦截 UI 点击。包内预制体随包分发；编辑器 `VNWeatherParticleGenerator` 仅提供纯查询和**手动确认**的包内烘焙菜单，不自动生成或覆盖；「从模板创建粒子…」可复制模板另建自定义条目。`WeatherParticleManager` 经 `VN_Particle.SetIntensity` 用 unscaledTime 渐变，衰减到 0 后销毁，随剧场清场复位。
 - 语义（与 filter 命令族同构）：Execute/Simulate/Interrupt = 立即终态；ExecuteAsync 等待渐变（保持 `&` 时序）；不入存档（快进/读档经 Simulate 重建终态）。
 
-内置条目由编辑器预填（首次创建配置资产 / 打开 VFX 设置页自愈，幂等；可禁用/可删）；零配置（未创建持久配置资产）场景由临时实例预填 + 运行时兜底保证开箱即用。
+持久配置资产的注册表是唯一真源，不会因打开设置页自动预填；需要在 Edit → Project Settings → VNovelizer → VFX 点「恢复内置条目（7 滤镜 + rain/snow）」，或手工添加并指定 Prefab/Shader。恢复按钮仅在对应整张表为空时预填，已有条目不覆盖；未创建持久配置资产时，临时配置中的雨雪空引用条目仍走 `WeatherParticleFactory` 运行时兜底。
 
 ## 4. 运行时架构（ScreenFilterManager）
 
@@ -134,7 +135,7 @@ VN_EffectCanvas（sortingOrder=5）
 - **视效命令分类**：`filter_xxx` / `filtercustom` / `particle_snow` / `particle_rain` / `particlecustom` / `unsetfilter` / `unsetparticle` 命令标注 `VNCommandCategory.VFX`，行演出编辑器左侧命令面板单独分组「视效命令」（青绿色），节点标题栏同色带。
 - **结构化参数表单**：`filter_xxx` 的可调参数声明为 `Float`/`Int` + Min/Max → Inspector 渲染滑块（带输入框），duration 为可选滑块；`filter_pixelate` 为整数滑块（2~512）。
 - **候选来源（注册表驱动）**：`VNParamType.FilterName`（`unsetfilter`/`filtercustom` 的 id）与 `VNParamType.RegisteredParticleName`（`particlecustom` 的 id）候选 = 注册表启用条目（`ParamCandidateProvider` 直读 `VNProjectConfig` 注册表，无持久配置时回退内置静态清单，不触碰运行时资源链）；`unsetfilter` 额外在最前插入 `all`、`unsetparticle` 的 `WeatherParticleName` 候选 = 启用条目 + `all`。
-- **VFX 设置页**：Edit → Project Settings → VNovelizer → VFX——滤镜注册表 + 粒子注册表双列表（启用开关 / id / 显示名 / Shader 或 Prefab / 默认时长 / 删除 + 添加按钮 + 重复 id 校验），打开本页触发幂等自愈预填；「从模板创建粒子…」按钮复制内置 rain/snow 模板到自选位置并追加注册表条目。
+- **VFX 设置页**：Edit → Project Settings → VNovelizer → VFX——滤镜注册表 + 粒子注册表双列表（启用开关 / id / 显示名 / Shader 或 Prefab / 默认时长 / 删除 + 添加按钮 + 重复 id 校验）；仅显式点击「恢复内置条目」才填充空表；「从模板创建粒子…」按钮复制内置 rain/snow 模板到自选位置并追加注册表条目。
 - `VNProjectConfig.FilterResPath` / `ParticleResPath`（引擎内部常量，默认 `VNovelizerRes/VFX/Filters` / `VNovelizerRes/VFX/Particles`）；`VNAddressablesRegistrar` 已知类别已含两前缀（工作区粒子副本/模板自动按类别锚定注册）。
 
 ## 8. 已知边界
@@ -158,13 +159,13 @@ VN_EffectCanvas（sortingOrder=5）
 
 ## 10. VFX 注册表扩展验证清单（Dev1 工程实测，2026-10-23）
 
-1. 打开 Edit → Project Settings → VNovelizer → VFX：首次打开自动预填内置 7 款滤镜 + rain/snow 粒子（shader/prefab 引用非空）；再次打开不重复添加（幂等）。
-2. 存量项目（已有 VNProjectConfig.asset）：打开 VFX 页前 `filter_vhs` 警告"未注册"，打开后自愈补填、命令恢复可用。
+1. 打开 Edit → Project Settings → VNovelizer → VFX：保持注册表原样；点击「恢复内置条目」才补填空表中的 7 款滤镜 + rain/snow，核对 Shader/Prefab 引用；已有条目不覆盖。
+2. 存量项目（已有空注册表的 VNProjectConfig.asset）：打开 VFX 页前后 `filter_vhs` 都会警告「未注册」；显式恢复并保存后命令才可用。
 3. 删除滤镜条目 `vhs` → `filter_vhs` / `filtercustom(vhs)` 警告"未注册"；禁用 rain 条目 → `particle_rain` 警告"未注册"；恢复条目后命令恢复。
 4. 自定义滤镜：拖任意 shader 进新条目（id=myfx）→ `filtercustom(myfx, 0.5, 1)` 半强度淡入、`unsetfilter(myfx)` 关闭。
 5. 粒子：`particle_snow` / `particle_rain` 照常播放（注册表预制体实例化，画布全屏、有 UIParticle 渲染）；`particlecustom(snow, 0.8)` 等效。
 6. 「从模板创建粒子…」→ 保存副本 → 注册表出现新条目（id=文件名）→ `particlecustom(新id)` 播放副本；副本魔改（如改发射率/颜色）后即时生效。
-7. 内置预制体生成：删除 `Assets/VNovelizer/VFX/Particles/` 下 snow 预制体 + 清空注册表 → 重新打开 VFX 页自愈重新生成。
+7. 内置预制体分发：包内 `Particles/snow.prefab` 和 `rain.prefab` 使用不同于 Dev1 工作区资源的 GUID；修改工作区 prefab 不改变包内模板；仅显式运行「烘焙内置粒子预制体到包内」才会按工厂出厂参数覆盖包内模板。
 8. `playparticle`/`stopparticle` 已从命令面板消失；旧剧本含这两个命令报"未找到命令"。
 9. `unsetparticle(name)` 下拉含注册表全部启用粒子条目 + all；旧存档（含 VNAnim_ 动画）读档恢复动画、跳过已废弃粒子名（仅日志提示）。
 10. 零配置：删掉 VNProjectConfig.asset 后 Play（临时实例）——`filter_vhs` / `particle_snow` 仍可用（内置兜底）。

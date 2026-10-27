@@ -8,9 +8,9 @@ namespace VNovelizer.Core.Weather
     ///
     /// <para>
     /// 【VFX 注册表扩展 2026-10-23】本类承担双重角色：
-    /// ① 编辑器侧内置预制体生成器的**初始参数构建源**（VNWeatherParticleGenerator 复用
-    /// 本类构建 GameObject 后经 PrefabUtility 落盘成预制体资产——仅在预制体缺失/坏版时
-    /// 执行一次，此后粒子参数完全以 prefab 为准，用户可随意修改，脚本绝不覆盖）；
+    /// ① 编辑器侧显式烘焙菜单的**出厂参数构建源**（VNWeatherParticleGenerator 复用
+    /// 本类构建 GameObject 后经 PrefabUtility 落盘成预制体资产；仅用户明确确认时
+    /// 才覆盖包内模板。平时粒子参数以注册表引用的 prefab 为准，脚本绝不自动覆盖）；
     /// ② 运行时零配置兜底（VFX 注册表粒子条目 Prefab 为空时由
     /// WeatherParticleManager 直接构建）。运行时正常路径 = 注册表 + 预制体实例化。
     /// </para>
@@ -25,8 +25,8 @@ namespace VNovelizer.Core.Weather
     ///
     /// <para>
     /// 初始参数策略（仅作内置模板出厂值）：速度完全由 velocityOverLifetime（Local 空间）
-    /// 控制（startSpeed=0），发射形状 = Box 覆盖画布 + 四周溢出边距（粒子从画布外进入
-    /// 不露馅）。密度/亮度由 VN_Particle.SetIntensity 按 intensity 实时调制发射率与
+    /// 控制（startSpeed=0），发射形状 = 画布上沿附近的 Box（雪从屏幕外进入，雨在
+    /// 顶部渐入）。密度/亮度由 VN_Particle.SetIntensity 按 intensity 实时调制发射率与
     /// startColor——这是命令语义，与 prefab 基准值相乘（改 prefab 基准同样生效）。
     /// </para>
     /// </summary>
@@ -35,12 +35,14 @@ namespace VNovelizer.Core.Weather
         public const string SnowId = "snow";
         public const string RainId = "rain";
 
-        // 发射区域（1920×1080 参考画布 + 边距）
-        private const float EmitWidth = 2048f;
-        private const float SnowEmitHeight = 1536f;
-        private const float SnowEmitTop = 250f;      // 发射区中心高于画布顶（上方落雪来源）
-        private const float RainEmitHeight = 1400f;
-        private const float RainEmitTop = 150f;
+        // 1920×1080 参考画布中心为原点，上沿 Y=540；雪全部在屏外出生，雨在顶部渐入。
+        private const float SnowEmitWidth = 2160f;
+        private const float SnowEmitHeight = 160f;
+        private const float SnowEmitTop = 700f;     // 出生 Y=620..780
+        private const float RainEmitWidth = 2360f;
+        private const float RainEmitHeight = 440f;
+        private const float RainEmitTop = 720f;     // 出生 Y=500..940，尾段渐入画面
+        private const float RainEmitRightOffset = 100f; // 抵消风吹向左产生的侧边稀疏
 
         /// <summary>创建下雪粒子系统（已开始播放）</summary>
         public static GameObject CreateSnow(Transform parent) => Build(parent, true);
@@ -79,6 +81,7 @@ namespace VNovelizer.Core.Weather
             var uiParticle = go.AddComponent<UIParticle>();
             uiParticle.scale3D = Vector3.one;
             uiParticle.autoScalingMode = UIParticle.AutoScalingMode.None;
+            uiParticle.raycastTarget = false;
 
             // 挂 VN_Particle 契约组件（运行时兜底由管理器消费接口；编辑器烘焙随 prefab 序列化）
             if (go.GetComponent<VN_Particle>() == null) go.AddComponent<VN_Particle>();
@@ -96,26 +99,30 @@ namespace VNovelizer.Core.Weather
             main.playOnAwake = false;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
             main.startSpeed = 0f;                                        // 速度由 velocityOverLifetime 控制
-            main.startLifetime = new ParticleSystem.MinMaxCurve(6f, 12f);
-            main.startSize = new ParticleSystem.MinMaxCurve(9f, 18f);    // 参考像素直径
+            main.startLifetime = new ParticleSystem.MinMaxCurve(6f, 9f);
+            main.startSize = new ParticleSystem.MinMaxCurve(5f, 14f);    // 参考像素直径
             main.startColor = new ParticleSystem.MinMaxGradient(
-                new Color(1f, 1f, 1f, 0.85f), new Color(0.88f, 0.93f, 1f, 0.55f));
+                new Color(0.84f, 0.92f, 1f, 0.42f), new Color(1f, 1f, 1f, 0.82f));
             main.maxParticles = 1600;
 
             var em = ps.emission;
-            em.rateOverTime = new ParticleSystem.MinMaxCurve(120f);      // 基准密度（× intensity）
+            em.rateOverTime = new ParticleSystem.MinMaxCurve(88f);       // 基准密度（× intensity）
 
             var shape = ps.shape;
             shape.shapeType = ParticleSystemShapeType.Box;
-            shape.scale = new Vector3(EmitWidth, SnowEmitHeight, 1f);
+            shape.scale = new Vector3(SnowEmitWidth, SnowEmitHeight, 1f);
             shape.position = new Vector3(0f, SnowEmitTop, 0f);
 
             var vel = ps.velocityOverLifetime;
             vel.enabled = true;
             vel.space = ParticleSystemSimulationSpace.Local;
-            vel.y = new ParticleSystem.MinMaxCurve(-180f, -80f);         // 慢速飘落
-            vel.x = new ParticleSystem.MinMaxCurve(-15f, 15f);           // 每片水平漂移差异
+            vel.y = new ParticleSystem.MinMaxCurve(-185f, -95f);         // 慢速飘落
+            vel.x = new ParticleSystem.MinMaxCurve(-24f, 24f);           // 每片水平漂移差异
             vel.z = new ParticleSystem.MinMaxCurve(0f, 0f);              // 与 x/y 保持同模式（TwoConstants）
+
+            var rotation = ps.rotationOverLifetime;
+            rotation.enabled = true;
+            rotation.z = new ParticleSystem.MinMaxCurve(0.43633232f);
 
             // 位置噪声 = 轻柔风摆（左右轻晃，飘雪感；强度/频率克制，避免雪花横跳鬼畜）
             var noise = ps.noise;
@@ -133,46 +140,45 @@ namespace VNovelizer.Core.Weather
 
         private static void ConfigureRain(ParticleSystem ps)
         {
-            // 风斜角：≈10°（0.175 rad）±3° 随机 → 每粒 7°~13°，向左斜飘（负 x 方向）
-            const float slantRad = 0.175f;
-            const float jitterRad = 0.05f;
+            // 向左微倾（弧度），与负 X 的水平风速一致。
+            const float slantMin = -0.19f;
+            const float slantMax = -0.11f;
 
             var main = ps.main;
             main.loop = true;
             main.playOnAwake = false;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
             main.startSpeed = 0f;
-            main.startLifetime = new ParticleSystem.MinMaxCurve(0.9f, 1.3f);
+            main.startLifetime = new ParticleSystem.MinMaxCurve(0.9f, 1.25f);
             main.startSize3D = true;
-            main.startSizeX = new ParticleSystem.MinMaxCurve(4f, 6f);
-            main.startSizeY = new ParticleSystem.MinMaxCurve(140f, 220f); // 长条雨丝（2026-10-23 调长：拉长丝体 + 软圆点贴图尾端渐隐 = 拖尾观感）
+            main.startSizeX = new ParticleSystem.MinMaxCurve(5f, 8f);
+            main.startSizeY = new ParticleSystem.MinMaxCurve(160f, 250f);
             main.startSizeZ = 1f;
-            // startRotationZ 为弧度（startRotation 才是角度，勿混用）；
-            // 负值 = 顺时针斜，与向左飘的速度方向对齐（左斜雨丝 \）
-            main.startRotationZ = new ParticleSystem.MinMaxCurve(-slantRad - jitterRad, -slantRad + jitterRad);
+            // startRotationZ 为弧度（startRotation 才是角度，勿混用）。
+            main.startRotationZ = new ParticleSystem.MinMaxCurve(slantMin, slantMax);
             main.startColor = new ParticleSystem.MinMaxGradient(
-                new Color(0.78f, 0.85f, 1f, 0.7f), new Color(0.85f, 0.9f, 1f, 0.45f));
+                new Color(0.8f, 0.88f, 1f, 0.58f), new Color(0.94f, 0.97f, 1f, 0.88f));
             main.maxParticles = 900;
 
             var em = ps.emission;
-            em.rateOverTime = new ParticleSystem.MinMaxCurve(500f);      // 基准密度（× intensity）
+            em.rateOverTime = new ParticleSystem.MinMaxCurve(520f);      // 基准密度（× intensity）
 
             var shape = ps.shape;
             shape.shapeType = ParticleSystemShapeType.Box;
-            shape.scale = new Vector3(EmitWidth, RainEmitHeight, 1f);
-            shape.position = new Vector3(0f, RainEmitTop, 0f);
+            shape.scale = new Vector3(RainEmitWidth, RainEmitHeight, 1f);
+            shape.position = new Vector3(RainEmitRightOffset, RainEmitTop, 0f);
 
             var vel = ps.velocityOverLifetime;
             vel.enabled = true;
             vel.space = ParticleSystemSimulationSpace.Local;
-            vel.y = new ParticleSystem.MinMaxCurve(-1500f, -950f);       // 高速下落
-            vel.x = new ParticleSystem.MinMaxCurve(-240f, -160f);        // 风斜水平速度（左斜，≈tan10°×vy）
+            vel.y = new ParticleSystem.MinMaxCurve(-1280f, -900f);       // 高速下落
+            vel.x = new ParticleSystem.MinMaxCurve(-195f, -110f);        // 风斜水平速度（向左）
             vel.z = new ParticleSystem.MinMaxCurve(0f, 0f);              // 与 x/y 保持同模式（TwoConstants）
 
-            // 丝尾淡出（消亡前柔和消失）
+            // 前 8% 淡入、70% 前保持亮度，再于消亡前柔和淡出。
             var col = ps.colorOverLifetime;
             col.enabled = true;
-            col.color = new ParticleSystem.MinMaxGradient(FadeGradient(0.9f, 0.8f, 1f));
+            col.color = new ParticleSystem.MinMaxGradient(FadeGradient(0.95f, 0.08f, 0.7f));
         }
 
         /// <summary>alpha 淡入（0→holdIn 到 holdIn）保持到 holdOut 后淡出到 0</summary>
