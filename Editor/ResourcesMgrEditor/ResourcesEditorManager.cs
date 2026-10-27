@@ -33,19 +33,23 @@ public class ResourcesEditorManager : AlchemyEditorWindow
 
     protected override void CreateGUI()
     {
-        // 1. 加载持久化状态
-        LoadWindowData(GetWindowDataPath());
-        _state = new ResourceWindowState
+        if (_presenter != null) _state = _presenter.GetState();
+        else
         {
-            currentType = currentType,
-            searchKeyword = searchKeyword,
-            viewMode = viewMode,
-            sortMode = sortMode,
-            cardSize = cardSize,
-            showStatusBar = showStatusBar,
-            lastSelectedAssetPath = lastSelectedAssetPath,
-            currentFolder = currentFolder
-        };
+            try { LoadWindowData(GetWindowDataPath()); }
+            catch (System.Exception e) { Debug.LogWarning($"[资源管理器] 窗口状态读取失败：{e.Message}"); }
+            _state = new ResourceWindowState
+            {
+                currentType = currentType,
+                searchKeyword = searchKeyword ?? "",
+                viewMode = viewMode,
+                sortMode = sortMode,
+                cardSize = Mathf.Clamp(cardSize, ResourceStyles.MinCardSize, ResourceStyles.MaxCardSize),
+                showStatusBar = showStatusBar,
+                lastSelectedAssetPath = lastSelectedAssetPath,
+                currentFolder = currentFolder
+            };
+        }
 
         var root = rootVisualElement;
         root.Clear();
@@ -84,14 +88,15 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         root.Add(splitView);
 
         // 4. 状态栏（根据配置决定是否显示）
-        if (_state.showStatusBar) root.Add(statusBar.Root);
+        root.Add(statusBar.Root);
+        statusBar.Root.style.display = _state.showStatusBar ? DisplayStyle.Flex : DisplayStyle.None;
 
         // 5. 创建 Presenter 并初始化
         _presenter = new ResourceManagerPresenter(toolbar, sidebar, content, statusBar, audioPlayer, trashPanel);
         _presenter.OnStatusBarToggled += () =>
         {
-            // 重新构建整个窗口以应用状态栏显示变化
-            CreateGUI();
+            statusBar.Root.style.display = _presenter.GetState().showStatusBar ? DisplayStyle.Flex : DisplayStyle.None;
+            PersistState();
         };
         _presenter.Initialize(_state);
 
@@ -99,15 +104,30 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         //    落位到当前浏览的文件夹）
         rightContainer.RegisterCallback<DragUpdatedEvent>(evt =>
         {
-            // Project 窗口拖入的资产用 Link 光标（分配语义，不复制文件）；外部文件用 Copy
-            bool fromProject = DragAndDrop.paths != null && DragAndDrop.paths.Length > 0
-                && DragAndDrop.paths[0].StartsWith("Assets/", System.StringComparison.OrdinalIgnoreCase);
-            DragAndDrop.visualMode = fromProject ? DragAndDropVisualMode.Link : DragAndDropVisualMode.Copy;
+            if (_presenter == null || _presenter.IsTrashMode) DragAndDrop.visualMode = DragAndDropVisualMode.Rejected;
+            else if (DragAndDrop.GetGenericData("VnResMoveItems") is System.Collections.Generic.List<string>)
+                DragAndDrop.visualMode = DragAndDropVisualMode.Move;
+            else
+            {
+                bool fromProject = DragAndDrop.paths != null && DragAndDrop.paths.Length > 0 &&
+                    (DragAndDrop.paths[0].StartsWith("Assets/", System.StringComparison.OrdinalIgnoreCase) ||
+                     DragAndDrop.paths[0].StartsWith("Packages/", System.StringComparison.OrdinalIgnoreCase));
+                string category = ResourceAssetService.GetPathFromConfig(_presenter.CurrentType);
+                bool move = fromProject && _presenter.CurrentType != ResType.Video && !string.IsNullOrEmpty(category) &&
+                    DragAndDrop.paths[0].StartsWith(category + "/", System.StringComparison.OrdinalIgnoreCase);
+                DragAndDrop.visualMode = move ? DragAndDropVisualMode.Move :
+                    fromProject && _presenter.CurrentType != ResType.Video ? DragAndDropVisualMode.Link : DragAndDropVisualMode.Copy;
+            }
+            evt.StopPropagation();
         });
         rightContainer.RegisterCallback<DragPerformEvent>(evt =>
         {
+            if (_presenter == null || _presenter.IsTrashMode) { evt.StopPropagation(); return; }
             DragAndDrop.AcceptDrag();
-            _presenter?.HandleDroppedPaths(DragAndDrop.paths);
+            if (DragAndDrop.GetGenericData("VnResMoveItems") is System.Collections.Generic.List<string> items)
+                _presenter.HandleInternalDrop(items);
+            else _presenter.HandleDroppedPaths(DragAndDrop.paths);
+            evt.StopPropagation();
         });
 
         // 7. 键盘快捷键
@@ -130,16 +150,13 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         titleBar.style.borderBottomColor = GalleryTheme.Hex(GalleryTheme.Border);
         root.Add(titleBar);
 
-        var icon = new Label("\u25A0")
-        {
-            style =
-            {
-                fontSize = 16,
-                color = GalleryTheme.Hex(GalleryTheme.Accent),
-                marginRight = 8
-            }
-        };
-        titleBar.Add(icon);
+        var icon = new Image { image = UIElementBuilder.GetIcon("Folder Icon", "d_Folder Icon"), scaleMode = ScaleMode.ScaleToFit };
+        icon.style.width = 18;
+        icon.style.height = 18;
+        icon.style.flexShrink = 0;
+        icon.style.marginRight = 8;
+        icon.pickingMode = PickingMode.Ignore;
+        if (icon.image != null) titleBar.Add(icon);
 
         var title = new Label("资源管理器")
         {
@@ -166,11 +183,8 @@ public class ResourcesEditorManager : AlchemyEditorWindow
         titleBar.Add(new VisualElement { style = { flexGrow = 1 } });
 
         // 刷新按钮
-        var refreshBtn = new Button(() =>
-        {
-            _presenter?.RefreshContent();
-        })
-        { text = "\u21BB 刷新" };
+        var refreshBtn = UIElementBuilder.MakeIconButton(UIElementBuilder.GetIcon("Refresh", "d_Refresh"),
+            "刷新", () => _presenter?.RefreshContent());
         GalleryStyles.ApplyButton(refreshBtn, GalleryTheme.BgCard, false);
         refreshBtn.style.height = 30;
         refreshBtn.style.marginRight = 8;
@@ -179,7 +193,11 @@ public class ResourcesEditorManager : AlchemyEditorWindow
 
     private void OnKeyDown(KeyDownEvent evt)
     {
-        _presenter?.OnKeyDown(evt.keyCode, evt.ctrlKey || evt.commandKey, evt.shiftKey);
+        var focused = rootVisualElement.panel?.focusController?.focusedElement as VisualElement;
+        for (var element = focused; element != null; element = element.parent)
+            if (element is TextField || element.ClassListContains("unity-base-text-field")) return;
+        if (_presenter != null && _presenter.OnKeyDown(evt.keyCode, evt.ctrlKey || evt.commandKey, evt.shiftKey))
+            evt.StopPropagation();
     }
 
     private void OnKeyUp(KeyUpEvent evt) { }
@@ -196,8 +214,21 @@ public class ResourcesEditorManager : AlchemyEditorWindow
     [SerializeField] private string lastSelectedAssetPath = "";
     [SerializeField] private string currentFolder = "";
 
-    /// <summary>窗口失焦前保存状态</summary>
+    private void OnLostFocus() => PersistState();
+
     private void OnDisable()
+    {
+        PersistState();
+        rootVisualElement.UnregisterCallback<KeyDownEvent>(OnKeyDown);
+        rootVisualElement.UnregisterCallback<KeyUpEvent>(OnKeyUp);
+        _audioPlayerView?.Dispose();
+        _audioPlayerView = null;
+        _presenter = null;
+        AudioPreviewService.Stop();
+        EditorUpdateService.UnregisterCallback();
+    }
+
+    private void PersistState()
     {
         if (_presenter != null)
         {
@@ -211,8 +242,7 @@ public class ResourcesEditorManager : AlchemyEditorWindow
             lastSelectedAssetPath = s.lastSelectedAssetPath;
             currentFolder = s.currentFolder;
         }
-        AudioPreviewService.Stop();
-        EditorUpdateService.UnregisterCallback();
-        try { SaveWindowData(GetWindowDataPath()); } catch { }
+        try { SaveWindowData(GetWindowDataPath()); }
+        catch (System.Exception e) { Debug.LogWarning($"[资源管理器] 窗口状态保存失败：{e.Message}"); }
     }
 }

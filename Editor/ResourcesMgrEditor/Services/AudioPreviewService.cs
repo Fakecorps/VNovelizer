@@ -53,6 +53,7 @@ public static class AudioPreviewService
 
     public static bool IsAvailable => _initialized;
     public static string InitError => _initError;
+    public static bool SupportsPlaybackSpeed => _setPitchMethod != null;
 
     static AudioPreviewService()
     {
@@ -98,11 +99,20 @@ public static class AudioPreviewService
     {
         if (!_initialized || clip == null) return;
 
-        // 停止之前的播放
-        _stopAllMethod.Invoke(null, null);
-
         int sample = Mathf.Clamp(startSample, 0, Mathf.Max(0, clip.samples - 1));
-        _playMethod.Invoke(null, new object[] { clip, sample, loop });
+        try
+        {
+            _stopAllMethod.Invoke(null, null);
+            _playMethod.Invoke(null, new object[] { clip, sample, loop });
+        }
+        catch (Exception e)
+        {
+            CurrentClip = null;
+            IsPaused = false;
+            Debug.LogWarning($"[AudioPreview] 播放失败: {e.Message}");
+            OnStateChanged?.Invoke();
+            return;
+        }
 
         CurrentClip = clip;
         _sampleRate = Mathf.Max(1, clip.frequency);
@@ -201,7 +211,7 @@ public static class AudioPreviewService
             // 重新启动播放，从新位置
             try
             {
-                int sample = Mathf.RoundToInt(seconds * _sampleRate);
+                int sample = Mathf.Clamp(Mathf.RoundToInt(seconds * _sampleRate), 0, Mathf.Max(0, CurrentClip.samples - 1));
                 _stopAllMethod.Invoke(null, null);
                 _playMethod.Invoke(null, new object[] { CurrentClip, sample, Loop });
                 ApplyPitchInternal();
@@ -225,7 +235,7 @@ public static class AudioPreviewService
         if (!_initialized || CurrentClip == null || IsPaused) return false;
         try
         {
-            return (bool)(_isPlayingMethod?.Invoke(null, null) ?? false);
+            return _isPlayingMethod == null || (bool)_isPlayingMethod.Invoke(null, null);
         }
         catch { return false; }
     }
@@ -238,7 +248,8 @@ public static class AudioPreviewService
         // 使用 EditorApplication.timeSinceStartup 计算
         double elapsed = EditorApplication.timeSinceStartup - _realStartTime;
         float pos = _positionAtStart + (float)elapsed * PlaybackSpeed;
-        return Mathf.Clamp(pos, 0, GetLength());
+        float length = GetLength();
+        return Loop && length > 0f ? Mathf.Repeat(pos, length) : Mathf.Clamp(pos, 0, length);
     }
 
     /// <summary>当前剪辑总长度（秒）</summary>
@@ -252,7 +263,11 @@ public static class AudioPreviewService
     /// <summary>设置播放速度（0.25 - 2.0）</summary>
     public static void SetPlaybackSpeed(float speed)
     {
-        PlaybackSpeed = Mathf.Clamp(speed, 0.25f, 2.0f);
+        float position = GetPosition();
+        PlaybackSpeed = SupportsPlaybackSpeed && !float.IsNaN(speed) && !float.IsInfinity(speed)
+            ? Mathf.Clamp(speed, 0.25f, 2.0f) : 1f;
+        _positionAtStart = position;
+        _realStartTime = EditorApplication.timeSinceStartup;
         ApplyPitchInternal();
         OnStateChanged?.Invoke();
     }
@@ -268,7 +283,11 @@ public static class AudioPreviewService
             else if (parameters.Length == 2)
                 _setPitchMethod.Invoke(null, new object[] { CurrentClip, PlaybackSpeed });
         }
-        catch { /* 版本不支持时静默忽略 */ }
+        catch
+        {
+            _setPitchMethod = null;
+            PlaybackSpeed = 1f;
+        }
     }
 
     /// <summary>每帧检测剪辑是否结束</summary>
@@ -277,7 +296,7 @@ public static class AudioPreviewService
         // 使用手动时间检测播放结束（更可靠）
         if (CurrentClip != null && !IsPaused && !Loop)
         {
-            if (GetPosition() >= GetLength() - 0.05f)
+            if (GetPosition() >= GetLength())
             {
                 var ended = CurrentClip;
                 CurrentClip = null;

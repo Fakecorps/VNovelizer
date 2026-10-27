@@ -17,8 +17,10 @@ public class ResourceTrashPanelView
     public event Action<string> OnDeletePermanent;   // 彻底删除条目（Id）
     public event Action OnClearAll;                  // 清空回收站
     public event Action OnClose;                     // 返回资源浏览
+    public event Action OnRepairIndex;
 
     private VisualElement _listContainer;
+    private Button _clearButton;
 
     public ResourceTrashPanelView()
     {
@@ -59,6 +61,8 @@ public class ResourceTrashPanelView
         header.Add(new VisualElement { style = { flexGrow = 1 } });
 
         var clearBtn = new Button(() => OnClearAll?.Invoke()) { text = "清空回收站" };
+        _clearButton = clearBtn;
+        clearBtn.style.flexShrink = 0;
         GalleryStyles.ApplyButton(clearBtn, GalleryTheme.Danger, true);
         clearBtn.style.fontSize = 11;
         clearBtn.style.height = 24;
@@ -66,7 +70,8 @@ public class ResourceTrashPanelView
         clearBtn.tooltip = "彻底删除全部条目（不可恢复）";
         header.Add(clearBtn);
 
-        var closeBtn = new Button(() => OnClose?.Invoke()) { text = "← 返回资源浏览" };
+        var closeBtn = new Button(() => OnClose?.Invoke()) { text = "返回资源浏览" };
+        closeBtn.style.flexShrink = 0;
         GalleryStyles.ApplyButton(closeBtn, GalleryTheme.BgCard, false);
         closeBtn.style.fontSize = 11;
         closeBtn.style.height = 24;
@@ -89,6 +94,7 @@ public class ResourceTrashPanelView
     public void Refresh(List<ResourceTrashService.TrashEntry> entries)
     {
         _listContainer.Clear();
+        _clearButton?.SetEnabled(entries != null && entries.Count > 0);
 
         if (entries == null || entries.Count == 0)
         {
@@ -105,6 +111,20 @@ public class ResourceTrashPanelView
         {
             _listContainer.Add(BuildEntryRow(entry));
         }
+    }
+
+    public void ShowError(string error)
+    {
+        _listContainer.Clear();
+        _clearButton?.SetEnabled(false);
+        var message = new Label("回收站索引不可用，已进入只读保护。\n" + error);
+        message.style.whiteSpace = WhiteSpace.Normal;
+        message.style.color = ResourceStyles.TextPrimary;
+        message.style.marginBottom = 10;
+        _listContainer.Add(message);
+        var repair = UIElementBuilder.MakeIconButton(UIElementBuilder.GetIcon("Refresh", "d_Refresh"), "手动修复索引", () => OnRepairIndex?.Invoke());
+        repair.style.alignSelf = Align.FlexStart;
+        _listContainer.Add(repair);
     }
 
     private VisualElement BuildEntryRow(ResourceTrashService.TrashEntry entry)

@@ -2,8 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
+using UnityEditor;
+using UnityEditor.AddressableAssets;
 using UnityEngine;
+using VNovelizer.Core.Commands;
+using VNovelizer.Core.Commands.Chain;
+
+/// <summary>一次只读扫描的引用与完整性；不完整结果不能视为资源未被引用。</summary>
+public class ResourceReferenceScanResult
+{
+    public List<ScriptReferenceScanner.ScriptResourceReference> References = new List<ScriptReferenceScanner.ScriptResourceReference>();
+    public List<string> Errors = new List<string>();
+    public bool IsComplete => Errors.Count == 0;
+}
 
 /// <summary>
 /// 剧本资源引用扫描器（【子文件夹支持】配套防呆功能）。
@@ -24,156 +35,339 @@ public static class ScriptReferenceScanner
         public string LineId;       // 行 ID
         public int LineNo;          // CSV 行号（1 起，含标题行）
         public string Source;       // 引用来源（"Voice 列" / "playvoice 命令" 等）
+        public string CsvPath;
+        public string AssetPath;
+        public string ResourceKey;
+        public bool Potential;      // 空 Voice 列按 ID 推导的可选依赖
+        public bool IsLoadable;      // 注册地址 / Resources 键与可加载资产类型均匹配
     }
 
-    /// <summary>引用资源名的命令 → 类别 与 参数序号（第 1 参为资源名）</summary>
-    private static readonly (string command, ResType type)[] ResourceCommands =
+    private static readonly ResType[] ScannedTypes =
     {
-        ("playvoice", ResType.Voice),
-        ("playbgm", ResType.BGM),
-        ("playsfx", ResType.SFX),
-        ("bgtrans", ResType.Background),
+        ResType.Background, ResType.BGM, ResType.SFX, ResType.Voice,
     };
 
-    private static readonly Regex CommandRegex = new Regex(
-        @"(?<![A-Za-z0-9_])(playvoice|playbgm|playsfx|bgtrans)\s*\(\s*(" + "\"[^\"]*\"|'[^']*'|[^,)]+" + ")",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    /// <summary>扫描全部剧本的全部资源引用</summary>
-    public static List<ScriptResourceReference> ScanAll()
+    /// <summary>一次扫描全部 CSV 与真实资源源；失败保留部分引用并标记不完整。</summary>
+    public static ResourceReferenceScanResult ScanAll()
     {
-        var result = new List<ScriptResourceReference>();
-        foreach (string csvPath in VNScriptCsvLocator.GetAllCsvPaths())
+        var result = new ResourceReferenceScanResult();
+        try
         {
-            try
+            string folder = VNScriptCsvLocator.GetCsvFolderAssetPath();
+            if (!string.IsNullOrEmpty(folder) && !Directory.Exists(Path.GetFullPath(folder)))
+                result.Errors.Add($"剧本输出目录不存在：{folder}；无法保证枚举完整。");
+            foreach (string csvPath in VNScriptCsvLocator.GetAllCsvPaths())
             {
-                string scriptName = Path.GetFileNameWithoutExtension(csvPath);
-                string text = File.ReadAllText(Path.GetFullPath(csvPath));
-                string[] lines = ScriptParser.SplitCSVLines(text);
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    CollectFromLine(lines[i], scriptName, i + 1, result);
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[引用扫描] 读取剧本失败，跳过: {csvPath}（{e.Message}）");
+                try { CollectFromCsv(csvPath, result); }
+                catch (Exception e) { result.Errors.Add($"读取或解析剧本失败：{csvPath}（{e.Message}）"); }
             }
         }
+        catch (Exception e) { result.Errors.Add($"枚举剧本失败：{e.Message}"); }
+
+        try { ResolveLoadableResources(result); }
+        catch (Exception e) { result.Errors.Add($"检查可加载资源失败：{e.Message}"); }
         return result;
     }
 
-    /// <summary>精确查找对某资源名的引用（删除/重命名单个资源用）</summary>
     public static List<ScriptResourceReference> FindReferences(ResType type, string logicalName)
     {
-        string target = NormalizeName(type, logicalName);
-        return ScanAll().Where(r => r.Type == type && string.Equals(NormalizeName(r.Type, r.Name), target, StringComparison.OrdinalIgnoreCase)).ToList();
+        var scan = ScanAll();
+        RequireComplete(scan);
+        return FindReferences(scan, type, logicalName);
     }
 
-    /// <summary>查找文件夹前缀下的全部引用（删除/重命名文件夹用：含 folder 本身与其下所有层级）</summary>
+    public static List<ScriptResourceReference> FindReferences(ResourceReferenceScanResult scan, ResType type, string logicalName)
+    {
+        if (scan == null) throw new ArgumentNullException(nameof(scan));
+        string target = NormalizeName(type, logicalName);
+        return scan.References.Where(r => r.Type == type &&
+            string.Equals(NormalizeName(r.Type, r.Name), target, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
     public static List<ScriptResourceReference> FindReferencesUnderFolder(ResType type, string folderPath)
     {
-        string prefix = (folderPath ?? "").Trim().Trim('/').Replace('\\', '/').TrimEnd('/') + "/";
-        if (prefix == "/") return new List<ScriptResourceReference>();
-        return ScanAll().Where(r => r.Type == type && NormalizeName(r.Type, r.Name).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
+        var scan = ScanAll();
+        RequireComplete(scan);
+        return FindReferencesUnderFolder(scan, type, folderPath);
     }
 
-    /// <summary>
-    /// 检查缺失引用：引用的目标资源当前不存在（不在资源管理器该类别的任何条目中）。
-    /// </summary>
+    public static List<ScriptResourceReference> FindReferencesUnderFolder(ResourceReferenceScanResult scan, ResType type, string folderPath)
+    {
+        if (scan == null) throw new ArgumentNullException(nameof(scan));
+        string folder = (folderPath ?? "").Trim().Replace('\\', '/').Trim('/');
+        if (folder.Length == 0) return scan.References.Where(r => r.Type == type).ToList();
+        return scan.References.Where(r => r.Type == type &&
+            NormalizeName(r.Type, r.Name).StartsWith(folder + "/", StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    /// <summary>自动配音 ID 默认不算必需资源；调用方可显式包含潜在依赖。</summary>
     public static List<ScriptResourceReference> FindMissing()
     {
-        var missing = new List<ScriptResourceReference>();
-        var available = new Dictionary<ResType, HashSet<string>>();
-        foreach (ResType t in Enum.GetValues(typeof(ResType)))
-        {
-            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var item in ResourceAssetService.LoadAssets(t, null))
-            {
-                string name = NormalizeName(t, item.LogicalName ?? item.Name);
-                if (!string.IsNullOrEmpty(name)) set.Add(name);
-            }
-            available[t] = set;
-        }
+        var scan = ScanAll();
+        RequireComplete(scan);
+        return FindMissing(scan);
+    }
 
-        foreach (var reference in ScanAll())
-        {
-            string name = NormalizeName(reference.Type, reference.Name);
-            if (string.IsNullOrEmpty(name)) continue;
-            if (!available.TryGetValue(reference.Type, out var set) || !set.Contains(name))
-                missing.Add(reference);
-        }
-        return missing;
+    public static List<ScriptResourceReference> FindMissing(ResourceReferenceScanResult scan, bool includePotential = false)
+    {
+        if (scan == null) throw new ArgumentNullException(nameof(scan));
+        return scan.References.Where(r => !r.IsLoadable && (includePotential || !r.Potential)).ToList();
+    }
+
+    private static void RequireComplete(ResourceReferenceScanResult scan)
+    {
+        if (!scan.IsComplete)
+            throw new InvalidOperationException("引用扫描不完整，不能判定安全：\n" + string.Join("\n", scan.Errors));
     }
 
     // ===================== 内部 =====================
 
-    private static void CollectFromLine(string line, string scriptName, int lineNo, List<ScriptResourceReference> sink)
+    private static void CollectFromCsv(string csvPath, ResourceReferenceScanResult result)
     {
-        string[] columns = ScriptParser.SplitCSV(line);
-        if (columns.Length < 12) return;
-
-        // 列布局与 ScriptParser 一致：14 列新格式 / 12 列旧格式
-        bool newFormat = columns.Length >= 14;
-        int bgIdx = newFormat ? 9 : 7;
-        int bgmIdx = newFormat ? 10 : 8;
-        int voiceIdx = newFormat ? 11 : 9;
-        int cmdIdx = newFormat ? 12 : 10;
-        string lineId = columns[0].Trim();
-
-        AddIfValid(sink, ResType.Background, columns[bgIdx], scriptName, lineId, lineNo, "背景列");
-        AddIfValid(sink, ResType.BGM, columns[bgmIdx], scriptName, lineId, lineNo, "BGM 列");
-        AddIfValid(sink, ResType.Voice, columns[voiceIdx], scriptName, lineId, lineNo, "Voice 列");
-
-        // 命令列（含 @Confirm 出口段命令，正则全文扫描）
-        string commandText = columns[cmdIdx];
-        if (!string.IsNullOrEmpty(commandText))
-        {
-            foreach (Match m in CommandRegex.Matches(commandText))
-            {
-                string cmd = m.Groups[1].Value.ToLowerInvariant();
-                var mapped = ResourceCommands.FirstOrDefault(c => c.command == cmd);
-                if (mapped.command == null) continue;
-                string arg = m.Groups[2].Value.Trim().Trim('"', '\'');
-                AddIfValid(sink, mapped.type, arg, scriptName, lineId, lineNo, $"{cmd} 命令");
-            }
-        }
+        CollectFromText(File.ReadAllText(Path.GetFullPath(csvPath)), csvPath, result);
     }
 
-    private static void AddIfValid(List<ScriptResourceReference> sink, ResType type, string raw,
-        string scriptName, string lineId, int lineNo, string source)
+    private static void CollectFromText(string text, string csvPath, ResourceReferenceScanResult result)
     {
-        string name = (raw ?? "").Trim();
-        if (name.Length == 0) return;
-        if (name.Contains("://")) return;             // URL 形式（流媒体等）
-        if (type == ResType.Voice && name.Equals("false", StringComparison.OrdinalIgnoreCase)) return; // 语音开关语义
-        sink.Add(new ScriptResourceReference
+        string scriptName = Path.GetFileNameWithoutExtension(csvPath);
+        var lineNumbers = GetRecordLineNumbers(text, csvPath, result);
+        string[] records = ScriptParser.SplitCSVLines(text);
+        var parsed = ScriptParser.ParseFromText(scriptName, text);
+        bool header = true;
+        bool voiceEnabled = true;
+        int rowIndex = 0;
+        for (int i = 0; i < records.Length; i++)
         {
-            Type = type,
-            Name = name,
-            ScriptName = scriptName,
-            LineId = lineId,
-            LineNo = lineNo,
-            Source = source,
+            string record = records[i].Trim();
+            if (record.Length == 0) continue;
+            if (header) { header = false; continue; }
+            int lineNo = i < lineNumbers.Count ? lineNumbers[i] : i + 1;
+            string[] columns = ScriptParser.SplitCSV(record);
+            if (columns.Length < 12)
+            {
+                result.Errors.Add($"{csvPath}:{lineNo} 列数不足（{columns.Length}，至少 12 列），未能完整扫描该行。");
+                continue;
+            }
+            var line = parsed.Lines[rowIndex++];
+            string rawCommand = columns[columns.Length >= 14 ? 12 : 10];
+            if (CountConfirmTokens(rawCommand) > 1)
+                result.Errors.Add($"{csvPath}:{lineNo} 含多个 @Confirm:；运行时截断后的命令未扫描。");
+            AddIfValid(result, ResType.Background, line.Background, scriptName, line.ID, csvPath, lineNo, "背景列");
+            AddIfValid(result, ResType.BGM, line.BGM, scriptName, line.ID, csvPath, lineNo, "BGM 列");
+            if (string.Equals(line.Voice, "false", StringComparison.OrdinalIgnoreCase)) voiceEnabled = false;
+            else if (!string.IsNullOrWhiteSpace(line.Voice))
+            {
+                voiceEnabled = true;
+                AddIfValid(result, ResType.Voice, line.Voice, scriptName, line.ID, csvPath, lineNo, "Voice 列");
+            }
+            else if (voiceEnabled && !string.IsNullOrWhiteSpace(line.ID))
+                AddIfValid(result, ResType.Voice, line.ID + ".mp3", scriptName, line.ID, csvPath, lineNo, "自动配音 ID（可选）", true);
+            CollectCommandText(line.Command, scriptName, line.ID, csvPath, lineNo, "进入段", result);
+            CollectCommandText(line.ConfirmCommands, scriptName, line.ID, csvPath, lineNo, "出口段", result);
+        }
+        if (header) result.Errors.Add($"{csvPath} 为空，未找到剧本标题行。");
+    }
+
+    private static void CollectCommandText(string text, string script, string id, string csv, int lineNo,
+        string source, ResourceReferenceScanResult result)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        var parsed = ChainParser.Parse(text);
+        foreach (var error in parsed.Errors)
+            result.Errors.Add($"{csv}:{lineNo} [{id}] {source} 命令解析失败：{error}");
+        CollectNode(parsed.Root, script, id, csv, lineNo, source, result);
+    }
+
+    private static void CollectNode(ChainNode node, string script, string id, string csv, int lineNo,
+        string source, ResourceReferenceScanResult result)
+    {
+        if (node == null) return;
+        if (node is SeqNode seq)
+        {
+            foreach (var child in seq.Children) CollectNode(child, script, id, csv, lineNo, source, result);
+            return;
+        }
+        if (node is ParNode par)
+        {
+            foreach (var child in par.Children) CollectNode(child, script, id, csv, lineNo, source, result);
+            return;
+        }
+        if (node is ChoiceNode choice)
+        {
+            foreach (var option in choice.Options)
+                CollectNode(option.Chain, script, id, csv, lineNo, source + " / 选项链", result);
+            return;
+        }
+        if (!(node is CommandNode command)) return;
+        string name = (command.Name ?? "").ToLowerInvariant();
+        if (name == "choice")
+        {
+            string args = command.Args ?? "";
+            int pipe = args.IndexOf('|');
+            if (pipe >= 0)
+                CollectCommandText(args.Substring(pipe + 1), script, id, csv, lineNo, source + " / 旧选项链", result);
+            return;
+        }
+        ResType type;
+        switch (name)
+        {
+            case "showbg": case "bgtrans": type = ResType.Background; break;
+            case "playvoice": type = ResType.Voice; break;
+            case "playbgm": type = ResType.BGM; break;
+            case "playsfx": type = ResType.SFX; break;
+            default: return;
+        }
+        var parameters = ConditionParser.SplitTopLevel(command.Args ?? "", ',');
+        string first = parameters.Count == 0 ? "" : parameters[0].Trim();
+        if (first.Length == 0)
+        {
+            if (name == "playsfx" || name == "bgtrans")
+                result.Errors.Add($"{csv}:{lineNo} [{id}] {name} 缺少必需资源参数。");
+            return;
+        }
+        AddIfValid(result, type, first, script, id, csv, lineNo, source + " / " + name + " 命令");
+    }
+
+    private static void AddIfValid(ResourceReferenceScanResult result, ResType type, string raw,
+        string script, string id, string csv, int lineNo, string source, bool potential = false)
+    {
+        string name = NormalizeName(type, raw);
+        if (name.Length == 0 || name.Contains("://")) return;
+        if (type == ResType.Voice && name.Equals("false", StringComparison.OrdinalIgnoreCase)) return;
+        if (type == ResType.Background && (name.Equals("black", StringComparison.OrdinalIgnoreCase) || name.Equals("hide", StringComparison.OrdinalIgnoreCase))) return;
+        if (type == ResType.BGM && (name.Equals("stop", StringComparison.OrdinalIgnoreCase) || name.Equals("pause", StringComparison.OrdinalIgnoreCase) || name.Equals("resume", StringComparison.OrdinalIgnoreCase))) return;
+        result.References.Add(new ScriptResourceReference
+        {
+            Type = type, Name = name, ScriptName = script, LineId = id, CsvPath = csv,
+            LineNo = lineNo, Source = source, Potential = potential,
         });
     }
 
-    /// <summary>规范化资源名用于匹配：'\' → '/'、去首尾分隔符；Voice/BGM/SFX 剥离音频扩展名（与 VoiceManager 行为一致）</summary>
     private static string NormalizeName(ResType type, string name)
     {
-        if (string.IsNullOrEmpty(name)) return name;
-        string n = name.Trim().Replace('\\', '/').Trim('/');
-        if (type == ResType.Voice || type == ResType.BGM || type == ResType.SFX)
+        string n = (name ?? "").Trim().Replace('\\', '/');
+        if (type != ResType.Voice) return n;
+        n = n.Trim('/');
+        foreach (string ext in new[] { ".mp3", ".wav", ".ogg" })
         {
-            foreach (string ext in new[] { ".mp3", ".wav", ".ogg" })
-            {
-                if (n.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
-                {
-                    n = n.Substring(0, n.Length - ext.Length);
-                    break;
-                }
-            }
+            if (!n.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) continue;
+            n = n.Substring(0, n.Length - ext.Length);
+            break;
         }
         return n;
+    }
+
+    private static List<int> GetRecordLineNumbers(string text, string csv, ResourceReferenceScanResult result)
+    {
+        var numbers = new List<int>();
+        bool inQuotes = false, started = false;
+        int physicalLine = 1;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            bool newline = c == '\r' || c == '\n';
+            if (!started && !newline) { numbers.Add(physicalLine); started = true; }
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < text.Length && text[i + 1] == '"') i++;
+                else inQuotes = !inQuotes;
+            }
+            if (!newline) continue;
+            if (!inQuotes) started = false;
+            if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+            physicalLine++;
+        }
+        if (inQuotes) result.Errors.Add($"{csv} CSV 引号未闭合；后续行可能未被完整解析。");
+        return numbers;
+    }
+
+    private static int CountConfirmTokens(string text)
+    {
+        bool quote = false;
+        int count = 0;
+        const string token = "@confirm:";
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (quote && text[i] == '\\') { i++; continue; }
+            if (text[i] == '"') { quote = !quote; continue; }
+            if (!quote && i + token.Length <= text.Length &&
+                string.Compare(text, i, token, 0, token.Length, StringComparison.OrdinalIgnoreCase) == 0)
+                count++;
+        }
+        return count;
+    }
+
+    private static void ResolveLoadableResources(ResourceReferenceScanResult result)
+    {
+        if (!VNProjectConfig.TryGetInstance(out var config) || config == null)
+        {
+            result.Errors.Add("未找到 VNProjectConfig，无法确定资源加载键。");
+            return;
+        }
+        var roots = new Dictionary<ResType, string>
+        {
+            { ResType.Background, config.BackgroundResPath }, { ResType.BGM, config.BgmResPath },
+            { ResType.SFX, config.SFXResPath }, { ResType.Voice, config.VoiceResPath },
+        };
+        var available = new Dictionary<ResType, Dictionary<string, string>>();
+        foreach (var type in ScannedTypes) available[type] = new Dictionary<string, string>(StringComparer.Ordinal);
+        var checkedTypes = new Dictionary<string, HashSet<ResType>>(StringComparer.Ordinal);
+        void AddAsset(string key, string assetPath)
+        {
+            if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(assetPath)) return;
+            if (!checkedTypes.TryGetValue(assetPath, out var types))
+            {
+                types = new HashSet<ResType>();
+                try
+                {
+                    if (AssetDatabase.LoadAssetAtPath<AudioClip>(assetPath) != null)
+                        types.UnionWith(new[] { ResType.BGM, ResType.SFX, ResType.Voice });
+                    if (AssetDatabase.LoadAssetAtPath<Sprite>(assetPath) != null || AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath) != null)
+                        types.Add(ResType.Background);
+                }
+                catch (Exception e) { result.Errors.Add($"资源类型检查失败：{assetPath}（{e.Message}）"); }
+                checkedTypes[assetPath] = types;
+            }
+            foreach (var type in types)
+                if (!available[type].ContainsKey(key)) available[type][key] = assetPath;
+        }
+#if VN_ADDRESSABLES
+        try
+        {
+            var settings = AddressableAssetSettingsDefaultObject.Settings;
+            if (settings != null)
+                foreach (var group in settings.groups)
+                {
+                    if (group == null) continue;
+                    foreach (var entry in group.entries)
+                        if (entry != null && !AssetDatabase.IsValidFolder(entry.AssetPath))
+                            AddAsset(entry.address, entry.AssetPath);
+                }
+        }
+        catch (Exception e) { result.Errors.Add($"Addressables 注册数据检查失败：{e.Message}"); }
+#endif
+        foreach (string assetPath in AssetDatabase.GetAllAssetPaths())
+        {
+            if (assetPath.IndexOf("/Editor/", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+            int index = assetPath.IndexOf("/Resources/", StringComparison.Ordinal);
+            if (index < 0 || AssetDatabase.IsValidFolder(assetPath)) continue;
+            string key = assetPath.Substring(index + "/Resources/".Length);
+            string extension = Path.GetExtension(key);
+            if (extension.Length > 0) key = key.Substring(0, key.Length - extension.Length);
+            AddAsset(key, assetPath);
+        }
+        foreach (var reference in result.References)
+        {
+            string root = roots[reference.Type] ?? "";
+            string key = root.Length == 0 ? reference.Name : root + "/" + reference.Name;
+            reference.ResourceKey = key;
+            if (!available[reference.Type].TryGetValue(key, out var path) && reference.Type == ResType.Background)
+            {
+                string fallback = "Backgrounds/" + reference.Name;
+                if (available[reference.Type].TryGetValue(fallback, out path)) reference.ResourceKey = fallback;
+            }
+            reference.IsLoadable = !string.IsNullOrEmpty(path);
+            reference.AssetPath = path;
+        }
     }
 }

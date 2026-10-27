@@ -29,6 +29,12 @@ public class ResourceManagerPresenter
     private HashSet<string> _selected;
     private string _lastClickedPath;
     private bool _trashMode;
+    private const string FolderSelectionPrefix = "#folder:";
+    private string _pressedSelectionKey;
+
+    public bool IsTrashMode => _trashMode;
+    public string CurrentFolder => NormalizeFolder(_state.currentFolder);
+    public ResType CurrentType => _state.currentType;
 
     /// <summary>Label 派生规则升级后的存量自愈：每编辑器会话只跑一次</summary>
     private static bool _labelMigrationDone;
@@ -65,6 +71,10 @@ public class ResourceManagerPresenter
         _sidebar.OnTrashSelected += EnterTrashMode;
 
         _content.OnItemMouseDown += HandleItemMouseDown;
+        _content.OnItemPointerDown += HandleItemPointerDown;
+        _content.OnItemPointerUp += HandleItemPointerUp;
+        _content.OnFolderPointerDown += HandleFolderPointerDown;
+        _content.OnFolderPointerUp += HandleFolderPointerUp;
         _content.OnItemPlay += HandleItemPlay;
         _content.OnItemContextMenu += HandleItemContextMenu;
         _content.OnFolderNavigate += HandleFolderNavigate;
@@ -79,6 +89,7 @@ public class ResourceManagerPresenter
         _trashPanel.OnDeletePermanent += HandleTrashDeletePermanent;
         _trashPanel.OnClearAll += HandleTrashClearAll;
         _trashPanel.OnClose += ExitTrashMode;
+        _trashPanel.OnRepairIndex += HandleTrashRepairIndex;
     }
 
     // ===================== 初始化 =====================
@@ -169,7 +180,8 @@ public class ResourceManagerPresenter
         {
             _content.Root.style.display = DisplayStyle.None;
             _trashPanel.SetVisible(true);
-            _trashPanel.Refresh(ResourceTrashService.ListEntries());
+            try { _trashPanel.Refresh(ResourceTrashService.ListEntries()); }
+            catch (System.Exception e) { _trashPanel.ShowError(e.Message); }
             UpdateStatusBar();
             return;
         }
@@ -203,7 +215,13 @@ public class ResourceManagerPresenter
         bool foldersEnabled = _state.currentType != ResType.Video;
         string keyword = (_state.searchKeyword ?? "").Trim();
         bool searchMode = foldersEnabled && keyword.Length > 0;
-        string folder = NormalizeFolder(_state.currentFolder);
+        string folder = foldersEnabled ? NormalizeFolder(_state.currentFolder) : "";
+        while (folder.Length > 0 && !FolderExists(folder, path, allItems))
+        {
+            int slash = folder.LastIndexOf('/');
+            folder = slash > 0 ? folder.Substring(0, slash) : "";
+        }
+        _state.currentFolder = folder;
 
         List<ResourceItem> shown;
         List<ResourceFolderInfo> folders = null;
@@ -238,7 +256,11 @@ public class ResourceManagerPresenter
         _currentFolders = folders;
         _items = shown; // 点击/选择触发的重渲染（HandleItemMouseDown 等）依赖 _items，缺了它一点击内容就消失
 
-        _content.SetBreadcrumb(_state.currentType, folder, foldersEnabled);
+        var visibleKeys = new HashSet<string>(VisibleSelectionKeys());
+        _selected.IntersectWith(visibleKeys);
+        if (!visibleKeys.Contains(_lastClickedPath ?? "")) _lastClickedPath = null;
+        if (folders != null && _state.sortMode == SortMode.NameDesc) folders.Reverse();
+        _content.SetBreadcrumb(_state.currentType, folder, foldersEnabled, searchMode);
         _sidebar.UpdateCounts(CountAllCategories());
 
         if (shown.Count == 0 && (folders == null || folders.Count == 0))
@@ -284,7 +306,8 @@ public class ResourceManagerPresenter
 
     private void UpdateTrashBadge()
     {
-        _sidebar.UpdateTrashCount(ResourceTrashService.Count);
+        try { _sidebar.UpdateTrashCount(ResourceTrashService.Count); }
+        catch { _sidebar.UpdateTrashCount(-1); }
     }
 
     // ===================== 文件夹导航 / 操作 =====================
@@ -292,15 +315,21 @@ public class ResourceManagerPresenter
     private void HandleFolderNavigate(string target)
     {
         _state.currentFolder = NormalizeFolder(target);
+        _state.searchKeyword = "";
+        _toolbar.SetSearchValue("");
         ClearSelection();
         RefreshContent();
     }
 
     private void HandleFolderOpen(ResourceFolderInfo folder)
     {
-        _state.currentFolder = NormalizeFolder(folder.Path);
-        ClearSelection();
-        RefreshContent();
+        HandleFolderNavigate(folder.Path);
+    }
+
+    private static bool FolderExists(string folder, string root, List<ResourceItem> items)
+    {
+        if (!string.IsNullOrEmpty(root) && Directory.Exists(root + "/" + folder)) return true;
+        return items.Exists(i => (i.LogicalName ?? i.Name ?? "").StartsWith(folder + "/", System.StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>文件夹右键菜单：打开 / 重命名 / 删除</summary>
@@ -340,14 +369,16 @@ public class ResourceManagerPresenter
     /// <summary>文件夹右键：重命名（引用警告 + 物理目录改名 + 外部分配条目批量改地址）</summary>
     private void HandleRenameFolder(ResourceFolderInfo folder)
     {
-        var refs = ScriptReferenceScanner.FindReferencesUnderFolder(_state.currentType, folder.Path);
-        if (!ConfirmFolderReferenceWarning(refs, "重命名")) return;
-
         VNInputDialogue.Show("重命名文件夹",
-            $"重命名「{folder.Path}」。\n其中资源的引用名（Excel 中填写的名字）会同步更新前缀。",
+            $"重命名「{folder.Path}」。\n资源索引前缀会改变；Excel/CSV 中的旧引用需要手动更新。",
             folder.Name, "重命名", newName =>
         {
             string oldPath = NormalizeFolder(folder.Path);
+            newName = (newName ?? "").Trim();
+            string invalid = VNAddressablesRegistrar.ValidateLogicalName(newName);
+            if (invalid != null || newName.Contains("/")) { EditorUtility.DisplayDialog("名称无效", invalid ?? "一次只能修改一层文件夹名称", "确定"); return; }
+            if (newName == folder.Name) return;
+            if (!ConfirmFolderReferenceWarning(oldPath, "重命名")) return;
             string error = ResourceFolderService.RenameFolder(_state.currentType, oldPath, newName);
             if (error != null)
             {
@@ -355,11 +386,13 @@ public class ResourceManagerPresenter
                 return;
             }
             Debug.Log($"[资源管理器] 文件夹已重命名: {oldPath} → {newName}");
-            // 当前浏览位置同步更新
+            int slash = oldPath.LastIndexOf('/');
+            string newPath = slash >= 0 ? oldPath.Substring(0, slash + 1) + newName : newName;
             if (_state.currentFolder == oldPath)
-                _state.currentFolder = newName;
-            else if (_state.currentFolder.StartsWith(oldPath + "/"))
-                _state.currentFolder = newName + _state.currentFolder.Substring(oldPath.Length);
+                _state.currentFolder = newPath;
+            else if (_state.currentFolder.StartsWith(oldPath + "/", System.StringComparison.OrdinalIgnoreCase))
+                _state.currentFolder = newPath + _state.currentFolder.Substring(oldPath.Length);
+            ClearSelection();
             RefreshContent();
         });
     }
@@ -367,8 +400,8 @@ public class ResourceManagerPresenter
     /// <summary>文件夹右键：删除（引用警告 + 全部内容进回收站）</summary>
     private void HandleDeleteFolder(ResourceFolderInfo folder)
     {
-        var refs = ScriptReferenceScanner.FindReferencesUnderFolder(_state.currentType, folder.Path);
-        if (!ConfirmFolderReferenceWarning(refs, "删除")) return;
+        if (_selected.Contains(FolderSelectionPrefix + folder.Path) && _selected.Count > 1) { DeleteSelected(); return; }
+        if (!ConfirmFolderReferenceWarning(folder.Path, "删除")) return;
 
         if (!EditorUtility.DisplayDialog("删除文件夹",
                 $"将把「{folder.Path}」及其全部内容移入回收站。\n（含 {folder.ItemCount} 个文件" +
@@ -405,30 +438,30 @@ public class ResourceManagerPresenter
         MoveItems(items, NormalizeFolder(targetFolder));
     }
 
-    private void MoveItems(List<ResourceItem> items, string targetFolder)
+    private void MoveItems(List<ResourceItem> items, string targetFolder, bool referencesConfirmed = false)
     {
-        var errors = new List<string>();
-        int ok = 0;
-        foreach (var item in items)
+        if (_trashMode || _state.currentType == ResType.Video) return;
+        targetFolder = NormalizeFolder(targetFolder);
+        items = items.FindAll(i => ParentLogicalFolder(i) != targetFolder);
+        if (items.Count == 0) return;
+        string error = ResourceFolderService.ValidateMoveItems(items, _state.currentType, targetFolder);
+        if (error != null) { EditorUtility.DisplayDialog("不能移动", error, "确定"); return; }
+        if (!referencesConfirmed && !ConfirmItemReferenceWarning(items, "移动")) return;
+        error = ResourceFolderService.MoveItemsToFolder(items, _state.currentType, targetFolder);
+        if (error != null) EditorUtility.DisplayDialog("移动失败", error, "确定");
+        else
         {
-            string error = ResourceFolderService.MoveItemToFolder(_state.currentType, item, targetFolder);
-            if (error == null)
-            {
-                ok++;
-                _selected.Remove(item.AssetPath);
-            }
-            else
-            {
-                errors.Add($"{item.DisplayName}: {error}");
-            }
+            ClearSelection();
+            Debug.Log($"[资源管理器] 已移动 {items.Count} 项到「{(targetFolder.Length == 0 ? "类别根" : targetFolder)}」");
         }
-        if (ok > 0)
-        {
-            Debug.Log($"[资源管理器] 已移动 {ok} 项到「{(targetFolder.Length == 0 ? "类别根" : targetFolder)}」");
-            RefreshContent();
-        }
-        if (errors.Count > 0)
-            EditorUtility.DisplayDialog("部分移动失败", string.Join("\n", errors), "确定");
+        RefreshContent();
+    }
+
+    private static string ParentLogicalFolder(ResourceItem item)
+    {
+        string name = (item.LogicalName ?? item.Name ?? "").Replace('\\', '/');
+        int slash = name.LastIndexOf('/');
+        return slash >= 0 ? name.Substring(0, slash) : "";
     }
 
     /// <summary>外部文件 / Project 资产拖到文件夹卡片（导入/分配落位到该文件夹）</summary>
@@ -440,54 +473,104 @@ public class ResourceManagerPresenter
     // ===================== 选中操作 =====================
     private void HandleItemMouseDown(ResourceItem item, int clickCount)
     {
+        if (_trashMode) return;
         if (clickCount == ResourceContentView.DeleteAction)
         {
-            DeleteItems(new List<ResourceItem> { item });
+            if (_selected.Contains(item.AssetPath)) DeleteSelected();
+            else DeleteItems(new List<ResourceItem> { item });
             return;
         }
+        HandleItemPointerDown(item, clickCount, 0, false, false);
+    }
 
-        bool isCtrl = UnityEngine.Event.current?.control == true || UnityEngine.Event.current?.command == true;
-        bool isShift = UnityEngine.Event.current?.shift == true;
-
-        if (isShift && !string.IsNullOrEmpty(_lastClickedPath))
-        {
-            _selected.Clear();
-            bool inRange = false;
-            foreach (var i in _items)
-            {
-                if (i.AssetPath == _lastClickedPath || i.AssetPath == item.AssetPath) inRange = !inRange;
-                if (inRange) _selected.Add(i.AssetPath);
-            }
-        }
-        else if (isCtrl)
-        {
-            if (_selected.Contains(item.AssetPath)) _selected.Remove(item.AssetPath);
-            else _selected.Add(item.AssetPath);
-            _lastClickedPath = item.AssetPath;
-        }
-        else
-        {
-            _selected.Clear();
-            _selected.Add(item.AssetPath);
-            _lastClickedPath = item.AssetPath;
-        }
-
+    private void HandleItemPointerDown(ResourceItem item, int clickCount, int button, bool ctrl, bool shift)
+    {
+        if (_trashMode || (button != 0 && button != 1)) return;
+        SelectKey(item.AssetPath, button, ctrl, shift);
         _state.lastSelectedAssetPath = item.AssetPath;
-
-        if (item.Asset != null)
+        if (button == 0 && item.Asset != null)
         {
             Selection.activeObject = item.Asset;
             EditorGUIUtility.PingObject(item.Asset);
         }
-
-        if (clickCount == 2)
+        if (button == 0 && clickCount == 2)
         {
             if (item.Asset != null) AssetDatabase.OpenAsset(item.Asset);
             else if (File.Exists(item.FullPath)) EditorUtility.RevealInFinder(item.FullPath);
         }
+    }
 
+    private void HandleItemPointerUp(ResourceItem item, int button, bool ctrl, bool shift)
+    {
+        if (_trashMode || button != 0 || ctrl || shift || _pressedSelectionKey != item.AssetPath) return;
+        if (_selected.Count > 1)
+        {
+            _selected.Clear();
+            _selected.Add(item.AssetPath);
+            SelectionChanged();
+        }
+        _pressedSelectionKey = null;
+    }
+
+    private void HandleFolderPointerDown(ResourceFolderInfo folder, int clickCount, int button, bool ctrl, bool shift)
+    {
+        if (_trashMode || (button != 0 && button != 1)) return;
+        SelectKey(FolderSelectionPrefix + folder.Path, button, ctrl, shift);
+    }
+
+    private void HandleFolderPointerUp(ResourceFolderInfo folder, int button, bool ctrl, bool shift)
+    {
+        string key = FolderSelectionPrefix + folder.Path;
+        if (_trashMode || button != 0 || ctrl || shift || _pressedSelectionKey != key) return;
+        _selected.Clear();
+        _selected.Add(key);
+        _pressedSelectionKey = null;
+        SelectionChanged();
+    }
+
+    private void SelectKey(string key, int button, bool ctrl, bool shift)
+    {
+        List<string> order = VisibleSelectionKeys();
+        int target = order.IndexOf(key);
+        int anchor = order.IndexOf(_lastClickedPath);
+        if (target < 0) return;
+        if (button == 1)
+        {
+            if (!_selected.Contains(key)) { _selected.Clear(); _selected.Add(key); }
+        }
+        else if (shift && anchor >= 0)
+        {
+            if (!ctrl) _selected.Clear();
+            for (int i = System.Math.Min(anchor, target); i <= System.Math.Max(anchor, target); i++)
+                _selected.Add(order[i]);
+        }
+        else if (ctrl)
+        {
+            if (!_selected.Add(key)) _selected.Remove(key);
+            _lastClickedPath = key;
+        }
+        else
+        {
+            if (!_selected.Contains(key)) { _selected.Clear(); _selected.Add(key); }
+            _lastClickedPath = key;
+            _pressedSelectionKey = key;
+        }
+        SelectionChanged();
+    }
+
+    private List<string> VisibleSelectionKeys()
+    {
+        var keys = new List<string>();
+        if (_currentFolders != null)
+            foreach (var folder in _currentFolders) keys.Add(FolderSelectionPrefix + folder.Path);
+        foreach (var item in _items) keys.Add(item.AssetPath);
+        return keys;
+    }
+
+    private void SelectionChanged()
+    {
+        _content.UpdateSelection(_selected);
         UpdateStatusBar();
-        _content.RenderItems(_items, _currentFolders, _state.currentType, _state.viewMode, _state.cardSize, _selected, IsSearchMode());
     }
 
     private void HandleItemPlay(ResourceItem item)
@@ -501,16 +584,19 @@ public class ResourceManagerPresenter
 
     public void ClearSelection()
     {
-        if (_selected.Count == 0) return;
         _selected.Clear();
-        _content.RenderItems(_items, _currentFolders, _state.currentType, _state.viewMode, _state.cardSize, _selected, IsSearchMode());
+        _lastClickedPath = null;
+        _pressedSelectionKey = null;
+        _state.lastSelectedAssetPath = "";
+        SelectionChanged();
     }
 
     public void SelectAll()
     {
+        if (_trashMode) return;
         _selected.Clear();
-        foreach (var i in _items) _selected.Add(i.AssetPath);
-        _content.RenderItems(_items, _currentFolders, _state.currentType, _state.viewMode, _state.cardSize, _selected, IsSearchMode());
+        foreach (string key in VisibleSelectionKeys()) _selected.Add(key);
+        SelectionChanged();
     }
 
     private bool IsSearchMode()
@@ -520,9 +606,56 @@ public class ResourceManagerPresenter
 
     public void DeleteSelected()
     {
-        var toDelete = _items.FindAll(i => _selected.Contains(i.AssetPath));
-        if (toDelete.Count == 0) return;
-        DeleteItems(toDelete);
+        if (_trashMode) return;
+        var folders = (_currentFolders ?? new List<ResourceFolderInfo>()).FindAll(f => _selected.Contains(FolderSelectionPrefix + f.Path));
+        var files = _items.FindAll(i => _selected.Contains(i.AssetPath));
+        if (folders.Count == 0) { if (files.Count > 0) DeleteItems(files); return; }
+        DeleteMixedSelection(files, folders);
+    }
+
+    private void DeleteMixedSelection(List<ResourceItem> files, List<ResourceFolderInfo> folders)
+    {
+        string root = ResourceAssetService.GetPathFromConfig(_state.currentType);
+        string category = VNAddressablesRegistrar.GetCategoryKey(_state.currentType);
+        var paths = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+        var unassign = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+        var directories = new List<string>();
+        var affected = new List<ResourceItem>(files);
+        var all = ResourceAssetService.LoadAssets(_state.currentType, null);
+        try
+        {
+            foreach (var folder in folders)
+            {
+                string directory = root + "/" + folder.Path;
+                if (Directory.Exists(directory))
+                {
+                    directories.Add(directory);
+                    foreach (var file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+                        if (!file.EndsWith(".meta", System.StringComparison.OrdinalIgnoreCase)) paths.Add(file.Replace('\\', '/'));
+                }
+                foreach (var item in all)
+                {
+                    if (!(item.LogicalName ?? item.Name).StartsWith(folder.Path + "/", System.StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!affected.Exists(i => i.AssetPath == item.AssetPath)) affected.Add(item);
+                    if (!item.AssetPath.StartsWith(directory + "/", System.StringComparison.OrdinalIgnoreCase)) unassign.Add(item.AssetPath);
+                }
+            }
+            foreach (var item in files)
+            {
+                bool external = !item.AssetPath.StartsWith(root + "/", System.StringComparison.OrdinalIgnoreCase);
+                if (item.AssetPath.StartsWith("Packages/", System.StringComparison.OrdinalIgnoreCase) || external) unassign.Add(item.AssetPath);
+                else paths.Add(item.AssetPath);
+            }
+            paths.ExceptWith(unassign);
+            if (!ConfirmItemReferenceWarning(affected, "删除")) return;
+            if (!EditorUtility.DisplayDialog("删除选中内容", $"将 {folders.Count} 个文件夹及 {files.Count} 个文件移入回收站。\n父文件夹内容只处理一次，外部分配资产仅移除分配。\n\n此操作不会自动修改 Excel/CSV。", "移入回收站", "取消")) return;
+            string error = ResourceTrashService.TrashPaths(new List<string>(paths), "选中的文件与文件夹", _state.currentType,
+                category, new List<string>(unassign), directories);
+            if (error != null) EditorUtility.DisplayDialog("删除失败", error, "确定");
+            ClearSelection();
+            RefreshContent();
+        }
+        catch (System.Exception e) { EditorUtility.DisplayDialog("删除失败", e.Message, "确定"); }
     }
 
     // ===================== 删除（引用警告 + 回收站） =====================
@@ -549,8 +682,12 @@ public class ResourceManagerPresenter
 
             if (option == 0)
             {
-                foreach (var item in items)
-                    VNAddressablesRegistrar.UnassignAsset(item.AssetPath);
+                string error = ResourceTrashService.TrashPaths(new List<string>(),
+                    items.Count == 1 ? items[0].DisplayName : $"{items.Count} 个资源的分配",
+                    _state.currentType, VNAddressablesRegistrar.GetCategoryKey(_state.currentType),
+                    items.ConvertAll(i => i.AssetPath));
+                if (error != null) EditorUtility.DisplayDialog("移除分配失败", error, "确定");
+                ClearSelection();
                 RefreshContent();
                 return;
             }
@@ -608,20 +745,34 @@ public class ResourceManagerPresenter
     /// <summary>条目删除/重命名前的引用警告。返回 false = 用户取消。</summary>
     private bool ConfirmItemReferenceWarning(List<ResourceItem> items, string actionLabel)
     {
+        var scan = ScriptReferenceScanner.ScanAll();
+        if (!ConfirmScanComplete(scan)) return false;
         var refs = new List<ScriptReferenceScanner.ScriptResourceReference>();
+        var seen = new HashSet<ScriptReferenceScanner.ScriptResourceReference>();
         foreach (var item in items)
         {
             string logicalName = item.LogicalName ?? item.Name;
-            if (!string.IsNullOrEmpty(logicalName))
-                refs.AddRange(ScriptReferenceScanner.FindReferences(_state.currentType, logicalName));
+            if (string.IsNullOrEmpty(logicalName)) continue;
+            foreach (var reference in ScriptReferenceScanner.FindReferences(scan, _state.currentType, logicalName))
+                if (seen.Add(reference)) refs.Add(reference);
         }
         return ConfirmReferenceWarning(refs, actionLabel);
     }
 
     /// <summary>文件夹删除/重命名前的引用警告（前缀匹配）。返回 false = 用户取消。</summary>
-    private bool ConfirmFolderReferenceWarning(List<ScriptReferenceScanner.ScriptResourceReference> refs, string actionLabel)
+    private bool ConfirmFolderReferenceWarning(string folderPath, string actionLabel)
     {
-        return ConfirmReferenceWarning(refs, actionLabel);
+        var scan = ScriptReferenceScanner.ScanAll();
+        return ConfirmScanComplete(scan) && ConfirmReferenceWarning(
+            ScriptReferenceScanner.FindReferencesUnderFolder(scan, _state.currentType, folderPath), actionLabel);
+    }
+
+    private static bool ConfirmScanComplete(ResourceReferenceScanResult scan)
+    {
+        if (scan.IsComplete) return true;
+        ResourceRefReportWindow.Show("引用核验未完成", "部分剧本或资源无法核验；本次操作已取消，不会修改文件或索引。", scan);
+        EditorUtility.DisplayDialog("无法完成引用核验", string.Join("\n", scan.Errors) + "\n\n请处理以上问题后重试。", "确定");
+        return false;
     }
 
     private bool ConfirmReferenceWarning(List<ScriptReferenceScanner.ScriptResourceReference> refs, string actionLabel)
@@ -659,15 +810,15 @@ public class ResourceManagerPresenter
     /// <summary>「检查缺失引用」：报告引用了不存在资源的所有行</summary>
     private void CheckMissingReferences()
     {
-        var missing = ScriptReferenceScanner.FindMissing();
-        if (missing.Count == 0)
-        {
-            EditorUtility.DisplayDialog("检查完成", "所有剧本引用的资源均存在，没有发现缺失引用。", "确定");
-            return;
-        }
-        string full = string.Join("\n", GetPreviewLines(missing, int.MaxValue));
-        Debug.Log($"[资源管理器] 缺失引用 {missing.Count} 处：\n{full}");
-        ResourceRefReportWindow.Show("缺失引用", "以下引用的资源不存在（资源被删除/改名后 Excel 未同步，或尚未导入）", missing);
+        var scan = ScriptReferenceScanner.ScanAll();
+        var missing = ScriptReferenceScanner.FindMissing(scan);
+        var potential = ScriptReferenceScanner.FindMissing(scan, true).FindAll(r => r.Potential);
+        if (missing.Count == 0 && scan.IsComplete)
+            EditorUtility.DisplayDialog("检查完成", $"未发现明确引用的缺失资源。\n另有 {potential.Count} 处可选自动配音依赖，未配音不算错误。", "确定");
+        var report = new List<ScriptReferenceScanner.ScriptResourceReference>(missing);
+        report.AddRange(potential);
+        if (report.Count > 0 || !scan.IsComplete)
+            ResourceRefReportWindow.Show("资源引用核验", "明确缺失与潜在自动配音分别展示；扫描失败不能视为全部通过。", report, scan);
     }
 
     // ===================== 条目操作（逻辑名） =====================
@@ -695,12 +846,31 @@ public class ResourceManagerPresenter
                 targets = _items.FindAll(i => _selected.Contains(i.AssetPath));
 
             menu.AppendAction("移动到/（类别根）", _ => MoveItems(targets, ""));
-            foreach (var f in ResourceAssetService.ListSubfolders(_state.currentType, ""))
-                menu.AppendAction($"移动到/{f.Name}", _ => MoveItems(targets, f.Path));
+            var pending = new Queue<string>();
+            var visited = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase) { "" };
+            pending.Enqueue("");
+            while (pending.Count > 0)
+            {
+                foreach (var folder in ResourceAssetService.ListSubfolders(_state.currentType, pending.Dequeue()))
+                {
+                    if (!visited.Add(folder.Path)) continue;
+                    string target = folder.Path;
+                    menu.AppendAction($"移动到/{target}/移入此文件夹", _ => MoveItems(targets, target));
+                    pending.Enqueue(target);
+                }
+            }
             menu.AppendAction("移动到/新建文件夹…", _ => CreateFolderAndMove(targets));
         }
         menu.AppendSeparator();
-        menu.AppendAction("删除文件（移入回收站）", _ => DeleteItemsManagedBypass(new List<ResourceItem> { item }));
+        menu.AppendAction("删除文件（移入回收站）", _ =>
+        {
+            if (_selected.Contains(item.AssetPath) && _selected.Count > 1)
+            {
+                if ((_currentFolders ?? new List<ResourceFolderInfo>()).Exists(f => _selected.Contains(FolderSelectionPrefix + f.Path))) DeleteSelected();
+                else DeleteItemsManagedBypass(_items.FindAll(i => _selected.Contains(i.AssetPath)));
+            }
+            else DeleteItemsManagedBypass(new List<ResourceItem> { item });
+        });
     }
 
     /// <summary>重命名逻辑名（改 Addressables 地址尾段，支持 Chapter01/Voice01 子文件夹路径）</summary>
@@ -710,6 +880,14 @@ public class ResourceManagerPresenter
             $"剧本/Excel 中索引该资源所用的名字（原文件名不受影响，可用 / 表示子文件夹）。\n当前：{item.DisplayName}",
             item.DisplayName, "重命名", newName =>
         {
+            newName = (newName ?? "").Replace('\\', '/').Trim().Trim('/');
+            if (newName == item.DisplayName) return;
+            string invalid = VNAddressablesRegistrar.ValidateLogicalName(newName);
+            if (invalid != null) { EditorUtility.DisplayDialog("名称无效", invalid, "确定"); return; }
+            string key = VNAddressablesRegistrar.GetCategoryKey(_state.currentType) + "/" + newName;
+            string conflict = VNAddressablesRegistrar.ValidateAddressChanges(new Dictionary<string, string> { { item.AssetPath, key } });
+            if (conflict != null) { EditorUtility.DisplayDialog("名称冲突", conflict, "确定"); return; }
+            if (!ConfirmItemReferenceWarning(new List<ResourceItem> { item }, "重命名")) return;
             string error = VNAddressablesRegistrar.RenameAssignment(item.AssetPath, newName);
             if (error != null)
             {
@@ -728,9 +906,28 @@ public class ResourceManagerPresenter
             $"重命名文件（物理文件与引用名同步更新）。\n当前：{item.DisplayName}",
             item.Name, "重命名", newName =>
         {
+            newName = (newName ?? "").Trim();
+            string invalid = VNAddressablesRegistrar.ValidateLogicalName(newName);
+            if (invalid != null || newName.Contains("/")) { EditorUtility.DisplayDialog("名称无效", invalid ?? "文件名不能包含路径分隔符", "确定"); return; }
+            if (newName == item.Name) return;
             string dir = Path.GetDirectoryName(item.AssetPath)?.Replace('\\', '/');
             string dst = dir + "/" + newName + Path.GetExtension(item.AssetPath);
-            string error = AssetDatabase.RenameAsset(item.AssetPath, newName);
+            if (File.Exists(dst)) { EditorUtility.DisplayDialog("名称冲突", "目标文件已存在", "确定"); return; }
+            if (!ConfirmItemReferenceWarning(new List<ResourceItem> { item }, "重命名")) return;
+            string error;
+            if (_state.currentType == ResType.Video)
+            {
+                try
+                {
+                    File.Move(item.AssetPath, dst);
+                    try { if (File.Exists(item.AssetPath + ".meta")) File.Move(item.AssetPath + ".meta", dst + ".meta"); }
+                    catch { File.Move(dst, item.AssetPath); throw; }
+                    AssetDatabase.Refresh();
+                    error = null;
+                }
+                catch (System.Exception e) { error = e.Message; }
+            }
+            else error = AssetDatabase.RenameAsset(item.AssetPath, newName);
             if (!string.IsNullOrEmpty(error))
             {
                 EditorUtility.DisplayDialog("重命名失败", error, "确定");
@@ -749,14 +946,16 @@ public class ResourceManagerPresenter
             $"新建子文件夹并把 {items.Count} 个资源移入其中。",
             "", "创建并移入", name =>
         {
-            string error = ResourceFolderService.CreateSubfolder(_state.currentType, parent, name);
-            if (error != null)
-            {
-                EditorUtility.DisplayDialog("新建失败", error, "确定");
-                return;
-            }
+            name = (name ?? "").Trim();
+            string invalid = VNAddressablesRegistrar.ValidateLogicalName(name);
+            if (invalid != null || name.Contains("/")) { EditorUtility.DisplayDialog("名称无效", invalid ?? "请填写单层文件夹名", "确定"); return; }
             string target = parent.Length == 0 ? name : parent + "/" + name;
-            MoveItems(items, target);
+            string error = ResourceFolderService.ValidateMoveItems(items, _state.currentType, target);
+            if (error != null) { EditorUtility.DisplayDialog("不能移动", error, "确定"); return; }
+            if (!ConfirmItemReferenceWarning(items, "移动")) return;
+            error = ResourceFolderService.CreateSubfolder(_state.currentType, parent, name);
+            if (error != null) { EditorUtility.DisplayDialog("新建失败", error, "确定"); return; }
+            MoveItems(items, target, true);
         });
     }
 
@@ -804,7 +1003,7 @@ public class ResourceManagerPresenter
         string srcPath = EditorUtility.OpenFilePanel($"导入 {UIElementBuilder.GetTypeDisplayName(_state.currentType)}", "", extFilter);
         if (string.IsNullOrEmpty(srcPath)) return;
 
-        var result = ResourceImportService.ImportSingleFile(_state.currentType, srcPath, CurrentImportSubfolder());
+        var result = ResourceImportService.ImportSingleFile(_state.currentType, srcPath, CurrentImportSubfolder(), ConfirmImportOverwrite);
         if (result.Success)
         {
             AssetDatabase.Refresh();
@@ -842,20 +1041,10 @@ public class ResourceManagerPresenter
         string destDir = string.IsNullOrEmpty(sub)
             ? targetAssetPath
             : targetAssetPath + "/" + sub.Replace('/', Path.DirectorySeparatorChar);
-        int count = ResourceImportService.ImportDirectoryRecursive(_state.currentType, srcDir, destDir);
-        if (count > 0)
-        {
-            AssetDatabase.Refresh();
-            // 导入落位后注册进 Addressables（未初始化的项目自动跳过）
-            VNAddressablesRegistrar.SyncWorkspace();
-            RefreshContent();
-            Debug.Log($"[资源管理器] 已导入 {count} 个文件" +
-                      (sub.Length > 0 ? $" 到「{sub}」" : ""));
-        }
-        else
-        {
-            EditorUtility.DisplayDialog("提示", "所选文件夹中没有匹配的文件。", "确定");
-        }
+        var result = ResourceImportService.ImportDirectory(_state.currentType, srcDir, destDir);
+        FinishImport(result.Imported);
+        EditorUtility.DisplayDialog("目录导入结果", result.Message +
+            (_state.currentType == ResType.Video ? "\n\n视频采用平铺导入，不创建子目录。" : "\n\n保留所选目录内部结构，落位到当前文件夹。"), "确定");
     }
 
     /// <summary>
@@ -884,63 +1073,103 @@ public class ResourceManagerPresenter
     /// <summary>Project 资产拖放：物理在类别文件夹内 → 移动到目标文件夹；否则分配逻辑名（文件不动）</summary>
     private void HandleDroppedProjectAsset(string assetPath, string folder)
     {
-        string categoryRoot = ResourceAssetService.GetPathFromConfig(_state.currentType);
-        bool physicallyInCategory = !string.IsNullOrEmpty(categoryRoot)
-            && assetPath.StartsWith(categoryRoot + "/", System.StringComparison.OrdinalIgnoreCase);
-
-        if (physicallyInCategory && folder.Length > 0)
+        if (_state.currentType == ResType.Video)
         {
-            var item = new ResourceItem
-            {
-                AssetPath = assetPath,
-                Name = Path.GetFileNameWithoutExtension(assetPath),
-                LogicalName = Path.GetFileNameWithoutExtension(assetPath),
-            };
-            string error = ResourceFolderService.MoveItemToFolder(_state.currentType, item, folder);
-            if (error != null)
-                EditorUtility.DisplayDialog("移动失败", $"{assetPath}\n{error}", "确定");
-            RefreshContent();
+            ImportSingleExternalFile(assetPath, "");
             return;
         }
-
-        string defaultLogical = folder.Length == 0
-            ? null
-            : folder + "/" + Path.GetFileNameWithoutExtension(assetPath);
-        string error2 = VNAddressablesRegistrar.AssignToCategory(_state.currentType, assetPath, defaultLogical);
-        if (error2 != null)
-            EditorUtility.DisplayDialog("分配失败", $"{assetPath}\n{error2}", "确定");
-        else
-            Debug.Log($"[资源管理器] 已分配「{Path.GetFileName(assetPath)}」到" +
-                      (folder.Length == 0 ? "类别根" : $"「{folder}」") + "（文件保留原位）");
+        if (AssetDatabase.IsValidFolder(assetPath))
+        {
+            ImportSingleExternalFile(assetPath, folder);
+            return;
+        }
+        string categoryRoot = ResourceAssetService.GetPathFromConfig(_state.currentType);
+        bool physicallyInCategory = !string.IsNullOrEmpty(categoryRoot) &&
+            assetPath.StartsWith(categoryRoot + "/", System.StringComparison.OrdinalIgnoreCase);
+        var item = ResourceAssetService.LoadAssets(_state.currentType, null).Find(i => i.AssetPath == assetPath);
+        if (string.IsNullOrEmpty(item.AssetPath))
+            item = new ResourceItem { AssetPath = assetPath, Name = Path.GetFileNameWithoutExtension(assetPath),
+                LogicalName = ResourceAssetService.GetRelativeLogicalName(categoryRoot, assetPath) };
+        if (physicallyInCategory)
+        {
+            MoveItems(new List<ResourceItem> { item }, folder);
+            return;
+        }
+        string tail = item.LogicalName ?? item.Name;
+        int slash = tail.LastIndexOf('/');
+        if (slash >= 0) tail = tail.Substring(slash + 1);
+        string logical = folder.Length == 0 ? tail : folder + "/" + tail;
+        var oldReference = FindAssignedIdentity(assetPath);
+        string newKey = VNAddressablesRegistrar.GetCategoryKey(_state.currentType) + "/" + logical;
+        if (oldReference != null && oldReference.address == newKey) return;
+        string error = VNAddressablesRegistrar.ValidateAddressChanges(new Dictionary<string, string> { { assetPath, newKey } });
+        if (error != null) { EditorUtility.DisplayDialog("分配冲突", error, "确定"); return; }
+        if (oldReference != null && !ConfirmIdentityReferenceWarning(oldReference, "重新分配")) return;
+        error = VNAddressablesRegistrar.AssignToCategory(_state.currentType, assetPath, logical);
+        if (error != null) EditorUtility.DisplayDialog("分配失败", $"{assetPath}\n{error}", "确定");
         RefreshContent();
+    }
+
+    private UnityEditor.AddressableAssets.Settings.AddressableAssetEntry FindAssignedIdentity(string assetPath)
+    {
+        foreach (ResType type in System.Enum.GetValues(typeof(ResType)))
+        {
+            if (type == ResType.Video) continue;
+            foreach (var entry in VNAddressablesRegistrar.GetCategoryEntries(VNAddressablesRegistrar.GetCategoryKey(type)))
+                if (entry.AssetPath == assetPath) return entry;
+        }
+        return null;
+    }
+
+    private bool ConfirmIdentityReferenceWarning(UnityEditor.AddressableAssets.Settings.AddressableAssetEntry entry, string action)
+    {
+        var scan = ScriptReferenceScanner.ScanAll();
+        if (!ConfirmScanComplete(scan)) return false;
+        foreach (ResType type in System.Enum.GetValues(typeof(ResType)))
+        {
+            if (type == ResType.Video) continue;
+            string category = VNAddressablesRegistrar.GetCategoryKey(type);
+            if (entry.address.StartsWith(category + "/", System.StringComparison.OrdinalIgnoreCase))
+                return ConfirmReferenceWarning(ScriptReferenceScanner.FindReferences(scan, type, entry.address.Substring(category.Length + 1)), action);
+        }
+        return true;
     }
 
     /// <summary>外部文件/文件夹导入（托管模式导入后自动注册）</summary>
     private void ImportSingleExternalFile(string src, string folder)
     {
         string target = ResourceAssetService.GetPathFromConfig(_state.currentType);
-        if (string.IsNullOrEmpty(target)) return;
-        int imported = 0;
+        if (string.IsNullOrEmpty(target)) { EditorUtility.DisplayDialog("导入失败", "未配置目标路径", "确定"); return; }
         if (Directory.Exists(src))
         {
-            string destDir = folder.Length == 0
-                ? target
-                : target + "/" + folder.Replace('/', Path.DirectorySeparatorChar);
-            imported += ResourceImportService.ImportDirectoryRecursive(_state.currentType, src, destDir);
+            string destDir = folder.Length == 0 ? target : target + "/" + folder;
+            var result = ResourceImportService.ImportDirectory(_state.currentType, src, destDir);
+            FinishImport(result.Imported);
+            EditorUtility.DisplayDialog("目录导入结果", result.Message, "确定");
         }
-        else if (File.Exists(src))
+        else
         {
-            var r = ResourceImportService.ImportSingleFile(_state.currentType, src, folder);
-            if (r.Success) imported++;
+            var result = ResourceImportService.ImportSingleFile(_state.currentType, src, folder, ConfirmImportOverwrite);
+            FinishImport(result.Success ? 1 : 0);
+            if (!result.Success && !string.IsNullOrEmpty(result.Error))
+                EditorUtility.DisplayDialog(result.WasSkipped ? "导入已跳过" : "导入失败", result.Error, "确定");
         }
-        if (imported > 0)
-        {
-            AssetDatabase.Refresh();
-            VNAddressablesRegistrar.SyncWorkspace();
-            RefreshContent();
-            Debug.Log($"[资源管理器] 已导入 {imported} 个文件" +
-                      (folder.Length > 0 ? $" 到「{folder}」" : ""));
-        }
+    }
+
+    private bool ConfirmImportOverwrite(string assetPath)
+    {
+        var item = ResourceAssetService.LoadAssets(_state.currentType, null).Find(i => i.AssetPath == assetPath);
+        if (!string.IsNullOrEmpty(item.AssetPath) && !ConfirmItemReferenceWarning(new List<ResourceItem> { item }, "覆盖")) return false;
+        return EditorUtility.DisplayDialog("覆盖已有文件", $"将替换 {assetPath} 的文件内容，保留现有 GUID。\n请确认已有备份。", "覆盖", "跳过");
+    }
+
+    private void FinishImport(int imported)
+    {
+        if (imported <= 0) return;
+        AssetDatabase.Refresh();
+        if (_state.currentType != ResType.Video) VNAddressablesRegistrar.SyncWorkspace();
+        RefreshContent();
+        Debug.Log($"[资源管理器] 已导入 {imported} 个文件");
     }
 
     private void CreateFolder(string path)
@@ -956,6 +1185,9 @@ public class ResourceManagerPresenter
 
     private void EnterTrashMode()
     {
+        ClearSelection();
+        _items.Clear();
+        _currentFolders = null;
         _trashMode = true;
         _audioPlayer.Hide();
         _sidebar.SetTrashActive(true);
@@ -997,7 +1229,9 @@ public class ResourceManagerPresenter
 
     private void HandleTrashClearAll()
     {
-        int count = ResourceTrashService.Count;
+        int count;
+        try { count = ResourceTrashService.Count; }
+        catch (System.Exception e) { _trashPanel.ShowError(e.Message); return; }
         if (count == 0) return;
         if (!EditorUtility.DisplayDialog("清空回收站",
                 $"将永久删除全部 {count} 个条目（不可恢复）。", "清空", "取消"))
@@ -1009,6 +1243,20 @@ public class ResourceManagerPresenter
             return;
         }
         RefreshContent();
+    }
+
+    private void HandleTrashRepairIndex()
+    {
+        if (!EditorUtility.DisplayDialog("修复回收站索引", "将从保留的备份及条目元数据恢复索引。\n不会删除任何孤立备份，也不会移动真实资源。", "修复索引", "取消")) return;
+        string error = ResourceTrashService.RepairIndex();
+        if (error != null) EditorUtility.DisplayDialog("修复失败", error, "确定");
+        RefreshContent();
+    }
+
+    private string CurrentPhysicalPath()
+    {
+        string root = ResourceAssetService.GetPathFromConfig(_state.currentType);
+        return string.IsNullOrEmpty(root) ? "" : CurrentImportSubfolder().Length == 0 ? root : root + "/" + CurrentImportSubfolder();
     }
 
     // ===================== 菜单 =====================
@@ -1043,13 +1291,13 @@ public class ResourceManagerPresenter
         menu.AddSeparator("");
         menu.AddItem(new GUIContent("在文件管理器中显示当前路径"), false, () =>
         {
-            string p = ResourceAssetService.GetPathFromConfig(_state.currentType);
+            string p = CurrentPhysicalPath();
             if (Directory.Exists(p)) EditorUtility.RevealInFinder(p);
             else EditorUtility.DisplayDialog("提示", $"文件夹不存在：\n{p}", "确定");
         });
         menu.AddItem(new GUIContent("复制当前路径到剪贴板"), false, () =>
         {
-            EditorGUIUtility.systemCopyBuffer = ResourceAssetService.GetPathFromConfig(_state.currentType);
+            EditorGUIUtility.systemCopyBuffer = CurrentPhysicalPath();
         });
         menu.ShowAsContext();
     }
@@ -1062,17 +1310,25 @@ public class ResourceManagerPresenter
     {
         int total = ResourceAssetService.CountAssets(_state.currentType);
         _statusBar.Update(_selected.Count, total, _state.currentType, _state.viewMode, _state.sortMode,
-            ResourceAssetService.GetPathFromConfig(_state.currentType));
+            _trashMode ? "回收站（普通资源快捷键已隔离）" : CurrentPhysicalPath());
     }
 
     // ===================== 键盘事件 =====================
-    public void OnKeyDown(KeyCode key, bool ctrl, bool shift)
+    public bool OnKeyDown(KeyCode key, bool ctrl, bool shift)
     {
-        if (key == KeyCode.A && ctrl)
-            SelectAll();
-        else if (key == KeyCode.Delete && _selected.Count > 0)
-            DeleteSelected();
-        else if (key == KeyCode.Escape)
-            ClearSelection();
+        if (_trashMode)
+        {
+            if (key == KeyCode.Escape) { ExitTrashMode(); return true; }
+            return false;
+        }
+        if (key == KeyCode.A && ctrl) { SelectAll(); return true; }
+        if (key == KeyCode.Delete && _selected.Count > 0) { DeleteSelected(); return true; }
+        if (key == KeyCode.Escape) { ClearSelection(); return true; }
+        return false;
+    }
+
+    public void HandleInternalDrop(List<string> assetPaths)
+    {
+        if (!_trashMode) HandleItemsMoveToFolder(assetPaths, CurrentImportSubfolder());
     }
 }

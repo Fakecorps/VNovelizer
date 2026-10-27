@@ -39,7 +39,9 @@ public class ResourceToolbarView
         Root.style.paddingRight = 10;
         Root.style.borderBottomWidth = 1;
         Root.style.borderBottomColor = GalleryTheme.Hex(GalleryTheme.Border);
-        Root.style.height = 34;
+        Root.style.minHeight = 38;
+        Root.style.flexWrap = Wrap.Wrap;
+        Root.style.flexShrink = 0;
 
         // 导入文件
         var importFileBtn = UIElementBuilder.MakeIconButton(
@@ -68,7 +70,10 @@ public class ResourceToolbarView
         var searchContainer = new VisualElement();
         searchContainer.style.flexDirection = FlexDirection.Row;
         searchContainer.style.alignItems = Align.Center;
-        searchContainer.style.width = 300;
+        searchContainer.style.width = 260;
+        searchContainer.style.minWidth = 170;
+        searchContainer.style.flexGrow = 1;
+        searchContainer.style.flexShrink = 1;
         searchContainer.style.backgroundColor = new Color(0.12f, 0.12f, 0.12f);
         ResourceStyles.SetRadius(searchContainer, ResourceStyles.ButtonRadius);
         searchContainer.style.paddingLeft = 8;
@@ -88,6 +93,9 @@ public class ResourceToolbarView
         searchIcon.style.height = 14;
         searchIcon.style.marginRight = 4;
         searchIcon.style.opacity = 0.7f;
+        searchIcon.style.flexShrink = 0;
+        searchIcon.scaleMode = ScaleMode.ScaleToFit;
+        searchIcon.pickingMode = PickingMode.Ignore;
         searchContainer.Add(searchIcon);
 
         // 搜索输入框
@@ -145,19 +153,15 @@ public class ResourceToolbarView
         Root.Add(sortBtn);
 
         // 设置
-        var settingsBtn = new Button(() => OnSettingsClicked?.Invoke());
-        var settingsIcon = new Image();
-        settingsIcon.image = UIElementBuilder.GetIcon("SettingsIcon", "Settings", "d_Settings");
-        settingsIcon.style.width = 14;
-        settingsIcon.style.height = 14;
-        settingsBtn.Add(settingsIcon);
-        ResourceStyles.StyleIcon(settingsBtn, false);
+        var settingsBtn = UIElementBuilder.MakeIconButton(UIElementBuilder.GetIcon("SettingsIcon", "Settings", "d_Settings"),
+            "设置", () => OnSettingsClicked?.Invoke());
+        GalleryStyles.ApplyButton(settingsBtn, GalleryTheme.BgCard, false);
         settingsBtn.tooltip = "设置";
         settingsBtn.style.marginLeft = 6;
         Root.Add(settingsBtn);
     }
 
-    public void SetSearchValue(string value) => SearchField.value = value;
+    public void SetSearchValue(string value) => SearchField.SetValueWithoutNotify(value ?? "");
 
     public void SetViewModeButtons(ViewMode mode)
     {

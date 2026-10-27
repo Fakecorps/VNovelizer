@@ -78,8 +78,9 @@ public static class VNWeatherParticleGenerator
     /// <summary>
     /// 包开发用：把内置 rain/snow 粒子预制体烘焙进包内模板目录
     /// （端用户工程 Packages 只读不会执行；生成的包内资产随包分发、GUID 注册只读）。
+    /// **不挂菜单**（2026-10-27）：避免 `VNovelizer` 菜单出现 VFX 子菜单；
+    /// 需要重新烘焙时由包开发者在编辑器脚本/控制台中显式调用本方法。
     /// </summary>
-    [MenuItem("VNovelizer/VFX/烘焙内置粒子预制体到包内", false, 46)]
     public static void BakeBuiltinPrefabsToPackage()
     {
         string dirFs = PackageParticleFolderFs;

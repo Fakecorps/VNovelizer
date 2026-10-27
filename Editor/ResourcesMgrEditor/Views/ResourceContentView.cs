@@ -16,6 +16,10 @@ public class ResourceContentView
     public VisualElement EmptyState { get; private set; }
 
     public event Action<ResourceItem, int> OnItemMouseDown;
+    public event Action<ResourceItem, int, int, bool, bool> OnItemPointerDown;
+    public event Action<ResourceItem, int, bool, bool> OnItemPointerUp;
+    public event Action<ResourceFolderInfo, int, int, bool, bool> OnFolderPointerDown;
+    public event Action<ResourceFolderInfo, int, bool, bool> OnFolderPointerUp;
     public event Action<ResourceItem> OnItemPlay;  // 双击/按钮触发播放
     public event Action<ResourceItem, DropdownMenu> OnItemContextMenu; // 右键菜单（向 evt.menu 追加动作，由 Presenter 决定内容）
 
@@ -39,6 +43,10 @@ public class ResourceContentView
     private bool _searchMode;
     private bool _internalDragging;
     private Vector2 _dragStartPos;
+    private VisualElement _pressedElement;
+    private readonly Dictionary<string, VisualElement> _selectionElements = new Dictionary<string, VisualElement>();
+    private string _currentFolder = "";
+    private const string FolderSelectionPrefix = "#folder:";
 
     public ResourceContentView()
     {
@@ -77,22 +85,18 @@ public class ResourceContentView
         EmptyState = BuildEmptyState();
         Root.Add(EmptyState);
 
-        // 空白处右键菜单（卡片自身的右键事件已 StopPropagation，不会冒泡到这里）
-        RightPane.RegisterCallback<ContextualMenuPopulateEvent>(evt =>
+        scroll.AddManipulator(new ContextualMenuManipulator(evt =>
         {
-            evt.StopPropagation();
             OnBackgroundContextMenu?.Invoke(evt.menu);
-        });
-
-        // 拖放支持（空白区域，落位到当前文件夹——由 Presenter 决定导入/分配）
-        Root.RegisterCallback<DragEnterEvent>(_ => { });
-        Root.RegisterCallback<DragLeaveEvent>(_ => { });
-        Root.RegisterCallback<DragUpdatedEvent>(_ =>
+            evt.StopPropagation();
+        }));
+        EmptyState.AddManipulator(new ContextualMenuManipulator(evt =>
         {
-            if (DragAndDrop.GetGenericData(MoveDragKey) == null)
-                DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
-        });
-        Root.RegisterCallback<DragPerformEvent>(_ => DragAndDrop.AcceptDrag());
+            OnBackgroundContextMenu?.Invoke(evt.menu);
+            evt.StopPropagation();
+        }));
+        RegisterDropTarget(scroll, null);
+        RegisterDropTarget(EmptyState, null);
 
         // 内部拖拽收尾复位（拖拽结束时 MouseUp 会被拖拽系统吃掉）
         Root.RegisterCallback<DragExitedEvent>(_ => _internalDragging = false);
@@ -118,8 +122,10 @@ public class ResourceContentView
     }
 
     /// <summary>更新面包屑（visible = false 时隐藏，如 Video 类别 / 回收站模式）。每次全量重建。</summary>
-    public void SetBreadcrumb(ResType type, string currentFolder, bool visible)
+    public void SetBreadcrumb(ResType type, string currentFolder, bool visible, bool searchMode = false)
     {
+        _currentType = type;
+        _currentFolder = (currentFolder ?? "").Trim().Trim('/');
         _breadcrumb.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
         if (!visible) return;
         _breadcrumb.Clear();
@@ -139,6 +145,9 @@ public class ResourceContentView
                 : (isRoot ? ResourceStyles.Accent : ResourceStyles.TextSecondary);
             if (isCurrent) btn.style.unityFontStyleAndWeight = FontStyle.Bold;
             btn.style.unityTextAlign = TextAnchor.MiddleLeft;
+            btn.style.flexShrink = 0;
+            btn.tooltip = navigateTo.Length == 0 ? "类别根目录（可拖入移动）" : navigateTo;
+            RegisterDropTarget(btn, navigateTo);
             _breadcrumb.Add(btn);
         }
 
@@ -157,6 +166,14 @@ public class ResourceContentView
             }
         }
 
+        if (searchMode)
+        {
+            var hint = new Label("全类别搜索 · 导航可退出");
+            hint.style.color = ResourceStyles.TextSecondary;
+            hint.style.marginLeft = 10;
+            hint.style.fontSize = 10;
+            _breadcrumb.Add(hint);
+        }
         var spacer = new VisualElement { style = { flexGrow = 1 } };
         _breadcrumb.Add(spacer);
 
@@ -164,7 +181,8 @@ public class ResourceContentView
             UIElementBuilder.GetIcon("Folder Icon", "Folder", "d_Folder"), "新建文件夹");
         GalleryStyles.ApplyButton(newFolderBtn, GalleryTheme.BgCard, false);
         newFolderBtn.style.fontSize = 11;
-        newFolderBtn.style.height = 22;
+        newFolderBtn.style.height = 26;
+        newFolderBtn.style.flexShrink = 0;
         newFolderBtn.tooltip = "在当前文件夹下新建子文件夹";
         newFolderBtn.clicked += () => OnNewFolderClicked?.Invoke();
         _breadcrumb.Add(newFolderBtn);
@@ -258,6 +276,9 @@ public class ResourceContentView
         _currentType = type;
         _searchMode = searchMode;
         RightPane.Clear();
+        _selectionElements.Clear();
+        _pressedElement = null;
+        _internalDragging = false;
 
         RightPane.style.flexDirection = viewMode == ViewMode.Grid ? FlexDirection.Row : FlexDirection.Column;
         RightPane.style.flexWrap = viewMode == ViewMode.Grid ? Wrap.Wrap : Wrap.NoWrap;
@@ -346,15 +367,7 @@ public class ResourceContentView
             card.style.backgroundColor = ResourceStyles.Card;
             ResourceStyles.SetBorder(card, ResourceStyles.CardBorder, 1.5f);
         });
-        card.RegisterCallback<MouseDownEvent>(evt =>
-        {
-            if (evt.clickCount == 2) OnFolderOpen?.Invoke(folder);
-        });
-        card.RegisterCallback<ContextualMenuPopulateEvent>(evt =>
-        {
-            evt.StopPropagation();
-            OnFolderContextMenu?.Invoke(folder, evt.menu);
-        });
+        RegisterFolderInteraction(card, folder);
         RegisterDropTarget(card, folder.Path);
 
         RightPane.Add(card);
@@ -424,15 +437,7 @@ public class ResourceContentView
 
         row.RegisterCallback<MouseEnterEvent>(_ => row.style.backgroundColor = ResourceStyles.CardHover);
         row.RegisterCallback<MouseLeaveEvent>(_ => row.style.backgroundColor = GalleryTheme.Hex(GalleryTheme.BgCard));
-        row.RegisterCallback<MouseDownEvent>(evt =>
-        {
-            if (evt.clickCount == 2) OnFolderOpen?.Invoke(folder);
-        });
-        row.RegisterCallback<ContextualMenuPopulateEvent>(evt =>
-        {
-            evt.StopPropagation();
-            OnFolderContextMenu?.Invoke(folder, evt.menu);
-        });
+        RegisterFolderInteraction(row, folder);
         RegisterDropTarget(row, folder.Path);
 
         RightPane.Add(row);
@@ -453,16 +458,19 @@ public class ResourceContentView
         {
             element.style.backgroundColor = originalBg;
         });
-        element.RegisterCallback<DragUpdatedEvent>(_ =>
+        element.RegisterCallback<DragUpdatedEvent>(evt =>
         {
-            if (DragAndDrop.GetGenericData(MoveDragKey) != null)
-                DragAndDrop.visualMode = DragAndDropVisualMode.Move;
+            bool internalMove = DragAndDrop.GetGenericData(MoveDragKey) != null;
+            if (internalMove) DragAndDrop.visualMode = _currentType == ResType.Video ? DragAndDropVisualMode.Rejected : DragAndDropVisualMode.Move;
             else
             {
-                bool fromProject = DragAndDrop.paths != null && DragAndDrop.paths.Length > 0
-                    && DragAndDrop.paths[0].StartsWith("Assets/", StringComparison.OrdinalIgnoreCase);
-                DragAndDrop.visualMode = fromProject ? DragAndDropVisualMode.Link : DragAndDropVisualMode.Copy;
+                string first = DragAndDrop.paths != null && DragAndDrop.paths.Length > 0 ? DragAndDrop.paths[0] : "";
+                string root = ResourceAssetService.GetPathFromConfig(_currentType);
+                bool project = first.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) || first.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase);
+                bool move = project && _currentType != ResType.Video && !string.IsNullOrEmpty(root) && first.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase);
+                DragAndDrop.visualMode = move ? DragAndDropVisualMode.Move : project && _currentType != ResType.Video ? DragAndDropVisualMode.Link : DragAndDropVisualMode.Copy;
             }
+            evt.StopPropagation();
         });
         element.RegisterCallback<DragPerformEvent>(evt =>
         {
@@ -470,16 +478,19 @@ public class ResourceContentView
             DragAndDrop.AcceptDrag();
             element.style.backgroundColor = originalBg;
 
-            string moveData = DragAndDrop.GetGenericData(MoveDragKey) as string;
-            if (!string.IsNullOrEmpty(moveData))
+            var data = DragAndDrop.GetGenericData(MoveDragKey);
+            var paths = data as List<string>;
+            if (paths == null && data is string text) paths = new List<string>(text.Split('\n'));
+            string target = folderPath ?? _currentFolder;
+            if (paths != null)
             {
-                var paths = new List<string>(moveData.Split('\n'));
+                _internalDragging = false;
                 paths.RemoveAll(string.IsNullOrEmpty);
-                if (paths.Count > 0) OnItemsMoveToFolder?.Invoke(paths, folderPath);
+                if (_currentType != ResType.Video && paths.Count > 0) OnItemsMoveToFolder?.Invoke(paths, target);
                 return;
             }
             if (DragAndDrop.paths != null && DragAndDrop.paths.Length > 0)
-                OnExternalDropIntoFolder?.Invoke(DragAndDrop.paths, folderPath);
+                OnExternalDropIntoFolder?.Invoke(DragAndDrop.paths, target);
         });
     }
 
@@ -544,7 +555,7 @@ public class ResourceContentView
         bool isAudio = _currentType == ResType.BGM || _currentType == ResType.SFX || _currentType == ResType.Voice;
         if (isAudio && item.Asset is AudioClip)
         {
-            var playBtn = new Button(() => OnItemPlay?.Invoke(item)) { text = "" };
+            var playBtn = UIElementBuilder.MakeIconButton(null, "试听", () => OnItemPlay?.Invoke(item));
             playBtn.style.position = Position.Absolute;
             playBtn.style.left = 6;
             playBtn.style.top = 6;
@@ -555,7 +566,15 @@ public class ResourceContentView
             playIcon.image = UIElementBuilder.GetIcon("PlayButton", "Play", "d_PlayButton");
             playIcon.style.width = 12;
             playIcon.style.height = 12;
-            playBtn.Add(playIcon);
+            if (playIcon.image != null)
+            {
+                playIcon.style.flexShrink = 0;
+                playIcon.scaleMode = ScaleMode.ScaleToFit;
+                playIcon.pickingMode = PickingMode.Ignore;
+                playBtn.Add(playIcon);
+            }
+            playBtn.style.width = 56;
+            playBtn.style.height = 26;
             playBtn.tooltip = "试听";
             playBtn.style.opacity = 0;
             playBtn.name = "playBtn";
@@ -598,31 +617,7 @@ public class ResourceContentView
             var play = card.Q<Button>("playBtn");
             if (play != null) play.style.opacity = 0;
         });
-        card.RegisterCallback<MouseDownEvent>(evt =>
-        {
-            OnItemMouseDown?.Invoke(item, evt.clickCount);
-            // 记录拖拽起点（左键按下且未松开时移动超过阈值 → 启动内部拖拽）
-            _dragStartPos = evt.mousePosition;
-        });
-        // 【子文件夹支持】拖拽移动：按住选中项拖动 8px 后启动 DragAndDrop（携带全部选中项）
-        card.RegisterCallback<MouseMoveEvent>(evt =>
-        {
-            if (evt.pressedButtons != 1 || _internalDragging) return;
-            if ((evt.mousePosition - _dragStartPos).sqrMagnitude < 64) return;
-
-            var moving = _items.FindAll(i => _selected.Contains(i.AssetPath));
-            if (moving.Count == 0) moving = new List<ResourceItem> { item };
-            DragAndDrop.PrepareStartDrag();
-            DragAndDrop.SetGenericData(MoveDragKey, string.Join("\n", moving.ConvertAll(i => i.AssetPath)));
-            DragAndDrop.StartDrag(moving.Count > 1 ? $"移动 {moving.Count} 项到文件夹" : "移动到文件夹");
-            _internalDragging = true;
-        });
-        card.RegisterCallback<MouseUpEvent>(_ => _internalDragging = false);
-        card.RegisterCallback<ContextualMenuPopulateEvent>(evt =>
-        {
-            evt.StopPropagation();
-            OnItemContextMenu?.Invoke(item, evt.menu);
-        });
+        RegisterFileInteraction(card, item, ResourceStyles.Card);
 
         RightPane.Add(card);
     }
@@ -749,7 +744,7 @@ public class ResourceContentView
         bool isAudio = _currentType == ResType.BGM || _currentType == ResType.SFX || _currentType == ResType.Voice;
         if (isAudio && item.Asset is AudioClip)
         {
-            var playBtn = new Button(() => OnItemPlay?.Invoke(item)) { text = "" };
+            var playBtn = UIElementBuilder.MakeIconButton(null, "试听", () => OnItemPlay?.Invoke(item));
             playBtn.style.width = 24;
             playBtn.style.height = 20;
             playBtn.style.backgroundColor = ResourceStyles.Accent;
@@ -758,7 +753,15 @@ public class ResourceContentView
             playIcon.image = UIElementBuilder.GetIcon("PlayButton", "Play");
             playIcon.style.width = 12;
             playIcon.style.height = 12;
-            playBtn.Add(playIcon);
+            if (playIcon.image != null)
+            {
+                playIcon.style.flexShrink = 0;
+                playIcon.scaleMode = ScaleMode.ScaleToFit;
+                playIcon.pickingMode = PickingMode.Ignore;
+                playBtn.Add(playIcon);
+            }
+            playBtn.style.width = 56;
+            playBtn.style.height = 26;
             playBtn.tooltip = "试听";
             ResourceStyles.AddHover(playBtn, ResourceStyles.Accent, new Color(0.30f, 0.65f, 0.95f));
             actions.Add(playBtn);
@@ -787,31 +790,112 @@ public class ResourceContentView
         {
             row.style.backgroundColor = _selected.Contains(item.AssetPath) ? ResourceStyles.CardSelected : baseC;
         });
-        row.RegisterCallback<MouseDownEvent>(evt =>
-        {
-            OnItemMouseDown?.Invoke(item, evt.clickCount);
-            _dragStartPos = evt.mousePosition;
-        });
-        row.RegisterCallback<MouseMoveEvent>(evt =>
-        {
-            if (evt.pressedButtons != 1 || _internalDragging) return;
-            if ((evt.mousePosition - _dragStartPos).sqrMagnitude < 64) return;
-
-            var moving = _items.FindAll(i => _selected.Contains(i.AssetPath));
-            if (moving.Count == 0) moving = new List<ResourceItem> { item };
-            DragAndDrop.PrepareStartDrag();
-            DragAndDrop.SetGenericData(MoveDragKey, string.Join("\n", moving.ConvertAll(i => i.AssetPath)));
-            DragAndDrop.StartDrag(moving.Count > 1 ? $"移动 {moving.Count} 项到文件夹" : "移动到文件夹");
-            _internalDragging = true;
-        });
-        row.RegisterCallback<MouseUpEvent>(_ => _internalDragging = false);
-        row.RegisterCallback<ContextualMenuPopulateEvent>(evt =>
-        {
-            evt.StopPropagation();
-            OnItemContextMenu?.Invoke(item, evt.menu);
-        });
+        RegisterFileInteraction(row, item, baseC);
 
         RightPane.Add(row);
+    }
+
+    public void UpdateSelection(HashSet<string> selected)
+    {
+        _selected = selected ?? new HashSet<string>();
+        foreach (var pair in _selectionElements)
+        {
+            bool active = _selected.Contains(pair.Key);
+            pair.Value.style.backgroundColor = active ? ResourceStyles.CardSelected : ResourceStyles.Card;
+            if (_viewMode == ViewMode.Grid)
+                ResourceStyles.SetBorder(pair.Value, active ? ResourceStyles.Accent : ResourceStyles.CardBorder, 1.5f);
+            else pair.Value.style.borderLeftColor = active ? ResourceStyles.Accent : ResourceStyles.TransparentBlack;
+        }
+    }
+
+    private void RegisterFolderInteraction(VisualElement element, ResourceFolderInfo folder)
+    {
+        string key = FolderSelectionPrefix + folder.Path;
+        _selectionElements[key] = element;
+        element.tooltip = folder.Path;
+        element.focusable = true;
+        element.RegisterCallback<MouseDownEvent>(evt =>
+        {
+            if (evt.button != 0 && evt.button != 1) return;
+            element.Focus();
+            OnFolderPointerDown?.Invoke(folder, evt.clickCount, evt.button, evt.ctrlKey || evt.commandKey, evt.shiftKey);
+            if (evt.button == 0)
+            {
+                _pressedElement = element;
+                _dragStartPos = evt.mousePosition;
+            }
+            if (evt.button == 0 && evt.clickCount == 2) OnFolderOpen?.Invoke(folder);
+            evt.StopPropagation();
+        });
+        element.RegisterCallback<MouseUpEvent>(evt =>
+        {
+            if (evt.button == 0 && _pressedElement == element && (evt.mousePosition - _dragStartPos).sqrMagnitude < 64)
+                OnFolderPointerUp?.Invoke(folder, evt.button, evt.ctrlKey || evt.commandKey, evt.shiftKey);
+            _pressedElement = null;
+        });
+        element.RegisterCallback<MouseLeaveEvent>(_ => UpdateSelection(_selected));
+        element.AddManipulator(new ContextualMenuManipulator(evt =>
+        {
+            if (!_selected.Contains(key)) OnFolderPointerDown?.Invoke(folder, 1, 1, false, false);
+            OnFolderContextMenu?.Invoke(folder, evt.menu);
+            evt.StopPropagation();
+        }));
+        UpdateSelection(_selected);
+    }
+
+    private void RegisterFileInteraction(VisualElement element, ResourceItem item, Color baseColor)
+    {
+        _selectionElements[item.AssetPath] = element;
+        element.focusable = true;
+        element.tooltip = item.DisplayName + "\n" + item.AssetPath;
+        foreach (var button in element.Query<Button>().ToList())
+        {
+            button.RegisterCallback<MouseDownEvent>(evt => { if (evt.button == 0) evt.StopPropagation(); });
+            button.RegisterCallback<MouseUpEvent>(evt => { if (evt.button == 0) evt.StopPropagation(); });
+            button.RegisterCallback<MouseMoveEvent>(evt => { if (evt.pressedButtons == 1) evt.StopPropagation(); });
+            button.RegisterCallback<PointerDownEvent>(evt => { if (evt.button == 0) evt.StopPropagation(); });
+            button.RegisterCallback<PointerUpEvent>(evt => { if (evt.button == 0) evt.StopPropagation(); });
+        }
+        element.RegisterCallback<MouseDownEvent>(evt =>
+        {
+            if (evt.button != 0 && evt.button != 1) return;
+            element.Focus();
+            if (OnItemPointerDown != null) OnItemPointerDown.Invoke(item, evt.clickCount, evt.button, evt.ctrlKey || evt.commandKey, evt.shiftKey);
+            else OnItemMouseDown?.Invoke(item, evt.clickCount);
+            if (evt.button == 0)
+            {
+                _pressedElement = element;
+                _dragStartPos = evt.mousePosition;
+                _internalDragging = false;
+            }
+            evt.StopPropagation();
+        });
+        element.RegisterCallback<MouseMoveEvent>(evt =>
+        {
+            if (_pressedElement != element || evt.pressedButtons != 1 || _internalDragging || _currentType == ResType.Video) return;
+            if ((evt.mousePosition - _dragStartPos).sqrMagnitude < 64) return;
+            var moving = _items.FindAll(i => _selected.Contains(i.AssetPath)).ConvertAll(i => i.AssetPath);
+            if (moving.Count == 0) moving.Add(item.AssetPath);
+            DragAndDrop.PrepareStartDrag();
+            DragAndDrop.SetGenericData(MoveDragKey, moving);
+            DragAndDrop.StartDrag($"移动 {moving.Count} 个文件");
+            _internalDragging = true;
+            _pressedElement = null;
+            evt.StopPropagation();
+        });
+        element.RegisterCallback<MouseUpEvent>(evt =>
+        {
+            if (evt.button == 0 && !_internalDragging && _pressedElement == element)
+                OnItemPointerUp?.Invoke(item, evt.button, evt.ctrlKey || evt.commandKey, evt.shiftKey);
+            _pressedElement = null;
+            _internalDragging = false;
+        });
+        element.AddManipulator(new ContextualMenuManipulator(evt =>
+        {
+            if (!_selected.Contains(item.AssetPath)) OnItemPointerDown?.Invoke(item, 1, 1, false, false);
+            OnItemContextMenu?.Invoke(item, evt.menu);
+            evt.StopPropagation();
+        }));
     }
 
     public const int DeleteAction = -1;

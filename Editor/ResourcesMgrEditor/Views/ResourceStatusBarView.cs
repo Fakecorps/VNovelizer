@@ -28,6 +28,7 @@ public class ResourceStatusBarView
         bar.style.borderTopWidth = 1;
         bar.style.borderTopColor = GalleryTheme.Hex(GalleryTheme.Border);
         bar.style.minHeight = ResourceStyles.StatusBarHeight;
+        bar.style.flexShrink = 0;
 
         _statusLabel = new Label();
         _statusLabel.style.color = GalleryTheme.Hex(GalleryTheme.TextSecondary);
@@ -39,6 +40,9 @@ public class ResourceStatusBarView
         _pathLabel.name = "pathHint";
         _pathLabel.style.color = GalleryTheme.Hex(GalleryTheme.TextMuted);
         _pathLabel.style.fontSize = 10;
+        _pathLabel.style.maxWidth = Length.Percent(40);
+        _pathLabel.style.overflow = Overflow.Hidden;
+        _pathLabel.style.textOverflow = TextOverflow.Ellipsis;
         bar.Add(_pathLabel);
 
         return bar;
@@ -48,6 +52,10 @@ public class ResourceStatusBarView
     {
         if (_statusLabel == null) return;
         _statusLabel.text = $"已选: {selectedCount}  |  总数: {totalCount}  |  分类: {UIElementBuilder.GetTypeDisplayName(type)}  |  视图: {(viewMode == ViewMode.Grid ? "网格" : "列表")}  |  排序: {UIElementBuilder.GetSortModeName(sortMode)}";
-        if (_pathLabel != null) _pathLabel.text = "路径: " + path;
+        if (_pathLabel != null)
+        {
+            _pathLabel.text = "路径: " + path;
+            _pathLabel.tooltip = path;
+        }
     }
 }

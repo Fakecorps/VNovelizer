@@ -393,7 +393,9 @@ namespace VNovelizer.Editor.RowPerformanceEditor
 
             // Addressables 托管模式：组内类别条目，逻辑名 = 地址尾段
             string category = VNAddressablesRegistrar.GetCategoryKey(resType);
-            if (VNAddressablesRegistrar.IsManagedMode && !string.IsNullOrEmpty(category))
+            var settings = VNAddressablesRegistrar.IsManagedMode
+                ? UnityEditor.AddressableAssets.AddressableAssetSettingsDefaultObject.Settings : null;
+            if (settings != null && !string.IsNullOrEmpty(category))
             {
                 foreach (var entry in VNAddressablesRegistrar.GetCategoryEntries(category))
                 {
@@ -411,6 +413,8 @@ namespace VNovelizer.Editor.RowPerformanceEditor
                 string filter = UIElementBuilder.GetSearchFilter(resType);
                 foreach (string guid in AssetDatabase.FindAssets(filter, new[] { folder }))
                 {
+                    if (settings != null && (settings.FindAssetEntry(guid) != null
+                        || VNAddressablesRegistrar.IsAutomaticRegistrationSuppressed(guid))) continue;
                     string name = ResourceAssetService.GetRelativeLogicalName(folder, AssetDatabase.GUIDToAssetPath(guid));
                     if (!string.IsNullOrEmpty(name) && !result.Contains(name)) result.Add(name);
                 }

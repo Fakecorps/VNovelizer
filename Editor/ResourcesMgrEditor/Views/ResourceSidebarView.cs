@@ -138,6 +138,9 @@ public class ResourceSidebarView
         var icon = new Image { name = "icon" };
         icon.style.width = 16;
         icon.style.height = 16;
+        icon.style.flexShrink = 0;
+        icon.scaleMode = ScaleMode.ScaleToFit;
+        icon.pickingMode = PickingMode.Ignore;
         icon.style.marginRight = 6;
         item.Add(icon);
 
@@ -187,8 +190,9 @@ public class ResourceSidebarView
     public void UpdateTrashCount(int count)
     {
         if (_trashCountLabel == null) return;
-        _trashCountLabel.text = count.ToString();
-        _trashCountLabel.style.display = count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+        _trashCountLabel.text = count < 0 ? "?" : count.ToString();
+        _trashCountLabel.tooltip = count < 0 ? "回收站索引不可读，请进入后手动修复" : "回收站条目数";
+        _trashCountLabel.style.display = count != 0 ? DisplayStyle.Flex : DisplayStyle.None;
     }
 
     /// <summary>回收站激活态视觉（true = 激活高亮，同时取消类别列表选中）</summary>

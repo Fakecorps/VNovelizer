@@ -39,9 +39,9 @@ public static class ResourceStyles
     // ===================== 列表列宽百分比 =====================
     public const float ColPct_Name = 30f;
     public const float ColPct_Type = 12f;
-    public const float ColPct_Path = 38f;
+    public const float ColPct_Path = 30f;
     public const float ColPct_Size = 10f;
-    public const float ColPct_Op = 10f;
+    public const float ColPct_Op = 18f;
 
     // ===================== 通用样式方法 =====================
 

@@ -136,21 +136,237 @@ public static class VNAddressablesRegistrar
     /// </summary>
     public static void RegisterAssetAtPath(string assetPath, string resourceKey)
     {
-        if (Application.isPlaying) return; // Play 模式中绝不执行
-        if (!HasAddressablesData()) return;
-        if (string.IsNullOrEmpty(assetPath) || string.IsNullOrEmpty(resourceKey)) return;
-        if (!File.Exists(assetPath)) return;
+        if (Application.isPlaying || !HasAddressablesData()) return;
+        if (string.IsNullOrEmpty(assetPath) || IsAutomaticRegistrationSuppressed(AssetDatabase.AssetPathToGUID(assetPath))) return;
+        string error = RegisterAssetAtPathChecked(assetPath, ResolveEffectiveResourceKey(assetPath, resourceKey));
+        if (error != null) Debug.LogWarning($"[VNAddressablesRegistrar] {error}");
+    }
 
-        var settings = AddressableAssetSettingsDefaultObject.GetSettings(false);
-        if (settings == null) return;
-        var group = EnsureGroup(settings);
-        if (group == null) return;
+    public const string ManualAddressOverrideLabel = "VN_ManualAddressOverride";
+    private static readonly Dictionary<string, int> PendingExplicitAssets = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        if (RegisterAsset(settings, group, assetPath, resourceKey))
+    [Serializable]
+    private sealed class AssignmentSuppressions
+    {
+        public int Version = 1;
+        public List<string> Guids = new List<string>();
+    }
+
+    private static string SuppressionPath => Path.Combine(Directory.GetParent(Application.dataPath).FullName,
+        "ProjectSettings/VNovelizerResourceAssignments.json");
+    private static HashSet<string> _suppressedGuids;
+    private static string _loadedSuppressionPath;
+    private static bool _suppressionReadErrorLogged;
+
+    private static HashSet<string> LoadSuppressedGuids()
+    {
+        string path = SuppressionPath;
+        if (_suppressedGuids != null && _loadedSuppressionPath == path) return _suppressedGuids;
+        var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (File.Exists(path))
         {
-            AssetDatabase.SaveAssets();
-            VNResourceService.Reset();
+            var data = JsonUtility.FromJson<AssignmentSuppressions>(File.ReadAllText(path));
+            if (data == null || data.Version != 1 || data.Guids == null)
+                throw new InvalidDataException("撤分配记录格式不正确：" + path);
+            foreach (string guid in data.Guids)
+            {
+                if (string.IsNullOrEmpty(guid) || guid.Length != 32 || !Array.TrueForAll(guid.ToCharArray(), Uri.IsHexDigit))
+                    throw new InvalidDataException("撤分配记录包含无效 GUID：" + path);
+                values.Add(guid);
+            }
         }
+        _loadedSuppressionPath = path;
+        _suppressedGuids = values;
+        return values;
+    }
+
+    /// <summary>持久撤分配状态（GUID输入）；状态文件损坏时自动登记安全停用而非复活已撤条目。</summary>
+    public static bool IsAutomaticRegistrationSuppressed(string guid)
+    {
+        if (string.IsNullOrEmpty(guid)) return false;
+        try { return LoadSuppressedGuids().Contains(guid); }
+        catch (Exception e)
+        {
+            if (!_suppressionReadErrorLogged)
+            {
+                _suppressionReadErrorLogged = true;
+                Debug.LogError($"[VNAddressablesRegistrar] 无法读取撤分配状态，自动登记已停止：{e.Message}");
+            }
+            return true;
+        }
+    }
+
+    /// <summary>事务快照纯读取；状态不可读时返回错误，不把未知当成真实 true。</summary>
+    public static string GetAutomaticRegistrationSuppressedChecked(string guid, out bool suppressed)
+    {
+        suppressed = false;
+        if (string.IsNullOrEmpty(guid) || guid.Length != 32 || !Array.TrueForAll(guid.ToCharArray(), Uri.IsHexDigit))
+            return "无效的资产 GUID";
+        try
+        {
+            suppressed = LoadSuppressedGuids().Contains(guid);
+            return null;
+        }
+        catch (Exception e) { return $"读取撤分配状态失败：{e.Message}"; }
+    }
+
+    /// <summary>显式撤分配/恢复操作写入，纯查询不创建文件；GUID可处于回收站中。</summary>
+    public static string SetAutomaticRegistrationSuppressedChecked(string guid, bool suppressed)
+    {
+        if (Application.isPlaying) return "播放模式下不能修改资源分配";
+        if (string.IsNullOrEmpty(guid) || guid.Length != 32 || !Array.TrueForAll(guid.ToCharArray(), Uri.IsHexDigit))
+            return "无效的资产 GUID";
+        try
+        {
+            var previous = LoadSuppressedGuids();
+            if (previous.Contains(guid) == suppressed) return null;
+            var next = new HashSet<string>(previous, StringComparer.OrdinalIgnoreCase);
+            if (suppressed) next.Add(guid); else next.Remove(guid);
+            var list = new List<string>(next);
+            list.Sort(StringComparer.OrdinalIgnoreCase);
+            string path = SuppressionPath;
+            string temporary = path + ".tmp";
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            try
+            {
+                File.WriteAllText(temporary, JsonUtility.ToJson(new AssignmentSuppressions { Guids = list }, true));
+                if (File.Exists(path)) File.Replace(temporary, path, path + ".bak");
+                else File.Move(temporary, path);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            _suppressedGuids = next;
+            return null;
+        }
+        catch (Exception e) { return $"保存撤分配状态失败：{e.Message}"; }
+    }
+
+    /// <summary>保护本次显式事务涉及的 GUID，避免延迟导入自动登记覆盖成功结果或失败快照。</summary>
+    public static void SuppressAutomaticRegistrationForCurrentImportBatch(IEnumerable<string> assetGuids)
+    {
+        var held = new HashSet<string>(assetGuids, StringComparer.OrdinalIgnoreCase);
+        held.RemoveWhere(string.IsNullOrEmpty);
+        foreach (string guid in held)
+        {
+            PendingExplicitAssets[guid] = PendingExplicitAssets.TryGetValue(guid, out var heldCount) ? heldCount + 1 : 1;
+        }
+        EditorApplication.delayCall += () => EditorApplication.delayCall += () =>
+        {
+            foreach (string guid in held)
+            {
+                if (!PendingExplicitAssets.TryGetValue(guid, out var count)) continue;
+                if (count <= 1) PendingExplicitAssets.Remove(guid);
+                else PendingExplicitAssets[guid] = count - 1;
+            }
+        };
+    }
+
+    /// <summary>只验证最终地址占用，不创建组、不导入、不修改条目；允许全批地址交换。</summary>
+    public static string ValidateAddressChanges(Dictionary<string, string> assetPathToResourceKey)
+    {
+        if (assetPathToResourceKey == null) return "地址变更清单不能为空";
+        var planned = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var change in assetPathToResourceKey)
+        {
+            if (string.IsNullOrEmpty(change.Key)) return "资产路径不能为空";
+            string error = ValidateLogicalName(change.Value);
+            if (error != null) return error;
+            string normalizedPath = change.Key.Replace('\\', '/');
+            string guid = AssetDatabase.AssetPathToGUID(normalizedPath);
+            if (string.IsNullOrEmpty(guid)) guid = "planned-path:" + normalizedPath;
+            if (planned.TryGetValue(guid, out var previous) && previous != change.Value)
+                return $"同一资产指定了多个地址：{change.Key}";
+            if (owners.TryGetValue(change.Value, out var owner) && owner != guid)
+                return $"批内资源地址冲突：{change.Value}";
+            planned[guid] = change.Value;
+            owners[change.Value] = guid;
+        }
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        if (settings == null) return null;
+        foreach (var group in settings.groups)
+        {
+            if (group == null) continue;
+            foreach (var entry in group.entries)
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.address)) continue;
+                string finalAddress = planned.TryGetValue(entry.guid, out var replacement) ? replacement : entry.address;
+                if (owners.TryGetValue(finalAddress, out var owner) && owner != entry.guid)
+                    return $"资源地址 \"{finalAddress}\" 已被其他资产占用：{entry.AssetPath}";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>导入/自动登记预检应使用的最终键；显式改逻辑名仍直接传请求地址。</summary>
+    public static string ResolveEffectiveResourceKey(string assetPath, string derivedResourceKey)
+    {
+        if (string.IsNullOrEmpty(assetPath)) return derivedResourceKey;
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        var entry = settings != null ? settings.FindAssetEntry(AssetDatabase.AssetPathToGUID(assetPath)) : null;
+        return entry != null && entry.labels.Contains(ManualAddressOverrideLabel) && !string.IsNullOrEmpty(entry.address)
+            ? entry.address : derivedResourceKey;
+    }
+
+    public static bool HasManualAddressOverride(string assetPath)
+    {
+        if (string.IsNullOrEmpty(assetPath)) return false;
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        var entry = settings != null ? settings.FindAssetEntry(AssetDatabase.AssetPathToGUID(assetPath)) : null;
+        return entry != null && entry.labels.Contains(ManualAddressOverrideLabel);
+    }
+
+    public static string SetManualAddressOverrideChecked(string assetPath, bool enabled)
+    {
+        if (string.IsNullOrEmpty(assetPath)) return "资产路径不能为空";
+        if (Application.isPlaying) return "播放模式下不能修改资源分配";
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        var entry = settings != null ? settings.FindAssetEntry(AssetDatabase.AssetPathToGUID(assetPath)) : null;
+        if (entry == null || entry.parentGroup == null || entry.parentGroup.Name != VNResourceKeys.GroupName)
+            return "资源未登记在 VNovelizer 组";
+        try
+        {
+            entry.SetLabel(ManualAddressOverrideLabel, enabled, true);
+            AssetDatabase.SaveAssets();
+            return null;
+        }
+        catch (Exception e) { return $"保存手动地址覆盖状态失败：{e.Message}"; }
+    }
+
+    /// <summary>显式注册，null 成功；保留手动标记时使用调用方给定的完整地址。</summary>
+    public static string RegisterAssetAtPathChecked(string assetPath, string resourceKey, bool preserveManualAddress = false)
+    {
+        if (Application.isPlaying) return "播放模式下不能注册资源";
+        if (!HasAddressablesData()) return "尚未初始化 Addressables 设置";
+        if (string.IsNullOrEmpty(assetPath)) return "资产路径不能为空";
+        try
+        {
+            if (string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(assetPath)))
+                AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);
+            if (AssetDatabase.IsValidFolder(assetPath) || AssetDatabase.LoadMainAssetAtPath(assetPath) == null)
+                return $"无法加载要注册的资产：{assetPath}";
+        }
+        catch (Exception e) { return $"资产导入失败：{e.Message}"; }
+        string error = ValidateAddressChanges(new Dictionary<string, string> { { assetPath, resourceKey } });
+        if (error != null) return error;
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        var existing = settings.FindAssetEntry(AssetDatabase.AssetPathToGUID(assetPath));
+        if (existing != null && existing.parentGroup != null && existing.parentGroup.Name != VNResourceKeys.GroupName)
+            return $"资产已在其他 Addressables 组中：{assetPath}";
+        try
+        {
+            var group = EnsureGroup(settings);
+            if (group == null) return "无法创建 Addressables 组";
+            if (!RegisterAsset(settings, group, assetPath, resourceKey, forceAddress: true))
+                return $"注册资源失败：{assetPath}";
+            var entry = settings.FindAssetEntry(AssetDatabase.AssetPathToGUID(assetPath));
+            if (preserveManualAddress) entry.SetLabel(ManualAddressOverrideLabel, true, true);
+            AssetDatabase.SaveAssets();
+            string suppressionError = SetAutomaticRegistrationSuppressedChecked(entry.guid, false);
+            if (suppressionError != null) return suppressionError;
+            VNResourceService.Reset();
+            return null;
+        }
+        catch (Exception e) { return $"注册资源失败：{e.Message}"; }
     }
 
     /// <summary>
@@ -173,7 +389,8 @@ public static class VNAddressablesRegistrar
         if (string.IsNullOrEmpty(guid)) return false;
 
         // 已在任何组中（含本组）：地址已被托管，保持现状（移动/改名不影响寻址）
-        if (settings.FindAssetEntry(guid) != null) return false;
+        if (PendingExplicitAssets.ContainsKey(guid) || IsAutomaticRegistrationSuppressed(guid)
+            || settings.FindAssetEntry(guid) != null) return false;
 
         // 地址冲突：同地址已被其他资产占用（如存在多份 FlagRegistry）
         foreach (var g in settings.groups)
@@ -258,12 +475,9 @@ public static class VNAddressablesRegistrar
 
             string assetPath = file.Replace('\\', '/');
             string relative = assetPath.Substring(VNProjectPaths.WorkspaceRoot.Length).TrimStart('/');
-            string resourceKey = BuildCategoryAnchoredKey(relative, categories, out bool anchored);
-
-            // anchored = false：物理上不在任何类别文件夹内（如 Assets/VNovelizer/Sounds/x.mp3）。
-            // 该类资产的地址可能是用户拖放分配的类别逻辑名（如 Voice/Chapter01/x）——
-            // 同步时保留手动分配的地址，只用物理推导兜底注册"从未分配过"的资产。
-            if (RegisterAsset(settings, group, assetPath, resourceKey, preserveManualAddress: !anchored)) count++;
+            string resourceKey = BuildCategoryAnchoredKey(relative, categories, out _);
+            // 只有持久覆盖标记保护手动地址；纯物理自动条目继续随路径派生。
+            if (RegisterAsset(settings, group, assetPath, resourceKey)) count++;
         }
         return count;
     }
@@ -434,7 +648,7 @@ public static class VNAddressablesRegistrar
     /// （拖放分配 / 重命名产生），同步时不覆盖该地址（物理移动语义与手动分配语义解耦）。
     /// </summary>
     private static bool RegisterAsset(AddressableAssetSettings settings, AddressableAssetGroup group,
-        string assetPath, string resourceKey, bool preserveManualAddress = false)
+        string assetPath, string resourceKey, bool preserveManualAddress = false, bool forceAddress = false)
     {
         string guid = AssetDatabase.AssetPathToGUID(assetPath);
         if (string.IsNullOrEmpty(guid))
@@ -450,36 +664,32 @@ public static class VNAddressablesRegistrar
             return false;
         }
 
+        if (!forceAddress && (PendingExplicitAssets.ContainsKey(guid) || IsAutomaticRegistrationSuppressed(guid))) return false;
         // 尊重用户手动组织：已在其他组中的条目不动
         var existing = settings.FindAssetEntry(guid);
         if (existing != null && existing.parentGroup != null && existing.parentGroup != group)
             return false;
 
+        bool keepManual = !forceAddress && existing != null && !string.IsNullOrEmpty(existing.address)
+            && (existing.labels.Contains(ManualAddressOverrideLabel)
+                || (preserveManualAddress && IsKnownCategory(ResolveCategoryForKey(existing.address))));
+        string effectiveKey = keepManual ? existing.address : resourceKey;
+        string addressError = ValidateAddressChanges(new Dictionary<string, string> { { assetPath, effectiveKey } });
+        if (addressError != null)
+        {
+            Debug.LogWarning($"[VNAddressablesRegistrar] 登记跳过：{addressError}");
+            return false;
+        }
         var entry = settings.CreateOrMoveEntry(guid, group);
         if (entry == null) return false;
-
-        // 手动分配地址保护：当前地址是已知类别的逻辑名（非物理推导兜底键）时保留不动
-        bool keepManual = preserveManualAddress
-            && entry.address != null
-            && !string.Equals(entry.address, resourceKey, StringComparison.Ordinal)
-            && IsKnownCategory(ResolveCategoryForKey(entry.address));
-
-        string effectiveKey = resourceKey;
-        if (keepManual)
-        {
-            effectiveKey = entry.address;
-        }
-        else
-        {
-            entry.SetAddress(resourceKey);
-        }
+        entry.SetAddress(effectiveKey);
 
         // 【子文件夹支持】Label 按已知类别最长前缀派生：Voice/Chapter01/Voice01 归属 Voice 类，
         // 而非派生出 …_Voice_Chapter01 子标签（旧规则会让类别枚举查不到子目录条目）
         string category = ResolveCategoryForKey(effectiveKey);
         string label = VNResourceKeys.CategoryToLabel(category);
         if (!string.IsNullOrEmpty(label))
-            entry.SetLabel(label, true);
+            entry.SetLabel(label, true, true);
         // 清掉该资产残留的旧类别标签（地址曾随配置/目录变迁漂移过时，旧 Label 会永久残留；
         // 也顺带清理旧派生规则产生的 …_Chapter01 形态子标签）
         CleanupStaleLabels(entry, category);
@@ -511,7 +721,7 @@ public static class VNAddressablesRegistrar
             var before = new HashSet<string>(entry.labels);
             if (!entry.labels.Contains(label))
             {
-                entry.SetLabel(label, true);
+                entry.SetLabel(label, true, true);
                 changed++;
             }
             CleanupStaleLabels(entry, category);
@@ -587,8 +797,7 @@ public static class VNAddressablesRegistrar
         string typeError = ValidateAssetType(type, assetPath);
         if (typeError != null) return typeError;
 
-        // 图片导入设置自动修正：LoadAsync<Sprite> 需要 Sprite 类型，替用户省掉头号坑
-        if (type == ResType.Background) EnsureSpriteImport(assetPath);
+        if (Application.isPlaying) return "播放模式下不能修改资源分配";
 
         // 逻辑名（默认文件名去扩展名）。允许子文件夹路径（"Chapter01/Voice01"），反斜杠统一为 '/'
         if (string.IsNullOrEmpty(logicalName))
@@ -600,18 +809,14 @@ public static class VNAddressablesRegistrar
             if (invalidError != null) return invalidError;
         }
 
+        string address = $"{category}/{logicalName}";
+        string addressError = ValidateAddressChanges(new Dictionary<string, string> { { assetPath ?? "", address } });
+        if (addressError != null) return addressError;
+        if (type == ResType.Background) EnsureSpriteImport(assetPath);
         var settings = AddressableAssetSettingsDefaultObject.GetSettings(true);
+        if (settings == null) return "无法初始化 Addressables 设置";
         var group = EnsureGroup(settings);
         if (group == null) return "无法创建 Addressables 组";
-
-        // 同名冲突：同类别下已有相同逻辑名的条目
-        string address = $"{category}/{logicalName}";
-        foreach (var entry in GetCategoryEntries(category))
-        {
-            if (entry.address == address && !string.Equals(entry.AssetPath, assetPath, StringComparison.OrdinalIgnoreCase))
-                return $"逻辑名 \"{logicalName}\" 已被同类别其他资源占用，请先重命名";
-        }
-
         string guid = AssetDatabase.AssetPathToGUID(assetPath);
         if (string.IsNullOrEmpty(guid)) return "资产尚未导入（GUID 不存在）";
 
@@ -620,11 +825,14 @@ public static class VNAddressablesRegistrar
         if (target == null) return "注册条目失败";
 
         target.SetAddress(address);
+        target.SetLabel(ManualAddressOverrideLabel, true, true);
         target.SetLabel(VNResourceKeys.CategoryToLabel(category), true);
         // 清掉可能残留的旧类别标签（资产从别的类别重新分配时）
         CleanupStaleLabels(target, category);
 
         AssetDatabase.SaveAssets();
+        string suppressionError = SetAutomaticRegistrationSuppressedChecked(guid, false);
+        if (suppressionError != null) return suppressionError;
         VNResourceService.Reset();
         return null;
     }
@@ -632,13 +840,19 @@ public static class VNAddressablesRegistrar
     /// <summary>移除分配：从 VNovelizer 组移除条目（文件原地保留，只是不再被剧本索引）</summary>
     public static bool UnassignAsset(string assetPath)
     {
-        if (!IsManagedMode) return false;
+        if (Application.isPlaying || string.IsNullOrEmpty(assetPath) || !IsManagedMode) return false;
         var settings = AddressableAssetSettingsDefaultObject.Settings;
         string guid = AssetDatabase.AssetPathToGUID(assetPath);
         var entry = settings.FindAssetEntry(guid);
         if (entry == null || entry.parentGroup == null || entry.parentGroup.Name != VNResourceKeys.GroupName)
             return false;
 
+        string suppressionError = SetAutomaticRegistrationSuppressedChecked(guid, true);
+        if (suppressionError != null)
+        {
+            Debug.LogError($"[VNAddressablesRegistrar] {suppressionError}");
+            return false;
+        }
         settings.RemoveAssetEntry(guid);
         AssetDatabase.SaveAssets();
         VNResourceService.Reset();
@@ -654,11 +868,13 @@ public static class VNAddressablesRegistrar
         string invalidError = ValidateLogicalName(newLogicalName);
         if (invalidError != null) return invalidError;
 
+        if (Application.isPlaying) return "播放模式下不能修改资源分配";
         if (!IsManagedMode) return "当前不是 Addressables 托管模式";
         var settings = AddressableAssetSettingsDefaultObject.Settings;
         string guid = AssetDatabase.AssetPathToGUID(assetPath);
         var entry = settings.FindAssetEntry(guid);
-        if (entry == null || entry.address == null || !entry.address.Contains("/"))
+        if (entry == null || entry.parentGroup == null || entry.parentGroup.Name != VNResourceKeys.GroupName
+            || entry.address == null || !entry.address.Contains("/"))
             return "该资源未被分配逻辑名";
 
         // 【子文件夹支持】类别按已知类别最长前缀解析：Voice/Chapter01/Voice01 的类别是 Voice，
@@ -668,19 +884,7 @@ public static class VNAddressablesRegistrar
             category = entry.address.Substring(0, entry.address.LastIndexOf('/'));
         string newAddress = $"{category}/{newLogicalName}";
 
-        // 同类别重名检测
-        foreach (var other in GetCategoryEntries(category))
-        {
-            if (other.address == newAddress && !string.Equals(other.AssetPath, assetPath, StringComparison.OrdinalIgnoreCase))
-                return $"逻辑名 \"{newLogicalName}\" 已被同类别其他资源占用";
-        }
-
-        entry.SetAddress(newAddress);
-        // 类别未变时 Label 不变；防御性重打一次（幂等）
-        CleanupStaleLabels(entry, category);
-        AssetDatabase.SaveAssets();
-        VNResourceService.Reset();
-        return null;
+        return RegisterAssetAtPathChecked(assetPath, newAddress, preserveManualAddress: true);
     }
 
     /// <summary>类别类型校验：返回 null = 通过</summary>

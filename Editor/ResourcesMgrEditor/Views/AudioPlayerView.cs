@@ -29,6 +29,8 @@ public class AudioPlayerView
 
     private bool _isDraggingProgress;
     private float _dragPreviewPct;
+    private AudioClip _loadedClip;
+    private bool _disposed;
 
     private const float Height = 60f;
 
@@ -50,12 +52,13 @@ public class AudioPlayerView
     /// </summary>
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         AudioPreviewService.OnStateChanged -= OnExternalStateChanged;
-    }
-
-    ~AudioPlayerView()
-    {
-        AudioPreviewService.OnStateChanged -= OnExternalStateChanged;
+        EditorUpdateService.UnregisterCallback();
+        if (_progressTrack.HasMouseCapture()) _progressTrack.ReleaseMouse();
+        _isDraggingProgress = false;
+        _loadedClip = null;
     }
 
     private void OnExternalStateChanged()
@@ -117,8 +120,10 @@ public class AudioPlayerView
         _playIcon.image = UIElementBuilder.GetIcon("PlayButton", "Play", "d_PlayButton");
         _playIcon.style.width = 14;
         _playIcon.style.height = 14;
+        ConfigureIconButton(_playBtn, _playIcon);
         _playBtn.Add(_playIcon);
-        _playBtn.tooltip = "播放/暂停 (空格)";
+        _playBtn.tooltip = "播放/暂停";
+        UpdatePlayButtonState(false);
         ResourceStyles.AddHover(_playBtn, ResourceStyles.Accent, FillColorHover);
         midRow.Add(_playBtn);
 
@@ -133,10 +138,18 @@ public class AudioPlayerView
         _loopIcon.style.width = 14;
         _loopIcon.style.height = 14;
         _loopIcon.tintColor = GalleryTheme.Hex(GalleryTheme.TextSecondary);
+        ConfigureIconButton(_loopBtn, _loopIcon);
+        if (_loopIcon.image == null) _loopBtn.text = "循环";
         _loopBtn.Add(_loopIcon);
         _loopBtn.tooltip = "循环播放";
         UpdateLoopButton();
         midRow.Add(_loopBtn);
+
+        var stopBtn = UIElementBuilder.MakeIconButton(UIElementBuilder.GetIcon("PreMatQuad", "d_PreMatQuad"), "停止", () => AudioPreviewService.Stop());
+        stopBtn.style.height = 28;
+        stopBtn.style.flexShrink = 0;
+        stopBtn.style.marginRight = 8;
+        midRow.Add(stopBtn);
 
         // 进度条
         _progressTrack = new VisualElement();
@@ -171,7 +184,9 @@ public class AudioPlayerView
     /// <summary>加载并自动播放音频</summary>
     public void LoadAndPlay(AudioClip clip, string displayName)
     {
-        if (clip == null) return;
+        if (clip == null || _disposed) return;
+        _loadedClip = clip;
+        _titleLabel.tooltip = displayName;
         Root.style.display = DisplayStyle.Flex;
         IsVisible = true;
         _titleLabel.text = displayName;
@@ -194,8 +209,11 @@ public class AudioPlayerView
 
     private void OnPlayClicked()
     {
-        if (AudioPreviewService.CurrentClip == null) return;
-        AudioPreviewService.Toggle();
+        if (_disposed || _loadedClip == null) return;
+        if (AudioPreviewService.CurrentClip == null)
+            AudioPreviewService.Play(_loadedClip, 0, AudioPreviewService.Loop);
+        else AudioPreviewService.Toggle();
+        EditorUpdateService.RegisterCallback(UpdateProgress);
         UpdatePlayButtonState(AudioPreviewService.IsPaused);
     }
 
@@ -215,10 +233,30 @@ public class AudioPlayerView
 
     private void UpdatePlayButtonState(bool paused)
     {
-        if (paused)
-            _playIcon.image = UIElementBuilder.GetIcon("PlayButton", "Play", "d_PlayButton");
-        else
-            _playIcon.image = UIElementBuilder.GetIcon("PauseButton", "Pause", "d_PauseButton", "PlayButton");
+        bool playing = AudioPreviewService.CurrentClip != null && !AudioPreviewService.IsPaused && AudioPreviewService.IsPlaying();
+        _playIcon.image = playing
+            ? UIElementBuilder.GetIcon("PauseButton", "Pause", "d_PauseButton")
+            : UIElementBuilder.GetIcon("PlayButton", "Play", "d_PlayButton");
+        _playIcon.style.display = _playIcon.image == null ? DisplayStyle.None : DisplayStyle.Flex;
+        _playBtn.text = _playIcon.image == null ? (playing ? "暂停" : "播放") : "";
+        _playBtn.tooltip = playing ? "暂停" : "播放 / 从头重播";
+    }
+
+    private static void ConfigureIconButton(Button button, Image image)
+    {
+        button.style.flexDirection = FlexDirection.Row;
+        button.style.alignItems = Align.Center;
+        button.style.justifyContent = Justify.Center;
+        button.style.width = 46;
+        button.style.height = 28;
+        button.style.flexShrink = 0;
+        button.style.paddingLeft = 4;
+        button.style.paddingRight = 4;
+        button.style.paddingTop = 2;
+        button.style.paddingBottom = 2;
+        image.scaleMode = ScaleMode.ScaleToFit;
+        image.style.flexShrink = 0;
+        image.pickingMode = PickingMode.Ignore;
     }
 
     private void UpdateLoopButton()
@@ -243,7 +281,8 @@ public class AudioPlayerView
         if (AudioPreviewService.CurrentClip == null)
         {
             _progressFill.style.width = 0;
-            _timeLabel.text = "00:00 / 00:00";
+            _timeLabel.text = $"00:00 / {FormatTime(_loadedClip != null ? _loadedClip.length : 0f)}";
+            UpdatePlayButtonState(false);
             return;
         }
         var pos = AudioPreviewService.GetPosition();
@@ -283,14 +322,11 @@ public class AudioPlayerView
 
     private void OnProgressDown(MouseDownEvent evt)
     {
+        if (evt.button != 0 || AudioPreviewService.CurrentClip == null) return;
         _isDraggingProgress = true;
         UpdateDragPreview(evt.localMousePosition);
         _progressTrack.CaptureMouse();
-        // 立即响应：拖动时临时停止 UpdateProgress 覆盖
-        if (AudioPreviewService.CurrentClip != null && !AudioPreviewService.IsPaused)
-        {
-            // 不暂停，仍正常播放，但显示拖拽位置
-        }
+        evt.StopPropagation();
     }
 
     private void OnProgressMove(MouseMoveEvent evt)

@@ -11,13 +11,21 @@ public static class UIElementBuilder
     /// <summary>
     /// 安全获取 Unity 内置图标。按顺序尝试多个名称以兼容不同 Unity 版本。
     /// </summary>
+    private static readonly System.Collections.Generic.Dictionary<string, Texture> IconCache =
+        new System.Collections.Generic.Dictionary<string, Texture>();
+
     public static Texture GetIcon(params string[] names)
     {
         foreach (var name in names)
         {
             if (string.IsNullOrEmpty(name)) continue;
-            var content = EditorGUIUtility.IconContent(name);
-            if (content != null && content.image != null) return content.image;
+            string key = (EditorGUIUtility.isProSkin ? "dark:" : "light:") + name;
+            if (!IconCache.TryGetValue(key, out var texture))
+            {
+                texture = EditorGUIUtility.FindTexture(name);
+                IconCache[key] = texture;
+            }
+            if (texture != null) return texture;
         }
         return null;
     }
@@ -104,18 +112,29 @@ public static class UIElementBuilder
     public static Button MakeIconButton(Texture icon, string text, System.Action onClick = null)
     {
         var btn = new Button(onClick) { text = "" };
+        btn.style.flexDirection = FlexDirection.Row;
+        btn.style.alignItems = Align.Center;
+        btn.style.justifyContent = Justify.Center;
+        btn.style.flexShrink = 0;
+        btn.style.minHeight = 26;
+        btn.style.paddingLeft = 6;
+        btn.style.paddingRight = 6;
+        btn.style.paddingTop = 3;
+        btn.style.paddingBottom = 3;
         if (icon != null)
         {
-            var img = new Image();
-            img.image = icon;
+            var img = new Image { image = icon, scaleMode = ScaleMode.ScaleToFit, pickingMode = PickingMode.Ignore };
             img.style.width = 14;
             img.style.height = 14;
-            img.style.marginRight = 4;
+            img.style.flexShrink = 0;
+            img.style.marginRight = string.IsNullOrEmpty(text) ? 0 : 4;
             btn.Add(img);
         }
         if (!string.IsNullOrEmpty(text))
         {
-            var lbl = new Label(text);
+            var lbl = new Label(text) { pickingMode = PickingMode.Ignore };
+            lbl.style.flexShrink = 0;
+            lbl.style.unityTextAlign = TextAnchor.MiddleCenter;
             btn.Add(lbl);
         }
         return btn;

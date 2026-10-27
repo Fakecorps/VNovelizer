@@ -67,6 +67,7 @@ public static class ResourceAssetService
         string category = VNAddressablesRegistrar.GetCategoryKey(type);
         if (VNAddressablesRegistrar.IsManagedMode && !string.IsNullOrEmpty(category))
         {
+            var settings = UnityEditor.AddressableAssets.AddressableAssetSettingsDefaultObject.Settings;
             foreach (var entry in VNAddressablesRegistrar.GetCategoryEntries(category))
             {
                 string logicalName = GetLogicalName(entry.address, category);
@@ -87,12 +88,11 @@ public static class ResourceAssetService
             string folderPath = GetPathFromConfig(type);
             if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
             {
-                var assignedPaths = new HashSet<string>(result.ConvertAll(i => i.AssetPath), StringComparer.OrdinalIgnoreCase);
                 string folderFilter = UIElementBuilder.GetSearchFilter(type);
                 foreach (var guid in AssetDatabase.FindAssets(folderFilter, new[] { folderPath }))
                 {
                     string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                    if (assignedPaths.Contains(assetPath)) continue;
+                    if (settings.FindAssetEntry(guid) != null || VNAddressablesRegistrar.IsAutomaticRegistrationSuppressed(guid)) continue;
                     // 【子文件夹支持】未分配资产的逻辑名 = 相对类别根的路径（去扩展名），
                     // 与 Excel 中应填写的名字一致（旧逻辑只取裸文件名，会丢掉子目录段）
                     string logicalName = GetRelativeLogicalName(folderPath, assetPath);
@@ -137,13 +137,15 @@ public static class ResourceAssetService
     /// </summary>
     public static string GetRelativeLogicalName(string categoryFolderPath, string assetPath)
     {
+        assetPath = assetPath?.Replace('\\', '/');
         string fileName = Path.GetFileNameWithoutExtension(assetPath);
         if (string.IsNullOrEmpty(categoryFolderPath)) return fileName;
         string prefix = categoryFolderPath.Replace('\\', '/').TrimEnd('/') + "/";
         if (assetPath != null && assetPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
         {
             string rel = assetPath.Substring(prefix.Length).TrimEnd('/');
-            return rel;
+            string extension = Path.GetExtension(rel);
+            return rel.Substring(0, rel.Length - extension.Length);
         }
         return fileName;
     }
@@ -158,9 +160,11 @@ public static class ResourceAssetService
     public static List<ResourceFolderInfo> ListSubfolders(ResType type, string currentFolder)
     {
         var result = new List<ResourceFolderInfo>();
+        if (type == ResType.Video) return result;
         string folder = (currentFolder ?? "").Trim().Trim('/').Replace('\\', '/').Trim('/');
         string prefix = folder.Length == 0 ? "" : folder + "/";
         var subfolders = new Dictionary<string, ResourceFolderInfo>(StringComparer.OrdinalIgnoreCase);
+        var childNames = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
         // 1) 从全部条目的逻辑名派生（含托管 + 文件夹兜底双模式）
         foreach (var item in LoadAssets(type, null))
@@ -184,9 +188,14 @@ public static class ResourceAssetService
                 };
                 subfolders.Add(name, info);
             }
-            // 更深层级计入"子文件夹"存在性
             string after = rest.Substring(slash + 1);
-            if (after.IndexOf('/') >= 0) info.SubfolderCount++;
+            int childSlash = after.IndexOf('/');
+            if (childSlash > 0)
+            {
+                if (!childNames.TryGetValue(name, out var children))
+                    childNames[name] = children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                children.Add(after.Substring(0, childSlash));
+            }
             else if (after.Length > 0) info.ItemCount++;
         }
 
@@ -205,12 +214,20 @@ public static class ResourceAssetService
                         info = new ResourceFolderInfo { Path = prefix + name, Name = name };
                         subfolders.Add(name, info);
                     }
+                    if (!childNames.TryGetValue(name, out var children))
+                        childNames[name] = children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string child in Directory.GetDirectories(sub))
+                        children.Add(Path.GetFileName(child));
                 }
             }
         }
 
+        foreach (var pair in subfolders)
+        {
+            pair.Value.SubfolderCount = childNames.TryGetValue(pair.Key, out var directChildren) ? directChildren.Count : 0;
+        }
         result.AddRange(subfolders.Values);
-        result.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+        result.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name));
         return result;
     }
 
@@ -281,25 +298,28 @@ public static class ResourceAssetService
         }
 
         string category = VNAddressablesRegistrar.GetCategoryKey(type);
-        if (VNAddressablesRegistrar.IsManagedMode && !string.IsNullOrEmpty(category))
+        var settings = VNAddressablesRegistrar.IsManagedMode
+            ? UnityEditor.AddressableAssets.AddressableAssetSettingsDefaultObject.Settings : null;
+        var guids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (settings != null && !string.IsNullOrEmpty(category))
         {
-            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var entry in VNAddressablesRegistrar.GetCategoryEntries(category))
-                paths.Add(entry.AssetPath);
-
-            string folderPath = GetPathFromConfig(type);
-            if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
             {
-                foreach (var guid in AssetDatabase.FindAssets(UIElementBuilder.GetSearchFilter(type), new[] { folderPath }))
-                    paths.Add(AssetDatabase.GUIDToAssetPath(guid));
+                if (string.IsNullOrEmpty(GetLogicalName(entry.address, category))) continue;
+                if (AssetDatabase.GetMainAssetTypeAtPath(entry.AssetPath) == null) continue;
+                guids.Add(entry.guid);
             }
-            return paths.Count;
         }
-
-        // 文件夹模式
-        string path = GetPathFromConfig(type);
-        if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return 0;
-        string filter = UIElementBuilder.GetSearchFilter(type);
-        return AssetDatabase.FindAssets(filter, new[] { path }).Length;
+        string folder = GetPathFromConfig(type);
+        if (!string.IsNullOrEmpty(folder) && AssetDatabase.IsValidFolder(folder))
+        {
+            foreach (string guid in AssetDatabase.FindAssets(UIElementBuilder.GetSearchFilter(type), new[] { folder }))
+            {
+                if (settings != null && (settings.FindAssetEntry(guid) != null
+                    || VNAddressablesRegistrar.IsAutomaticRegistrationSuppressed(guid))) continue;
+                guids.Add(guid);
+            }
+        }
+        return guids.Count;
     }
 }

@@ -36,7 +36,7 @@ public static class VNParticleTemplateCreator
         {
             EditorUtility.DisplayDialog("从模板创建粒子",
                 "内置模板预制体不可用（包内未烘焙且工作区无 snow/rain.prefab）。\n" +
-                "请先在「VNovelizer → VFX → 烘焙内置粒子预制体到包内」烘焙，或手动创建粒子 Prefab。", "确定");
+                "请手动创建粒子 Prefab，或由包开发者重新烘焙包内模板。", "确定");
             return;
         }
 
