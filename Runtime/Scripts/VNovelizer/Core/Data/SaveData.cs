@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using VNovelizer.Core.Theater;
 
 /// <summary>
 /// 存档数据结构
@@ -25,6 +26,11 @@ public class SaveData
     public Dictionary<string, string> StringFlags;
     public Dictionary<string, float> FloatFlags;
     
+    // 【TextActor】文字角色面板状态：累积段落快照 + 粘性正文目标（旧档缺省 null = 无文字角色）
+    public string TextActorSelection;
+    public List<TextActorSaveState> TextActorStates;
+    public bool DialogueHidden;
+
     // 历史记录
     public List<HistoryEntry> HistoryLog;
     

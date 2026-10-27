@@ -18,15 +18,15 @@ using VNovelizer.Core.Weather;
 /// </summary>
 public static class VNVfxRegistryPrefiller
 {
-    /// <summary>包内 Resources 根目录（UPM 包内文件系统路径，ShaderResourcePath 相对此根）</summary>
-    private static string PackageResourcesFolder
+    /// <summary>包内 Resources 根目录（AssetDatabase 资产虚拟路径，ShaderResourcePath 相对此根）</summary>
+    private static string PackageResourcesAssetFolder
     {
         get
         {
             var info = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(VNVfxRegistryPrefiller).Assembly);
-            if (info != null && !string.IsNullOrEmpty(info.resolvedPath))
-                return System.IO.Path.GetFullPath(System.IO.Path.Combine(info.resolvedPath, "Runtime/Resources"));
-            return System.IO.Path.GetFullPath("Packages/com.fakecorps.vnovelizer/Runtime/Resources");
+            string packageName = info != null && !string.IsNullOrEmpty(info.name)
+                ? info.name : "com.fakecorps.vnovelizer";
+            return "Packages/" + packageName + "/Runtime/Resources";
         }
     }
 
@@ -90,7 +90,7 @@ public static class VNVfxRegistryPrefiller
     {
         if (info == null || string.IsNullOrEmpty(info.ShaderResourcePath)) return null;
         // ShaderResourcePath 形如 "FilterShaders/VNFilterFisheye"（相对 Resources 根）
-        string assetPath = System.IO.Path.Combine(PackageResourcesFolder, info.ShaderResourcePath + ".shader").Replace('\\', '/');
+        string assetPath = PackageResourcesAssetFolder + "/" + info.ShaderResourcePath.Replace('\\', '/') + ".shader";
         var shader = AssetDatabase.LoadAssetAtPath<Shader>(assetPath);
         if (shader == null) shader = Shader.Find(info.ShaderName); // 兜底（Shader 数据库已编译实例）
         return shader;

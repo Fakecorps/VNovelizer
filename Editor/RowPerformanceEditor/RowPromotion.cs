@@ -13,7 +13,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         /// <summary>Command 列仅含普通命令——默认演出 + 命令追加（与旧版语义完全一致）</summary>
         Enhanced,
 
-        /// <summary>Command 列含系统命令——模板已实体化，引擎跳过隐式演出</summary>
+        /// <summary>Command 列含演出模板命令——模板已实体化，引擎跳过隐式演出</summary>
         Custom,
     }
 
@@ -34,7 +34,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (string.IsNullOrWhiteSpace(commandColumn)) return RowForm.Normal;
 
-            return CommandManager.ContainsSystemCommand(commandColumn)
+            return CommandManager.ContainsPerformanceTemplateCommand(commandColumn)
                 ? RowForm.Custom
                 : RowForm.Enhanced;
         }
@@ -150,7 +150,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         }
 
         /// <summary>
-        /// 从命令链中剔除系统命令，保留用户命令——「重置回模板」的实现。
+        /// 从命令链中剔除演出模板命令，保留其他命令（包括 hideDialogue）——「重置回模板」的实现。
         /// </summary>
         /// <returns>剔除后的命令链文本（可能为空串 = 退回普通行）</returns>
         public static string StripSystemCommands(string commandChain)
@@ -194,7 +194,7 @@ namespace VNovelizer.Editor.RowPerformanceEditor
         {
             if (node is CommandNode cmd)
             {
-                return CommandManager.IsSystemCommand(cmd.Name) ? null : cmd;
+                return CommandManager.IsPerformanceTemplateCommand(cmd.Name) ? null : cmd;
             }
 
             if (node is SeqNode seq)

@@ -92,12 +92,11 @@ namespace VNovelizer.Core.Commands.SystemCommands
         }
 
         /// <summary>
-        /// 快进预演：对话是纯呈现，无需模拟状态。
-        /// 历史记录由引擎在真实播放时写入，预演不应重复写入。
+        /// 快进预演：重建文字角色段落，不播放打字、语音或重复写入历史。
         /// </summary>
         public override void Simulate(string args)
         {
-            // 无状态副作用，空实现
+            VNManager.GetInstance().SysSimulateDialogue();
         }
     }
 }

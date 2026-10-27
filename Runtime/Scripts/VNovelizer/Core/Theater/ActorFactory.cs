@@ -22,11 +22,17 @@ namespace VNovelizer.Core.Theater
         IActor Create(string actorId, ActorKind kind, ActorAppearance appearance, Transform parent);
     }
 
-    /// <summary>默认工厂：恒产 MeshActor（历史行为）</summary>
+    /// <summary>
+    /// 默认工厂：文字角色外观（appearance.profile 为 TextActorProfile）→ TextActor；
+    /// 其余恒产 MeshActor（历史行为）。Live2D 支持经 L2DActorFactory（继承本类）叠加分派。
+    /// </summary>
     public class DefaultActorFactory : IActorFactory
     {
-        public IActor Create(string actorId, ActorKind kind, ActorAppearance appearance, Transform parent)
+        public virtual IActor Create(string actorId, ActorKind kind, ActorAppearance appearance, Transform parent)
         {
+            if (appearance?.profile is TextActorProfile)
+                return new TextActor(actorId, kind, appearance, parent);
+
             return new MeshActor(actorId, kind, parent);
         }
     }

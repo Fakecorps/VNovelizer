@@ -25,7 +25,7 @@ namespace VNovelizer.L2D.EditorTools
         public string TypeName => "Live2D 角色";
 
         public string TypeDescription =>
-            "动态立绘角色：拖入 SDK 生成的模型 Prefab、表情总表与动作总表，按 ID 配置表情与动作（剧本用 角色ID_表情ID 引用，Command 列用 l2dmotion / l2dexp）。";
+            "动态立绘，拖入 Live2D 模型 Prefab，配置表情与动作。";
 
         public bool IsTypeOf(CharacterProfile profile)
         {

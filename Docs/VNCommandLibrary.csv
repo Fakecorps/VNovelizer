@@ -3,7 +3,8 @@ showbg,showbg(background),background: 背景资源名；留空则引用本行 Ba
 showchar,"showchar(pos, charRef)","pos: 槽位 L/ML/M/MR/R（或全名）
 charRef: 立绘引用 角色#分组#表情；留空则引用本行对应立绘列；空=隐藏该槽（立绘列不继承）",按槽位显示/隐藏立绘,"showchar(M) 或 showchar(M, Amy#JK#Happy)",,,,,,,,,,,,,,,
 showspeaker,showspeaker(),无参数（说话人不可内联，永远引用本行 Speaker / HeadProfile 列）,刷新说话人姓名框与头像,showspeaker(),,,,,,,,,,,,,,,
-showdialogue,showdialogue(mode),mode: direct=瞬间全显且不阻塞；typewriter=逐字打字并阻塞至打完（默认 typewriter）,显示本行对话（正文引用 Text 列，不可内联）,showdialogue(typewriter) 或 showdialogue(direct),,,,,,,,,,,,,,,
+showdialogue,showdialogue(mode),mode: direct=瞬间全显且不阻塞；typewriter=逐字打字并阻塞至打完（默认 typewriter）,显示本行对话（正文引用 Text 列；TextActor 优先接收）,showdialogue(typewriter) 或 showdialogue(direct),,,,,,,,,,,,,,,
+hidedialogue,hidedialogue(),无参数,系统命令：隐藏原对话框姓名框头像；保留输入和文字角色,hidedialogue(),,,,,,,,,,,,,,,
 playbgm,playbgm(bgm),bgm: BGM 资源名；留空则引用本行 BGM 列（空列=继续当前 BGM）。特殊值：stop=停止 / pause=暂停 / resume=恢复,播放 BGM（同名不重播）,playbgm() 或 playbgm(BGM_01),,,,,,,,,,,,,,,
 playvoice,playvoice(voice),voice: 语音资源路径；留空则引用本行 Voice 列解析后取值（含按行 ID 自动生成路径）,播放语音,playvoice() 或 playvoice(voice/1003.mp3),,,,,,,,,,,,,,,
 config,config(key:value),key:value 冒号格式。可用项：voice:true|false、textspeed:秒/字、autospeed:秒/字,运行时修改游戏配置项,config(voice:false),,,,,,,,,,,,,,,
@@ -146,3 +147,7 @@ value: 字符串值；含逗号时用双引号包裹",设置字符串标志,"set
 unlockcg,unlockcg(name),name: CG 画廊条目名（画廊编辑器中登记的名称）,解锁 CG 画廊条目（持久数据，读档快进也生效）,unlockcg(cg_001),,,,,,,,,,,,,,,
 unlockmusic,unlockmusic(name),name: 音乐画廊条目名（画廊编辑器中登记的名称）,解锁音乐画廊条目（持久数据，读档快进也生效）,unlockmusic(bgm_01),,,,,,,,,,,,,,,
 unlockscene,unlockscene(name),name: 场景回想条目名（画廊编辑器中登记的名称）,解锁场景回想条目（持久数据，读档快进也生效）,unlockscene(scene_01),,,,,,,,,,,,,,,
+
+settextactor,settextactor(posID),"posID: 槽位 L/ML/M/MR/R（或全名，或 addChar 注册的自定义 posID）",指定正文写入的文字角色（粘性，多个文字角色在台上时用于消歧，须在 showDialogue 之前）,settextactor(M),,,,,,,,,,,,,,,
+hidetextactor,hidetextactor(posID),"posID: 槽位 L/ML/M/MR/R（或全名，或 addChar 注册的自定义 posID）",隐藏文字角色并清空段落（销毁，下次登台为空面板）,hidetextactor(M),,,,,,,,,,,,,,,
+cleartextactor,cleartextactor(posID),"posID: 槽位 L/ML/M/MR/R（或全名，或 addChar 注册的自定义 posID）",清空文字角色累积段落（保留面板继续接收正文）,cleartextactor(M),,,,,,,,,,,,,,,

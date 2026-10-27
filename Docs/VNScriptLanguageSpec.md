@@ -674,6 +674,23 @@ DSL 底层复用 VNovelizer 现有的 39 个命令（`CommandManager` 注册）�
 
 > 注：当前 CSV 命令实现以槽位 posCode（`L/ML/M/MR/R`）定位立绘；上表以 `charId` 定位是本语言的升级设计（tag 即槽位），两者在转换层兼容。
 
+#### 文字角色（TextActor）
+
+文字角色在角色管理器以「文字角色」类型创建，绑定 UGUI 面板 Prefab（`TextActorView` + `TextContainer` 垂直布局 + 段落模板）。剧本在 Character 列填写角色 ID 登台后，每行 `Text` 以**新增段落**逐字播放到面板（旧段落保留），`Dialogue` 不再更新该行（对话框显隐由用户手动控制）。登台后槽位留空**继续存在**并接收后续正文（与普通立绘「空=隐藏」规则不同），写 `hide` 或 `hideTextActor` 才退场清空。
+
+| 命令 | 语法 | 说明 |
+|------|------|------|
+| `hideDialogue` | `hideDialogue();` | 系统分类的显隐命令：只隐藏原对话框、姓名框与头像，保留输入和正文播放。单独使用不会把该行变成定制行；角色列登台后本行 Text 自动写入文字演员，无需额外 showDialogue |
+| `setTextActor` | `setTextActor(posID);` | 粘性指定正文目标（多个文字角色在台上时用于消歧；须在 `showDialogue` 之前）。定制行当行生效；普通行放在命令列则从下一行起生效 |
+| `hideTextActor` | `hideTextActor(posID);` | 隐藏文字角色并**清空全部段落**（退场销毁；当前打字立即补全；下次登台为空面板） |
+| `clearTextActor` | `clearTextActor(posID);` | 清空累积段落（保留面板与显隐状态，继续接收后续正文；回跳/重播的重复累积由本命令手动清理） |
+
+正文目标规则：唯一可见文字角色自动接收；多个候选且无 `setTextActor` 选择 → 回退 `Dialogue` 并告警。
+
+推荐用法：单个文字角色时，在 Excel 对应 Character 槽位填写该角色 ID、Text 填正文、Command 填 `hideDialogue()`。引擎自动登台并把本行正文追加到 TextActor，随后仅隐藏旧对话框；下一行角色槽位可留空，正文继续累积，无需每行填写 `showDialogue()`。内容直接取解析/本地化后的 Text 数据，不读取旧对话框 TMP 的显示内容。
+
+需要定制时序或多文字目标时，才在显式链中安排 `showChar(PosID) → setTextActor(PosID) → hideDialogue() → showDialogue(typewriter)`。这类含演出模板命令的行由命令链接管，正文只播放一次。
+
 #### 音频
 
 | 命令 | 语法 | 说明 |

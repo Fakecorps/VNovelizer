@@ -47,7 +47,7 @@ public static class CharacterCreateTypeDialog
 
         // 普通角色卡片（固定第一张）
         list.Add(BuildTypeCard("普通立绘角色",
-            "静态立绘角色：分组管理立绘与头像 Sprite，剧本按 角色ID_表情 / 角色ID#分组#表情 引用。",
+            "静态立绘，分组管理立绘与头像 Sprite。",
             null, presenter, overlay));
 
         // 已注册扩展（Live2D 等）

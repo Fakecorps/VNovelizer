@@ -7,13 +7,10 @@ namespace VNovelizer.Core.Commands.Chain
     /// 默认演出模板的生成器——「提升不改变演出」硬契约的**单一信息源**。
     ///
     /// <para>
-    /// 模板结构（决策 tpl）：
+    /// 模板结构：登台初始化结束后，正文与用户命令并行播放。
     /// <code>
-    /// Par {
-    ///     showDialogue(typewriter)                       // 分支 A：对话独立一路
-    ///   &amp; [ showbg() &amp; showChar(L..R) &amp; playBGM() &amp; playVoice()
-    ///       -&gt; 用户命令链 ]                              // 分支 B：瞬时系统命令 → 用户编排
-    /// }
+    /// [showbg() &amp; showChar(L..R) &amp; playBGM() &amp; playVoice()]
+    /// -&gt; [showDialogue(typewriter) &amp; [用户命令链]]
     /// </code>
     /// </para>
     ///
@@ -29,10 +26,9 @@ namespace VNovelizer.Core.Commands.Chain
     /// </para>
     ///
     /// <para>
-    /// <b>为何 showDialogue 必须独立成分支 A</b>：<c>showDialogue(typewriter)</c> 会阻塞
-    /// 至打字机跑完。若把它放进分支 B 的串行链中，<c>playBGM</c> / <c>playVoice</c>
-    /// 与用户命令会被推迟到文本全部打完之后——与引擎隐式路径（打字与 Command 列并行）
-    /// 不符，硬契约当场破裂。隔离到自己的并行分支，阻塞只阻塞自己。
+    /// <b>正文与用户命令保持并行</b>：<c>showDialogue(typewriter)</c> 阻塞到打字结束，
+    /// 不能让用户命令等待正文。角色登台和音频启动放在此前，防止正文在文字演员
+    /// 创建之前路由到旧对话框；初始化完成后两路演出各自独立等待。
     /// </para>
     ///
     /// <para>
@@ -108,12 +104,11 @@ namespace VNovelizer.Core.Commands.Chain
 
             branchB.Append(" & playBGM() & playVoice()");
 
-            // 分支 B 后半：用户编排（对应引擎随后启动的 Command 列协程）
-            if (!string.IsNullOrWhiteSpace(userChain))
-                branchB.Append(" -> ").Append(userChain.Trim());
+            string bootstrap = "[" + branchB + "]";
+            if (string.IsNullOrWhiteSpace(userChain))
+                return bootstrap + " -> showDialogue(typewriter)";
 
-            // 分支 A 与分支 B 并行；分支 B 是 Seq，作为 Par 子项必须加 []
-            return "showDialogue(typewriter) & [" + branchB + "]";
+            return bootstrap + " -> [showDialogue(typewriter) & [" + userChain.Trim() + "]]";
         }
 
         /// <summary>

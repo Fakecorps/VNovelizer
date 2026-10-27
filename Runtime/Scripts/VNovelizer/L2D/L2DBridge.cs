@@ -23,17 +23,19 @@ namespace VNovelizer.L2D
     }
 
     /// <summary>
-    /// 演员工厂：动态立绘外观（appearance.profile 非 SpriteBased）→ L2DActor；
-    /// 其余（背景/特效/静态立绘）→ 默认 MeshActor，保证单槽位立绘 ↔ Live2D 无缝切换。
+    /// 演员工厂：动态立绘外观（appearance.profile 非 SpriteBased 且非 TextActorProfile）
+    /// → L2DActor；其余（背景/特效/静态立绘/文字角色）→ base（DefaultActorFactory）
+    /// 分派——文字角色由核心工厂产出 TextActor，保证单槽位立绘 ↔ Live2D ↔ 文字角色无缝切换。
     /// </summary>
-    public class L2DActorFactory : IActorFactory
+    public class L2DActorFactory : DefaultActorFactory
     {
-        public IActor Create(string actorId, ActorKind kind, ActorAppearance appearance, Transform parent)
+        public override IActor Create(string actorId, ActorKind kind, ActorAppearance appearance, Transform parent)
         {
-            if (appearance != null && appearance.profile != null && !appearance.profile.IsSpriteBased)
+            if (appearance != null && appearance.profile != null &&
+                !appearance.profile.IsSpriteBased && !(appearance.profile is TextActorProfile))
                 return new L2DActor(actorId, kind, appearance, parent);
 
-            return new MeshActor(actorId, kind, parent);
+            return base.Create(actorId, kind, appearance, parent);
         }
     }
 }

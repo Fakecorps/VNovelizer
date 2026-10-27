@@ -64,6 +64,8 @@ public class VNGameplayPanel : BasePanel
     private bool isSkipping = false;
     private bool isTextTyping = false;
     private bool isUIHidden = false;
+    private readonly Dictionary<CanvasGroup, (float alpha, bool blocksRaycasts, bool interactable)> dialogueVisibility =
+        new Dictionary<CanvasGroup, (float alpha, bool blocksRaycasts, bool interactable)>();
     private float textSpeed;
     private float currentBaseSpeed;
     private float autoSpeed;
@@ -190,6 +192,7 @@ public class VNGameplayPanel : BasePanel
         // 【剧场层重构】舞台事件（ChangeBackground / HideBackground / ShowCharacter / HideCharacter）
         // 已改由 TheaterManager 独家消费，面板不再监听，避免 UGUI 与剧场双渲染。
         EventCenter.GetInstance().AddEventListener<Dictionary<string, string>>(VNGameEvents.UpdateHeadProfile, OnUpdateHeadProfile);
+        EventCenter.GetInstance().AddEventListener(VNGameEvents.DisplayAllText, CompleteTextTyping);
         EventCenter.GetInstance().AddEventListener("TextSpeedChanged", OnTextSpeedChanged);
         EventCenter.GetInstance().AddEventListener("AutoSpeedChanged", OnAutoSpeedChanged);
 
@@ -223,6 +226,7 @@ public class VNGameplayPanel : BasePanel
         gameObject.SetActive(true);
         // 确保 Input Actions 已启用（即使 OnEnable 没有被调用，或者面板已经存在）
         EnsureInputActionsEnabled();
+        SetDialogueVisible(!VNManager.GetInstance().IsDialogueHidden);
     }
 
     /// <summary>
@@ -896,6 +900,7 @@ public class VNGameplayPanel : BasePanel
     // 立即完成打字
     private void CompleteTextTyping()
     {
+        if (!isTextTyping && !_typewriterTween.isAlive) return;
         if (_typewriterTween.isAlive)
         {
             _typewriterTween.Complete(); // 这会触发上面的 OnTypewriterComplete
@@ -1133,6 +1138,7 @@ public class VNGameplayPanel : BasePanel
         EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>(VNGameEvents.UpdateDialogue, OnUpdateDialogue);
         // 【剧场层重构】舞台事件已由 TheaterManager 常驻消费，面板不再注销（未注册）
         EventCenter.GetInstance().RemoveEventListener<Dictionary<string, string>>(VNGameEvents.UpdateHeadProfile, OnUpdateHeadProfile);
+        EventCenter.GetInstance().RemoveEventListener(VNGameEvents.DisplayAllText, CompleteTextTyping);
         EventCenter.GetInstance().RemoveEventListener("TextSpeedChanged", OnTextSpeedChanged);
         EventCenter.GetInstance().RemoveEventListener("AutoSpeedChanged", OnAutoSpeedChanged);
 
@@ -1317,6 +1323,45 @@ public class VNGameplayPanel : BasePanel
 
     /// <summary>立即完成当前台词的打字机效果。</summary>
     public void CompleteDialogueTyping() => CompleteTextTyping();
+
+    public void PrepareForTextActor()
+    {
+        if (_typewriterTween.isAlive) _typewriterTween.Stop();
+        isTextTyping = false;
+        HideContinueIcon();
+    }
+
+    public void SetDialogueVisible(bool visible)
+    {
+        if (visible)
+        {
+            foreach (var pair in dialogueVisibility)
+            {
+                if (pair.Key == null) continue;
+                pair.Key.alpha = pair.Value.alpha;
+                pair.Key.blocksRaycasts = pair.Value.blocksRaycasts;
+                pair.Key.interactable = pair.Value.interactable;
+            }
+            dialogueVisibility.Clear();
+            return;
+        }
+
+        HideDialogueGroup(GetDialogueBoxRect());
+        HideDialogueGroup(speakerBox != null ? speakerBox.transform : null);
+        HideDialogueGroup(headProfileTransform);
+    }
+
+    private void HideDialogueGroup(Transform target)
+    {
+        if (target == null) return;
+        var group = target.GetComponent<CanvasGroup>();
+        if (group == null) group = target.gameObject.AddComponent<CanvasGroup>();
+        if (!dialogueVisibility.ContainsKey(group))
+            dialogueVisibility.Add(group, (group.alpha, group.blocksRaycasts, group.interactable));
+        group.alpha = 0f;
+        group.blocksRaycasts = false;
+        group.interactable = false;
+    }
 
     /// <summary>
     /// 获取对话框的 RectTransform（用于震动）

@@ -133,29 +133,54 @@ namespace VNovelizer.Core.Commands
         }
 
         /// <summary>
-        /// 系统命令名集合（小写）。这六个命令构成默认演出模板，
-        /// 是**三层行形态判定**的依据：Command 列含其中任一 → 该行为「定制行」
-        /// （模板已实体化，引擎不再走隐式演出路径）。
-        /// 详见 VNCommandChainSpec.md §11.2。
+        /// 默认演出模板命令（小写）。显式使用这些命令才接管整行演出。
+        /// 系统分类不等于接管：hideDialogue 只改变原对话框显隐，不跳过数据列正文。
         /// </summary>
-        private static readonly HashSet<string> SystemCommandNames = new HashSet<string>
+        private static readonly HashSet<string> PerformanceTemplateCommandNames = new HashSet<string>
         {
             "showbg", "showchar", "showspeaker", "showdialogue", "playbgm", "playvoice"
         };
 
-        /// <summary>命令名是否属于系统命令族（大小写不敏感）。</summary>
+        /// <summary>命令名是否属于系统命令族（大小写不敏感），不用于判定整行演出接管。</summary>
         public static bool IsSystemCommand(string commandName)
         {
+            return IsPerformanceTemplateCommand(commandName) ||
+                   string.Equals(commandName, "hidedialogue", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool IsPerformanceTemplateCommand(string commandName)
+        {
             return !string.IsNullOrEmpty(commandName) &&
-                   SystemCommandNames.Contains(commandName.ToLower());
+                   PerformanceTemplateCommandNames.Contains(commandName.ToLowerInvariant());
         }
 
         /// <summary>
-        /// 判断一段命令链文本中是否含系统命令（三层行形态判定入口）。
+        /// 判断命令链中是否含系统命令；仅表示命令族，不代表整行演出接管。
         /// 复用 <see cref="ChainParser"/> 解析后深度优先展开，因此
         /// <c>&amp;</c> / <c>-&gt;</c> / <c>[]</c> 任意嵌套结构都能正确识别。
         /// </summary>
         public static bool ContainsSystemCommand(string commandString)
+        {
+            return ContainsCommand(commandString, IsSystemCommand);
+        }
+
+        public static bool ContainsPerformanceTemplateCommand(string commandString)
+        {
+            return ContainsCommand(commandString, IsPerformanceTemplateCommand);
+        }
+
+        /// <summary>
+        /// 命令链中是否显式包含 showDialogue。
+        /// 定制行链尾正文兜底（VNManager.EnsureCustomRowTextShown）的防双播判定——
+        /// 链内作者已显式安排正文演出时，引擎不再自动补播。
+        /// </summary>
+        public static bool ContainsShowDialogueCommand(string commandString)
+        {
+            return ContainsCommand(commandString, name =>
+                string.Equals(name, "showdialogue", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool ContainsCommand(string commandString, Func<string, bool> predicate)
         {
             if (string.IsNullOrEmpty(commandString)) return false;
 
@@ -166,7 +191,7 @@ namespace VNovelizer.Core.Commands
             ChainExecutor.CollectCommands(parsed.Root, collected);
             foreach (var node in collected)
             {
-                if (IsSystemCommand(node.Name)) return true;
+                if (predicate(node.Name)) return true;
             }
             return false;
         }
@@ -179,6 +204,7 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new SystemCommands.ShowCharCommand());
             RegisterCommand(new SystemCommands.ShowSpeakerCommand());
             RegisterCommand(new SystemCommands.ShowDialogueCommand());
+            RegisterCommand(new SystemCommands.HideDialogueCommand());
             RegisterCommand(new SystemCommands.PlayBgmCommand());
             RegisterCommand(new SystemCommands.PlayVoiceCommand());
 
@@ -220,6 +246,10 @@ namespace VNovelizer.Core.Commands
             RegisterCommand(new ShowPromptCommand());
             RegisterCommand(new PlayAnimCommand());
             RegisterCommand(new StopAnimCommand());
+            // 【TextActor】文字角色命令族（正文路由目标 / 隐藏清空 / 清空段落）
+            RegisterCommand(new SetTextActorCommand());
+            RegisterCommand(new HideTextActorCommand());
+            RegisterCommand(new ClearTextActorCommand());
 
         }
 
@@ -683,6 +713,13 @@ namespace VNovelizer.Core.Commands
         // [新增] 中断所有命令
         public void InterruptAll()
         {
+            // 0. 【Fix-RefCountSnapshot】必须先快照运行中命令：
+            //    第 1 步 StopCoroutine 会同步 Dispose 分支协程 → ExecuteSingleCommandAsync
+            //    的 finally 立即递减引用计数并移除条目。若像旧实现那样在 Abort 之后再
+            //    快照，链式路径的条目已被清空 → 提前 return → Interrupt() 从不执行，
+            //    被跳过的动画命令停在中间态（快进失效）。
+            var commands = new List<VNCommand>(_runningCommandRefCount.Keys);
+
             // 1. 链式语法：先整树中断
             //    （标记 Aborted 防止分支继续执行后续命令 + StopCoroutine 杀死分支内
             //     wait 等待与串行后续命令——Unity 的 StopCoroutine 不级联杀子协程，
@@ -702,10 +739,11 @@ namespace VNovelizer.Core.Commands
                     ChainExecutor.Abort(extra[i]);
             }
 
-            // 2. 中断当前运行中的命令动画（快进到最终态，避免画面停在中间状态）
-            if (_runningCommandRefCount.Count == 0) return;
+            // 2. 中断快照到的命令动画（快进到最终态，避免画面停在中间状态）。
+            //    Interrupt 对已完成命令幂等（无在途动画时 no-op），因此快照在 Abort
+            //    前多包含的条目无害。
+            if (commands.Count == 0) return;
 
-            var commands = new List<VNCommand>(_runningCommandRefCount.Keys);
             for (int i = commands.Count - 1; i >= 0; i--)
                 commands[i].Interrupt();
 

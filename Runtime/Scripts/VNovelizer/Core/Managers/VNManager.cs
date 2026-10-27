@@ -89,6 +89,17 @@ public class VNManager : BaseManager<VNManager>
     /// <summary>行内瞬态：本行 showDialogue 的显示方式（true=direct 瞬间全显 / false=typewriter 逐字）。
     /// 由 SysShowDialogue 写入、PlayCurrentLine 行首重置；addDlg 据此决定追加文本的显示方式。</summary>
     private bool currentDialogueDirectMode = false;
+    private bool _dialogueHidden;
+    public bool IsDialogueHidden => _dialogueHidden;
+
+    /// <summary>
+    /// 【同行幂等守卫 2026-10-27】本行播放内已广播到旧对话框的正文标识（"剧本|行ID"）。
+    /// 同一行内多次 showDialogue（或隐式路径+显式 showDialogue）第二次广播直接跳过——
+    /// 面板 OnUpdateDialogue 无幂等性，重复广播会停掉当前打字并把 maxVisibleCharacters
+    /// 重置为 0 从头再播（表现即"正文播放到一半突然清空又重播一遍"）。
+    /// 每行播放起始复位；场景切换面板重建时复位后重新广播；回跳/换行键不同自然重播。
+    /// </summary>
+    private string _lastBoxDialogueLineKey;
     
     // 【新增】回放模式相关变量
     private bool isReplayMode = false;
@@ -126,6 +137,9 @@ public class VNManager : BaseManager<VNManager>
 
     // [Confirm 出口] 当前行 @Confirm: 出口段是否已被消费（防止出口被打断后重复执行；进入新行时复位）
     private bool _confirmExitConsumed;
+
+    // 【TextActor】粘性正文目标（PosID；settextactor 设置，目标消失时自动失效）
+    private string _textActorSelection;
 
     public VNManager()
     {
@@ -215,6 +229,9 @@ public class VNManager : BaseManager<VNManager>
             if (CurrentLineIndex >= 0 && CurrentLineIndex < StoryLines.Count)
             {
                 var line = StoryLines[CurrentLineIndex];
+                // 【同行幂等守卫】面板已重建（文本框为空）：必须复位标记重新广播，
+                // 否则同行守卫会把恢复广播误判为重复而跳过，导致正文缺失。
+                _lastBoxDialogueLineKey = null;
                 UpdateDialogue(line, ResolveLine(line));
             }
         });
@@ -349,6 +366,8 @@ public class VNManager : BaseManager<VNManager>
         // 与 lastLine 同一语义组：剧本卸载后系统命令不应再读到已失效的行数据
         CurrentLineContext = null;
         autoSaveLineCounter = 0; // 新剧本/预演重置行数计数，避免跨剧本残留计数
+        _textActorSelection = null;
+        SetDialogueHidden(false);
     }
     
     /// <summary>
@@ -439,6 +458,7 @@ public class VNManager : BaseManager<VNManager>
         // R14：快进/读档/跳行/换剧本重放前清空自由角色——随后 addChar 行会被重新 Simulate 注册。
         // 否则"跳行目标之前没有 addChar"时，上一段剧情注册的自由角色会残留污染状态。
         TheaterManager.GetInstance().ClearFreeChars();
+        TheaterManager.GetInstance().RemoveAllTextActors();
         if (targetIndex <= 0)
         {
             // 无预演内容：按"重建结果为空"处理 BGM（等价于旧版 ResetState 内 StopBGM 的语义，
@@ -492,6 +512,10 @@ public class VNManager : BaseManager<VNManager>
                     CommandManager.GetInstance().SimulateCommands(otherCommands);
                 }
 
+                // 【TextActor 链尾正文兜底】choice 停靠行同样补建正文段落（与主循环一致）
+                if (IsCustomPerformanceRow(line))
+                    EnsureCustomRowTextShown(line, direct: true, simulate: true);
+
                 // [Flag 扩展] choice 行的其它命令触发跳转/跨剧本切换时，跳转优先于停止
                 if (PendingScriptSwitch != null && TryApplyPendingScriptSwitch(visited, out bool switchResult))
                 {
@@ -541,6 +565,11 @@ public class VNManager : BaseManager<VNManager>
             {
                 CommandManager.GetInstance().SimulateCommands(line.Command);
             }
+
+            // 【TextActor 链尾正文兜底】快进预演与执行路径同语义：定制行链内无 showDialogue
+            // 且文字角色已由 showChar.Simulate 登台时，补建该行段落（否则跳转后累积正文缺失）。
+            if (IsCustomPerformanceRow(line))
+                EnsureCustomRowTextShown(line, direct: true, simulate: true);
 
             // [Flag 扩展] 跨剧本切换优先：切换数据源后重定向预演（内层递归完成后其后处理已执行）
             if (PendingScriptSwitch != null && TryApplyPendingScriptSwitch(visited, out bool scriptSwitchResult))
@@ -703,6 +732,19 @@ public class VNManager : BaseManager<VNManager>
     {
         string normalizedPos = pos;
         string normalizedPosCode = NormalizePositionCode(pos);
+        var theater = TheaterManager.GetInstance();
+        var existingTextActor = theater.GetTextActor(normalizedPosCode);
+        if (string.IsNullOrEmpty(data) && existingTextActor != null) return;
+        if (!string.IsNullOrEmpty(data) && data != "hide")
+        {
+            var profile = CharacterResManager.GetInstance().TryGetCharacterProfile(data.Split('#')[0].Trim());
+            if (profile is TextActorProfile)
+            {
+                UpdateCharacter(pos, data);
+                return;
+            }
+        }
+        if (existingTextActor != null) theater.RemoveActor(normalizedPosCode);
 
         // 空槽：清除该位置（与运行时「空=隐藏」一致，避免快进后仍保留旧立绘状态）
         if (string.IsNullOrEmpty(data))
@@ -766,6 +808,12 @@ public class VNManager : BaseManager<VNManager>
 
     public void SetScriptData(List<StoryLine> lines, Dictionary<string, int> idMap, string scriptName)
     {
+        // 【TextActor】换剧本/读档/重开剧本的统一入口：文字角色随剧场清空（决策⑧），
+        // 旧剧本的累积段落不跨剧本残留；普通立绘仍由槽位空值规则逐行清场。
+        TheaterManager.GetInstance().RemoveAllTextActors();
+        _textActorSelection = null;
+        SetDialogueHidden(false);
+
         this.StoryLines = lines;
         this.LineIDIndexMap = idMap;
         this.CurrentLineIndex = 0;
@@ -928,6 +976,10 @@ public class VNManager : BaseManager<VNManager>
             UpdateCharacter(kvp.Key, kvp.Value);
         }
 
+        // 【TextActor】恢复文字角色段落与粘性目标（在立绘重建之后、目标行播放之前；
+        // 目标行正文由 TextActor 的重复守卫保证不二次追加）
+        RestoreTextActorState(saveData);
+
         // 恢复特效（在UI准备好后）
         // 【Fix-2】未遇 choice 时 FastForwardToLine 末尾已逐个 RestoreEffect，
         // 此处只补 choice 场景——否则同名特效双重恢复（PlayParticle 的异步去重
@@ -983,6 +1035,9 @@ public class VNManager : BaseManager<VNManager>
 
         // [addDlg] 进入新行：本行 showDialogue 显示方式重置为默认 typewriter（隐式路径语义）
         currentDialogueDirectMode = false;
+
+        // 【同行幂等守卫】进入新行：上一行正文广播标记复位（只跳过"同一行内"的重复 showDialogue）
+        _lastBoxDialogueLineKey = null;
 
         var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
@@ -1256,6 +1311,9 @@ public class VNManager : BaseManager<VNManager>
         // [addDlg] 进入新行：本行 showDialogue 显示方式重置为默认 typewriter（隐式路径语义）
         currentDialogueDirectMode = false;
 
+        // 【同行幂等守卫】进入新行：上一行正文广播标记复位（只跳过"同一行内"的重复 showDialogue）
+        _lastBoxDialogueLineKey = null;
+
         var resolved = ResolveLine(currentLine);
         lastLine = currentLine;
         SetLineContextForPlay(currentLine, resolved);
@@ -1291,6 +1349,8 @@ public class VNManager : BaseManager<VNManager>
             if (isCustomRow)
             {
                 CommandManager.GetInstance().ExecuteCommandsInstant(currentLine.Command);
+                // 【TextActor 链尾正文兜底】skip/快进落地：链内无 showDialogue 时补显一次（瞬间全显）
+                EnsureCustomRowTextShown(currentLine, direct: true, simulate: false);
                 EventCenter.GetInstance().EventTrigger(VNGameEvents.DisplayAllText);
             }
             else
@@ -1313,7 +1373,7 @@ public class VNManager : BaseManager<VNManager>
 
     /// <summary>
     /// 行形态判定缓存：key = StoryLine 引用，value = 是否定制行。
-    /// <c>ContainsSystemCommand</c> 需要跑 ChainParser，每行播放都解析一次不可接受
+    /// <c>ContainsPerformanceTemplateCommand</c> 需要跑 ChainParser，每行播放都解析一次不可接受
     /// （jump 回跳、AutoPlay 连播会反复经过同一行）。
     /// StoryLine 在剧本生命周期内是稳定引用，故可直接作键；
     /// 换剧本时 <c>SetScriptData</c> 会清空本缓存。
@@ -1321,7 +1381,7 @@ public class VNManager : BaseManager<VNManager>
     private readonly Dictionary<StoryLine, bool> _customRowCache = new Dictionary<StoryLine, bool>();
 
     /// <summary>
-    /// 该行是否为「定制行」——Command 列含系统命令，意味着默认演出模板已被实体化，
+    /// 该行是否为「定制行」——Command 列含演出模板命令，意味着默认演出模板已被实体化，
     /// 引擎不应再播放隐式演出（否则与命令链重复执行，画面闪烁/音频重播）。
     ///
     /// <para>
@@ -1337,7 +1397,7 @@ public class VNManager : BaseManager<VNManager>
 
         if (_customRowCache.TryGetValue(line, out bool cached)) return cached;
 
-        bool isCustom = CommandManager.ContainsSystemCommand(line.Command);
+        bool isCustom = CommandManager.ContainsPerformanceTemplateCommand(line.Command);
         _customRowCache[line] = isCustom;
         return isCustom;
     }
@@ -1550,6 +1610,7 @@ public class VNManager : BaseManager<VNManager>
             charMidRight: line.CharMid_Right,
             charRight: line.CharRight,
             isSimulating: true);
+        if (!IsCustomPerformanceRow(line)) SysSimulateDialogue();
     }
 
     private void UpdateVisualState(ResolvedLine line)
@@ -1597,6 +1658,15 @@ public class VNManager : BaseManager<VNManager>
         // 空槽与 hide 等价：不继承上一行立绘，必须每行显式填写才会显示
         if (string.IsNullOrEmpty(charData) || charData == "hide")
         {
+            // 【TextActor】文字角色跨行继承：槽位留空时继续存在并接收后续正文
+            // （与普通立绘「空=隐藏」规则不同）；显式写 hide 才退场销毁并清空全部段落。
+            if (string.IsNullOrEmpty(charData))
+            {
+                string posCode = TheaterManager.NormalizePosCode(position);
+                if (posCode != null && TheaterManager.GetInstance().GetTextActor(posCode) != null)
+                    return; // 留空继承：保留面板与段落
+            }
+
             EventCenter.GetInstance().EventTrigger(VNGameEvents.HideCharacter, position);
             this.currentCharacters.Remove(position);
             // 隐藏时不清除翻转状态，保持状态以便后续恢复
@@ -1696,7 +1766,7 @@ public class VNManager : BaseManager<VNManager>
             Debug.LogWarning($"[VNManager] 无效的语音路径: {voicePath}");
     }
 
-    private void UpdateDialogue(StoryLine currentLine, ResolvedLine line)
+    private void UpdateDialogue(StoryLine currentLine, ResolvedLine line, bool direct = false)
     {
         string finalSpeaker = line.Speaker;
         string finalText = line.Text;
@@ -1709,9 +1779,42 @@ public class VNManager : BaseManager<VNManager>
             finalText = VNLocalizationService.GetText(currentScriptName, currentLine.ID, currentLine.Text);
         }
 
+        // 【TextActor】可见文字角色接管本行正文：Dialogue 不更新该行（对话框显隐由用户手动控制）。
+        // 打字阻塞与 Dialogue 共用同一信号：逐字播放时保持 isTextDisplaying，
+        // 完成/补全由 TextActor 广播 TypingFinished 释放；瞬间完成（direct/已在面板上）不置位。
+        TextActor textTarget = ResolveTextActorTarget();
+        if (textTarget != null)
+        {
+            var record = new TextActorParagraph
+            {
+                ScriptName = currentScriptName,
+                LineId = currentLine.ID,
+                Speaker = finalSpeaker,
+                Text = finalText
+            };
+            UIManager.GetInstance().Get<VNGameplayPanel>()?.PrepareForTextActor();
+            isTextDisplaying = textTarget.AppendParagraph(record, direct);
+            AddHistoryEntry(finalSpeaker, finalText, line.Voice);
+            return;
+        }
+
+        // 【同行幂等守卫】本行播放内重复广播同一行正文 → 跳过（不重播、不清空当前打字）。
+        // 仍补 SetDialogueHidden(false)：保持"showDialogue=显示对话框"语义（面板文本原样保留）。
+        string dialogueLineKey = currentScriptName + "|" + currentLine.ID;
+        if (string.Equals(dialogueLineKey, _lastBoxDialogueLineKey, StringComparison.Ordinal))
+        {
+            SetDialogueHidden(false);
+            return;
+        }
+        _lastBoxDialogueLineKey = dialogueLineKey;
+
+        SetDialogueHidden(false);
         _dialogueEventScratch.Clear();
         _dialogueEventScratch[VNGameEvents.KeySpeaker] = finalSpeaker;
         _dialogueEventScratch[VNGameEvents.KeyText] = finalText;
+        // 【Fix-TextEmpty】先置 busy 再广播：面板空文本/瞬时完成会同步触发 TypingFinished
+        // 复位 isTextDisplaying，若广播后再置位会把已复位状态覆盖成 true 导致永久卡行。
+        isTextDisplaying = true;
         EventCenter.GetInstance().EventTrigger(VNGameEvents.UpdateDialogue, _dialogueEventScratch);
 
         _headProfileEventScratch.Clear();
@@ -1719,8 +1822,92 @@ public class VNManager : BaseManager<VNManager>
         _headProfileEventScratch[VNGameEvents.KeySpeaker] = finalSpeaker;
         EventCenter.GetInstance().EventTrigger(VNGameEvents.UpdateHeadProfile, _headProfileEventScratch);
 
-        isTextDisplaying = true;
         AddHistoryEntry(finalSpeaker, finalText, line.Voice);
+    }
+
+    /// <summary>
+    /// 【TextActor】解析本行正文目标：粘性选择（setTextActor）优先；无选择时唯一可见
+    /// 文字角色自动接收；多个候选且无选择 → 回退 Dialogue 并告警（不猜测、不阻塞）。
+    /// </summary>
+    private TextActor ResolveTextActorTarget()
+    {
+        var theater = TheaterManager.GetInstance();
+
+        if (!string.IsNullOrEmpty(_textActorSelection))
+        {
+            var sticky = theater.GetTextActor(_textActorSelection);
+            if (sticky != null && sticky.IsVisible()) return sticky;
+            _textActorSelection = null; // 目标已隐藏/移除：选择自动失效
+        }
+
+        var candidates = theater.GetVisibleTextActors();
+        if (candidates.Count == 1) return candidates[0];
+        if (candidates.Count > 1)
+            Debug.LogWarning("[VNManager] 多个文字角色在台上且未用 setTextActor(PosID) 指定目标，本行正文回退 Dialogue");
+        return null;
+    }
+
+    /// <summary>
+    /// 【TextActor】setTextActor 命令入口：粘性指定正文目标（持续到再次调用或目标消失）。
+    /// 目标必须为当前显示中的文字角色，否则告警且保持原选择不变。
+    /// </summary>
+    public bool SetTextActorSelection(string posID)
+    {
+        string posCode = TheaterManager.NormalizePosCode(posID);
+        if (posCode == null)
+        {
+            Debug.LogWarning($"[VNManager] setTextActor: 未知槽位/PosID \"{posID}\"");
+            return false;
+        }
+
+        var target = TheaterManager.GetInstance().GetTextActor(posCode);
+        if (target == null || !target.IsVisible())
+        {
+            Debug.LogWarning($"[VNManager] setTextActor: 槽位 {posCode} 当前没有显示中的文字角色，目标保持不变");
+            return false;
+        }
+
+        _textActorSelection = posCode;
+        VNDebug.LogVerbose($"[VNManager] 正文目标已指定: {posCode}");
+        return true;
+    }
+
+    /// <summary>【TextActor】文字角色被移除（hideTextActor 等）时清理粘性选择</summary>
+    public void NotifyTextActorRemoved(string posCode, bool forgetCharacter = true)
+    {
+        if (string.Equals(_textActorSelection, posCode, StringComparison.OrdinalIgnoreCase))
+            _textActorSelection = null;
+        if (!forgetCharacter) return;
+        foreach (string key in new List<string>(currentCharacters.Keys))
+        {
+            if (string.Equals(NormalizePositionCode(key), posCode, StringComparison.OrdinalIgnoreCase))
+                currentCharacters.Remove(key);
+        }
+    }
+
+    /// <summary>【TextActor】读档恢复：按快照重建文字演员段落与粘性目标（目标行由去重守卫保证不重复追加）</summary>
+    private void RestoreTextActorState(SaveData saveData)
+    {
+        _textActorSelection = null;
+        if (saveData == null) return;
+        SetDialogueHidden(saveData.DialogueHidden);
+
+        var theater = TheaterManager.GetInstance();
+        if (saveData.TextActorStates != null)
+        {
+            foreach (var state in saveData.TextActorStates)
+            {
+                if (state == null || string.IsNullOrEmpty(state.ActorId)) continue;
+                theater.GetTextActor(state.ActorId)?.RestoreParagraphs(state.Paragraphs);
+            }
+        }
+
+        if (!string.IsNullOrEmpty(saveData.TextActorSelection))
+        {
+            var target = theater.GetTextActor(saveData.TextActorSelection);
+            if (target != null && target.IsVisible())
+                _textActorSelection = saveData.TextActorSelection;
+        }
     }
 
     // ===================== 系统命令族复用入口 =====================
@@ -1742,10 +1929,71 @@ public class VNManager : BaseManager<VNManager>
         currentDialogueDirectMode = direct;
 
         StoryLine line = StoryLines[CurrentLineIndex];
-        UpdateDialogue(line, ResolveLine(line));
+        UpdateDialogue(line, ResolveLine(line), direct);
 
         if (direct)
             EventCenter.GetInstance().EventTrigger(VNGameEvents.DisplayAllText);
+    }
+
+    public void SysSimulateDialogue()
+    {
+        if (lastLine == null) return;
+        var target = ResolveTextActorTarget();
+        if (target == null)
+        {
+            SetDialogueHidden(false);
+            return;
+        }
+        var line = ResolveLine(lastLine);
+        bool localized = VNLocalizationService.IsEnabled();
+        target.AppendParagraph(new TextActorParagraph
+        {
+            ScriptName = currentScriptName,
+            LineId = lastLine.ID,
+            Speaker = localized ? VNLocalizationService.GetSpeaker(currentScriptName, lastLine.ID, lastLine.Speaker) : line.Speaker,
+            Text = localized ? VNLocalizationService.GetText(currentScriptName, lastLine.ID, lastLine.Text) : line.Text
+        }, direct: true);
+    }
+
+    public void SysHideDialogue()
+    {
+        SetDialogueHidden(true);
+    }
+
+    /// <summary>
+    /// 【TextActor 链尾正文兜底 2026-10-27】
+    /// 定制行的演出全权交给命令链，但正文（Text 列）是"内容"而非"编排"——
+    /// 作者没在链里写 showDialogue 时正文不应消失；链内已显式 showDialogue 时也不再自动补播（防双播）。
+    ///
+    /// <para>
+    /// 进入段链执行完毕后（或快进 Simulate 之后）调用，三层门控：
+    /// <list type="bullet">
+    /// <item>仅定制行（普通/增强行已由引擎隐式路径显示过正文）；</item>
+    /// <item>链内不含 showDialogue（含则作者已显式编排，双触发由 AppendParagraph 幂等守卫兜底）；</item>
+    /// <item>仅当能解析到可见文字角色——不触碰旧对话框，尊重 hideDialogue 的显式意图。</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    /// <param name="line">目标行</param>
+    /// <param name="direct">true = 瞬间全显（skip/快进）；false = 逐字打字</param>
+    /// <param name="simulate">true = 快进预演路径（建段落不播打字/不写历史）；false = 执行路径</param>
+    private void EnsureCustomRowTextShown(StoryLine line, bool direct, bool simulate)
+    {
+        if (line == null || string.IsNullOrEmpty(line.Text)) return;
+        if (string.IsNullOrEmpty(line.Command) || !IsCustomPerformanceRow(line)) return;
+        if (CommandManager.ContainsShowDialogueCommand(line.Command)) return;
+        if (ResolveTextActorTarget() == null) return;
+
+        if (simulate)
+            SysSimulateDialogue();
+        else
+            UpdateDialogue(line, ResolveLine(line), direct);
+    }
+
+    private void SetDialogueHidden(bool hidden)
+    {
+        _dialogueHidden = hidden;
+        UIManager.GetInstance().Get<VNGameplayPanel>()?.SetDialogueVisible(!hidden);
     }
 
     /// <summary>
@@ -1889,6 +2137,9 @@ public class VNManager : BaseManager<VNManager>
         UpdateVisualState(resolved);
         UpdateCharacterSlots(line);
         UpdateAudioState(resolved);
+        // 【同行幂等守卫】测试录制路径强制复位：录制需要完整重播隐式演出事件，
+        // 否则同行重复录制时 UpdateDialogue 会被守卫跳过、录制结果不一致。
+        _lastBoxDialogueLineKey = null;
         UpdateDialogue(line, resolved);
     }
 
@@ -1946,6 +2197,11 @@ public class VNManager : BaseManager<VNManager>
         // [Flag 扩展] 经 FlagService 导出快照（Save 作用域 + 兼容模式全量；Global 作用域不进存档）
         FlagService.GetInstance().ExportForSave(saveData);
         saveData.ActiveEffects = new List<string>(this.activeEffects); // 保存特效
+
+        // 【TextActor】文字角色面板状态（累积段落 + 粘性正文目标）
+        saveData.DialogueHidden = _dialogueHidden;
+        saveData.TextActorSelection = this._textActorSelection;
+        saveData.TextActorStates = TheaterManager.GetInstance().ExportTextActorStates();
 
         // 保存历史记录
         List<HistoryEntry> historyLog = GlobalDataManager.GetInstance().GetHistoryLog();
@@ -2644,6 +2900,11 @@ public class VNManager : BaseManager<VNManager>
 
         yield return CommandManager.GetInstance().ExecuteCommandsAsync(actionString);
 
+        // 【TextActor 链尾正文兜底】定制行若没写 showDialogue，链跑完后补显本行正文一次
+        // （链已跳转则交给新行的播放逻辑，不在此补）。
+        if (CurrentLineIndex == preIndex && CurrentLineIndex >= 0 && CurrentLineIndex < StoryLines.Count)
+            EnsureCustomRowTextShown(StoryLines[CurrentLineIndex], direct: false, simulate: false);
+
         _flowCoroutine = null;
 
         AdvanceAfterEntryDone(preIndex);
@@ -2748,6 +3009,11 @@ public class VNManager : BaseManager<VNManager>
                     CommandManager.GetInstance().UnregisterActiveChain(ctx);
                 }
             }
+
+            // 【TextActor 链尾正文兜底】重播的进入段同样补显正文（链内无 showDialogue 且文字角色已登台时）；
+            // 链内已显式 showDialogue 的重复触发由 AppendParagraph 幂等守卫吸收。
+            if (CurrentLineIndex == preIndex)
+                EnsureCustomRowTextShown(line, direct: false, simulate: false);
 
             _flowCoroutine = null;
             AdvanceAfterEntryDone(preIndex);

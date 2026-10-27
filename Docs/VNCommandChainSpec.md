@@ -520,7 +520,7 @@ shake(screen, 0.3) -> wait(0.5) -> showprompt("注意！")
 
 #### 11.2.1 已落地实现（2026-08-26）
 
-**判定入口**：`VNManager.IsCustomPerformanceRow(line)` → `CommandManager.ContainsSystemCommand()`。
+**判定入口**：`VNManager.IsCustomPerformanceRow(line)` → `CommandManager.ContainsPerformanceTemplateCommand()`。系统分类和默认演出接管分离：`hideDialogue` 是系统命令，但不接管整行演出，不跳过角色登台或正文播放。
 带缓存（`Dictionary<StoryLine, bool>`）——判定要跑 `ChainParser`，而 jump 回跳 / AutoPlay 连播会反复经过同一行；`StoryLine` 在剧本生命周期内是稳定引用，故可直接作键，`SetScriptData` 时清空（防跨剧本累积泄漏）。
 
 **四个分流点**：
@@ -640,7 +640,7 @@ Par {
 | `showbg` / `playBGM` / `playVoice` | **跳过**（不动当前状态） | Background / BGM 是框架**唯二的继承列**，"空格 = 继续" |
 | `showChar` | **隐藏该槽** | 立绘列**不继承**，"空格 = 隐藏"是框架既定规则 |
 
-**三层行形态判定入口**：`CommandManager.IsSystemCommand(name)` / `ContainsSystemCommand(commandString)`。后者复用 `ChainParser` 解析 + 深度优先展开，因此 `&` / `->` / `[]` 任意嵌套都能正确识别。
+**三层行形态判定入口**：`CommandManager.IsPerformanceTemplateCommand(name)` / `ContainsPerformanceTemplateCommand(commandString)`。后者复用 `ChainParser` 解析 + 深度优先展开，因此 `&` / `->` / `[]` 任意嵌套都能正确识别。`IsSystemCommand` / `ContainsSystemCommand` 只表示系统命令族，包含 `hideDialogue`，不用于判定定制行。
 
 **`showDialogue` 阻塞的中断安全性**（已核实 `VNManager.cs:1013-1039`）：
 

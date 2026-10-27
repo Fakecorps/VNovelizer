@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 using VNovelizer.Core.Compat;
 using VNovelizer.Core.Diagnostics;
 
@@ -62,6 +63,9 @@ namespace VNovelizer.Core.Theater
         private Transform _root;
         private Transform _actorsRoot;
 
+        /// <summary>文字角色（TextActor）专用 UGUI 根（Canvas），随剧场常驻</summary>
+        private RectTransform _textActorRoot;
+
         /// <summary>
         /// 演员工厂（可插拔）。默认 MeshActor 工厂；插件内 Live2D 支持经
         /// L2DBridge 替换——按 appearance.profile 是否为动态立绘返回 L2DActor。
@@ -111,6 +115,8 @@ namespace VNovelizer.Core.Theater
             actorsGo.transform.SetParent(_root, false);
             _actorsRoot = actorsGo.transform;
 
+            EnsureTextActorCanvas();
+
             // 自定义场景相机预制体（可预挂后处理组件），留空使用默认相机
             GameObject customCam = null;
             if (VNProjectConfig.Instance != null)
@@ -123,6 +129,48 @@ namespace VNovelizer.Core.Theater
 
             Debug.Log("[TheaterManager] 剧场初始化完成（事件已接管：ShowCharacter/HideCharacter/ChangeBackground/HideBackground）");
         }
+
+        #region 文字角色（TextActor）UGUI 根
+
+        /// <summary>
+        /// 文字角色面板挂载的 Canvas 根（懒创建 + 剧场常驻）。
+        /// 排序带取 Scene(10) 与 Overlay(20) 之间：正文面板压过场景演出，让位给暂停/选项等覆盖层。
+        /// </summary>
+        public RectTransform TextActorRoot
+        {
+            get
+            {
+                if (_textActorRoot == null) EnsureTextActorCanvas();
+                return _textActorRoot;
+            }
+        }
+
+        private void EnsureTextActorCanvas()
+        {
+            if (_root == null) Init();
+            if (_textActorRoot != null) return;
+
+            var go = new GameObject("TextActorCanvas", typeof(RectTransform));
+            Object.DontDestroyOnLoad(go);
+            go.transform.SetParent(_root, false);
+
+            var canvas = go.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = (int)EUILayer.Scene + 5;
+
+            var scaler = go.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(ReferenceWidth, ReferenceHeight);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
+
+            // 面板默认不拦截点击（段落实例 raycastTarget=false）；用户自建按钮仍可交互
+            go.AddComponent<GraphicRaycaster>();
+
+            _textActorRoot = go.GetComponent<RectTransform>();
+        }
+
+        #endregion
 
         #region 事件消费（接管 VNGameplayPanel 的舞台渲染职责）
 
@@ -677,6 +725,7 @@ namespace VNovelizer.Core.Theater
         {
             if (_actors.TryGetValue(actorId, out var old) && old != null)
             {
+                if (old is TextActor) VNManager.GetInstance().NotifyTextActorRemoved(actorId, forgetCharacter: false);
                 old.Interrupt();
                 old.Dispose();
             }
@@ -728,12 +777,59 @@ namespace VNovelizer.Core.Theater
 
         public bool Contains(string actorId) => _states.ContainsKey(actorId);
 
+        /// <summary>取文字演员（不存在/非文字演员返回 null）</summary>
+        public TextActor GetTextActor(string actorId)
+        {
+            return GetActor(actorId) as TextActor;
+        }
+
+        /// <summary>台上全部可见文字演员（正文路由候选，与状态字典序一致）</summary>
+        public List<TextActor> GetVisibleTextActors()
+        {
+            var result = new List<TextActor>();
+            foreach (var pair in _states)
+            {
+                if (pair.Value == null || pair.Value.kind != ActorKind.Character || !pair.Value.visible) continue;
+                var actor = GetActor(pair.Key) as TextActor;
+                if (actor != null && actor.IsVisible()) result.Add(actor);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 移除全部文字角色（换剧本/重开剧本时调用；段落随面板销毁，决策⑧「随剧场清空」）。
+        /// 普通立绘/背景不受影响。
+        /// </summary>
+        public void RemoveAllTextActors()
+        {
+            foreach (var key in new List<string>(_actors.Keys))
+            {
+                if (_actors[key] is TextActor) RemoveActor(key);
+            }
+        }
+
+        /// <summary>导出全部文字演员的段落快照（供存档；只收仍有效的文字演员）</summary>
+        public List<TextActorSaveState> ExportTextActorStates()
+        {
+            var result = new List<TextActorSaveState>();
+            foreach (var pair in _actors)
+            {
+                var textActor = pair.Value as TextActor;
+                if (textActor == null || !textActor.IsValid) continue;
+                var state = new TextActorSaveState { ActorId = pair.Key };
+                state.Paragraphs.AddRange(textActor.Paragraphs);
+                result.Add(state);
+            }
+            return result;
+        }
+
         /// <summary>移除演员（状态与渲染对象一并清除）</summary>
         public void RemoveActor(string actorId)
         {
             CancelActorShake(actorId);
             if (_actors.TryGetValue(actorId, out var actor))
             {
+                if (actor is TextActor) VNManager.GetInstance().NotifyTextActorRemoved(actorId);
                 actor?.Interrupt();
                 actor?.Dispose();
                 _actors.Remove(actorId);
