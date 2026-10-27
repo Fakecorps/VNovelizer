@@ -1,6 +1,7 @@
 ﻿using UnityEditor;
 using UnityEngine;
 using System.IO;
+using VNovelizer.Editor.Bootstrap;
 
 /// <summary>
 /// 一键初始化向导（零 Assets 写入，见 Docs/VNResourceProviderRefactoring.md）。
@@ -8,7 +9,7 @@ using System.IO;
 /// 原则：不向 Assets 写入任何内容，除非用户自己创建。全部职责：
 /// - Addressables 注册（GUID 寻址，零复制）：新项目注册包内默认资源；
 ///   存量项目注册旧目录用户副本（不复制/不移动/不修改任何文件）；
-/// - 引擎依赖配置：PrimeTween scoped registry、TMP Essential Resources、Input System Both 模式；
+/// - 引擎配置：TMP Essential Resources、Input System Both 模式；PrimeTween 由独立引导自动安装；
 /// - 引导说明（配置/画廊容器/游戏入口均为"首次使用时自动出现"）。
 ///
 /// 用户侧资产均为按需自动生成（不预创建）：
@@ -18,30 +19,20 @@ using System.IO;
 /// </summary>
 public class VNovelizerSetup : EditorWindow
 {
-    private static bool isPrimeTweenInstalled = false;
-
     // priority=1 置于 VNovelizer 菜单最顶部（其余编辑器工具从 16 起）
     [MenuItem("VNovelizer/一键初始化 (Setup Wizard)", false, 1)]
     public static void ShowWindow()
     {
-        CheckDependencies();
+        if (!VNDependencyBootstrap.IsReady)
+        {
+            VNDependencyBootstrap.ShowStatusWindow();
+            return;
+        }
         GetWindow<VNovelizerSetup>("项目初始化");
-    }
-
-    private static void CheckDependencies()
-    {
-        System.Type type = System.Type.GetType("PrimeTween.Tween, PrimeTween");
-        if (type == null) type = System.Type.GetType("PrimeTween.Tween, com.kyrylokuzyk.primetween");
-        isPrimeTweenInstalled = (type != null);
     }
 
     private void OnGUI()
     {
-        if (!isPrimeTweenInstalled)
-        {
-            //EditorGUILayout.HelpBox("警告：缺少核心依赖 PrimeTween。请查看文档手动安装。", MessageType.Warning);
-        }
-
         GUILayout.Label("欢迎使用 VNovelizer！", EditorStyles.boldLabel);
         GUILayout.Space(10);
 
@@ -55,7 +46,7 @@ public class VNovelizerSetup : EditorWindow
         GUILayout.Space(4);
         GUILayout.Label("初始化内容（零 Assets 写入）：\n" +
             "• 包内默认资源注册进 Addressables（不复制任何文件）\n" +
-            "• 配置包依赖（PrimeTween / TMP / Input System）\n\n" +
+            "• 配置 TMP Essential Resources / Input System（PrimeTween 已自动安装）\n\n" +
             "其余一切按需自动出现（无需初始化）：\n" +
             "• 项目配置：首次打开 Edit → Project Settings → VNovelizer 时创建\n" +
             "• 画廊数据容器：首次打开画廊编辑器时提示创建（自选路径）\n" +
@@ -71,15 +62,17 @@ public class VNovelizerSetup : EditorWindow
 
     private static void SetupAll()
     {
+        if (!VNDependencyBootstrap.IsReady)
+        {
+            VNDependencyBootstrap.ShowStatusWindow();
+            return;
+        }
         string assetsRoot = Application.dataPath;
 
         // 1. Addressables 注册（核心步骤，零复制）：
         //    存量项目 → 注册旧目录用户副本；新项目 → 注册包内默认资源（文件留在包里）
         bool legacyExists = Directory.Exists(Path.Combine(assetsRoot, "Resources/VNovelizerRes"));
         int registeredCount = VNAddressablesRegistrar.SyncAll();
-
-        // 2. 确保包依赖（PrimeTween scoped registry + Package）
-        EnsureManifestDependencies();
 
         // 3. 导入 TMP Essential Resources
         ImportTMPEssentialResources();
@@ -114,79 +107,6 @@ public class VNovelizerSetup : EditorWindow
         EditorUtility.DisplayDialog("完成", completeMsg, "好的");
     }
 
-    // ===== 包依赖（manifest.json） =====
-    private static void EnsureManifestDependencies()
-    {
-        string manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
-        if (!File.Exists(manifestPath))
-        {
-            Debug.LogError("[Setup] 找不到 Packages/manifest.json，跳过包依赖配置");
-            return;
-        }
-
-        // 先读取，统一换行符，避免 \r\n 干扰
-        string content = File.ReadAllText(manifestPath).Replace("\r\n", "\n").Replace("\r", "\n");
-
-        bool needRegistry   = !content.Contains("\"com.kyrylokuzyk\"");
-        bool needPrimeTween = !content.Contains("\"com.kyrylokuzyk.primetween\"");
-
-        if (!needRegistry && !needPrimeTween)
-        {
-            Debug.Log("[Setup] 包依赖已就绪，无需修改");
-            return;
-        }
-
-        if (needRegistry)
-        {
-            // 【Fix-46】不再用 LastIndexOf('}') 猜测 dependencies 闭合位置（嵌套对象/注释差异
-            // 会插错位置生成非法 JSON，导致整个项目包解析失败）。改为字符串感知的括号匹配
-            // 精确定位 "dependencies" 值对象的闭合大括号，写回前备份原文件。
-            int depCloseIdx = FindJsonValueCloseBrace(content, "\"dependencies\"");
-            if (depCloseIdx < 0)
-            {
-                Debug.LogError("[Setup] manifest.json 格式异常，无法定位 dependencies 块，跳过 scopedRegistries 写入");
-                return;
-            }
-
-            // 在 dependencies 块闭合后追加 scopedRegistries（保持根对象为合法 JSON）
-            string regJson =
-                ",\n" +
-                "  \"scopedRegistries\": [\n" +
-                "    {\n" +
-                "      \"name\": \"npm\",\n" +
-                "      \"url\": \"https://registry.npmjs.org\",\n" +
-                "      \"scopes\": [\n" +
-                "        \"com.kyrylokuzyk\"\n" +
-                "      ]\n" +
-                "    }\n" +
-                "  ]\n" +
-                "}";
-
-            string before = content.Substring(0, depCloseIdx + 1); // 包含 dependencies 的 }
-            content = before + regJson;
-
-            // 写回前备份，写坏时可手动回滚；无 BOM UTF-8 与 Unity 默认约定一致
-            try { File.Copy(manifestPath, manifestPath + ".bak", overwrite: true); }
-            catch (System.Exception e) { Debug.LogWarning("[Setup] manifest 备份失败: " + e.Message); }
-
-            File.WriteAllText(manifestPath, content, new System.Text.UTF8Encoding(false));
-            Debug.Log("[Setup] 已添加 scoped registry: npm (com.kyrylokuzyk)");
-        }
-
-        if (needPrimeTween)
-        {
-            try
-            {
-                UnityEditor.PackageManager.Client.Add("com.kyrylokuzyk.primetween");
-                Debug.Log("[Setup] 已发起 PrimeTween 安装请求，Unity 将在后台解析版本并安装");
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning("[Setup] PrimeTween 安装请求失败: " + e.Message);
-            }
-        }
-    }
-
     // ===== TMP Essential Resources =====
     private static void ImportTMPEssentialResources()
     {
@@ -210,43 +130,6 @@ public class VNovelizerSetup : EditorWindow
         {
             Debug.LogWarning("[Setup] TMP Essential Resources 导入失败: " + e.Message);
         }
-    }
-
-    /// <summary>
-    /// 【Fix-46】字符串感知的 JSON 定位：找到 key 对应的值对象（{...}）的闭合大括号位置。
-    /// 跳过引号内字符与转义，不再依赖"倒数第二个 }"这类脆弱假设。
-    /// </summary>
-    private static int FindJsonValueCloseBrace(string content, string key)
-    {
-        int idx = content.IndexOf(key, System.StringComparison.Ordinal);
-        if (idx < 0) return -1;
-        idx = content.IndexOf(':', idx + key.Length);
-        if (idx < 0) return -1;
-        int open = content.IndexOf('{', idx + 1);
-        if (open < 0) return -1;
-
-        int depth = 0;
-        bool inString = false;
-        bool escape = false;
-        for (int i = open; i < content.Length; i++)
-        {
-            char c = content[i];
-            if (inString)
-            {
-                if (escape) escape = false;
-                else if (c == '\\') escape = true;
-                else if (c == '"') inString = false;
-                continue;
-            }
-            if (c == '"') inString = true;
-            else if (c == '{') depth++;
-            else if (c == '}')
-            {
-                depth--;
-                if (depth == 0) return i;
-            }
-        }
-        return -1;
     }
 
     // ===== Input System 为 Both 模式 =====
@@ -323,12 +206,14 @@ public class AutoOpenWizard
 {
     static AutoOpenWizard()
     {
-        if (!EditorPrefs.GetBool("VNovelizer_Setup_Shown", false))
+        string projectKey = "VNovelizer_Setup_Shown:" + Application.dataPath;
+        if (!Application.isBatchMode && !EditorPrefs.GetBool(projectKey, false))
         {
             EditorApplication.delayCall += () =>
             {
+                if (!VNDependencyBootstrap.IsReady) return;
                 VNovelizerSetup.ShowWindow();
-                EditorPrefs.SetBool("VNovelizer_Setup_Shown", true);
+                EditorPrefs.SetBool(projectKey, true);
             };
         }
     }

@@ -19,11 +19,13 @@
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
-    "defineConstraints": [],
+    "defineConstraints": [
+        "PRIME_TWEEN_INSTALLED"
+    ],
     "versionDefines": [
         {
             "name": "com.kyrylokuzyk.primetween",
-            "expression": "0.0.0",
+            "expression": "1.4.11",
             "define": "PRIME_TWEEN_INSTALLED"
         },
         {

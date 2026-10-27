@@ -12,8 +12,15 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [
-        "VN_L2D"
+        "VN_L2D",
+        "PRIME_TWEEN_INSTALLED"
     ],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.kyrylokuzyk.primetween",
+            "expression": "1.4.11",
+            "define": "PRIME_TWEEN_INSTALLED"
+        }
+    ],
     "noEngineReferences": false
 }

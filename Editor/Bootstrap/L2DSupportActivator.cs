@@ -13,7 +13,7 @@ namespace VNovelizer.Editor.L2DSupport
     /// SDK 不在 → 门控程序集整体不编译，插件其余部分零影响。
     ///
     /// Live2D SDK 是 Assets 导入式（非 UPM 包），asmdef versionDefines 无法探测其存在，
-    /// 因此符号必须由本激活器管理。本文件位于 VNovelizer.Editor 程序集（恒编译、零 Live2D 依赖）。
+    /// 因此符号必须由本激活器管理。本文件位于 VNovelizer.Bootstrap.Editor 程序集（恒编译、零 Live2D / PrimeTween 依赖）。
     /// </summary>
     [InitializeOnLoad]
     public static class L2DSupportActivator
